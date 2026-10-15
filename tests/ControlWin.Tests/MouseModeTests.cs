@@ -206,4 +206,22 @@ public class MouseModeTests
         for (int i = 0; i < 10; i++) mouse.Tick(0.05); // 0.5 s more
         Assert.InRange(output.MoveY, 38, 46);
     }
+
+    [Fact]
+    public void ZR_and_ZL_scale_scrolling()
+    {
+        var (state, output, mouse) = Create();
+        mouse.Activate(Buttons.None);
+
+        state.Update(Report(Buttons.ZR, ry: 2048 + 1300)); // full up, fast
+        mouse.OnReport();
+        mouse.Tick(0.05); // 12 * 120 * 2.5 * 0.05 = 180 -> 160 in chunks of 40
+        Assert.Equal(160, output.WheelTotal);
+
+        output.WheelTotal = 0;
+        state.Update(Report(Buttons.ZL, ry: 2048 + 1300)); // slow
+        mouse.OnReport();
+        for (int i = 0; i < 10; i++) mouse.Tick(0.05); // 12 * 120 * 0.3 * 0.5 s = 216 -> 200
+        Assert.InRange(output.WheelTotal, 160, 240);
+    }
 }

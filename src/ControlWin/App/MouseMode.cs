@@ -159,8 +159,10 @@ internal sealed class MouseMode
 
         if (scroll != default)
         {
-            _wheel += -scroll.Y * cfg.ScrollSpeed * 120f * (float)dt;
-            _hwheel += scroll.X * cfg.ScrollSpeed * 120f * (float)dt;
+            // ZR / ZL speed up or slow down scrolling as well as the cursor.
+            float k = cfg.ScrollSpeed * 120f * multiplier * (float)dt;
+            _wheel += -scroll.Y * k;
+            _hwheel += scroll.X * k;
             int w = TakeChunks(ref _wheel);
             if (w != 0) _output.Wheel(w);
             int h = TakeChunks(ref _hwheel);
