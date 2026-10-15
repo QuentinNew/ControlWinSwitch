@@ -269,14 +269,27 @@ internal static class RadialGeometry
         return d > MathF.PI ? MathF.Tau - d : d;
     }
 
+    /// <summary>
+    /// Distance used to pick a node. Nodes straight up / down / left / right get <paramref name="cardinalBias"/>
+    /// (radians) knocked off: a stick with an octagonal gate slides into the diagonals, so without it the corners are
+    /// far easier to hit than the four straight directions.
+    /// </summary>
+    public static float Effective(float nodeAngle, float angle, float cardinalBias)
+    {
+        float d = Distance(nodeAngle, angle);
+        float quarter = MathF.PI / 2;
+        float offAxis = MathF.Abs(nodeAngle - MathF.Round(nodeAngle / quarter) * quarter);
+        return offAxis < 0.02f ? d - cardinalBias : d;
+    }
+
     /// <summary>Index of the node closest to <paramref name="angle"/>, or -1 for an empty ring.</summary>
-    public static int Nearest(RadialRing ring, float angle)
+    public static int Nearest(RadialRing ring, float angle, float cardinalBias = 0f)
     {
         int best = -1;
         float bestDistance = float.MaxValue;
         for (int i = 0; i < ring.Nodes.Count; i++)
         {
-            float d = Distance(ring.Nodes[i].Angle, angle);
+            float d = Effective(ring.Nodes[i].Angle, angle, cardinalBias);
             if (d < bestDistance)
             {
                 bestDistance = d;
@@ -307,6 +320,9 @@ internal sealed class RadialStick(int releaseMs)
     private bool _needCenter = true;
 
     public int ReleaseMs { get; set; } = releaseMs;
+
+    /// <summary>Radians; see <see cref="RadialGeometry.Effective"/>.</summary>
+    public float CardinalBias { get; set; }
 
     /// <summary>Highlighted node, or -1.</summary>
     public int Selected { get; private set; } = -1;
@@ -355,7 +371,7 @@ internal sealed class RadialStick(int releaseMs)
 
     private void Highlight(float angle, RadialRing ring)
     {
-        int nearest = RadialGeometry.Nearest(ring, angle);
+        int nearest = RadialGeometry.Nearest(ring, angle, CardinalBias);
         if (nearest < 0)
         {
             Selected = -1;
@@ -363,8 +379,8 @@ internal sealed class RadialStick(int releaseMs)
         }
 
         if (Selected >= 0 && Selected < ring.Nodes.Count && nearest != Selected
-            && RadialGeometry.Distance(ring.Nodes[nearest].Angle, angle) + SwitchMargin
-               >= RadialGeometry.Distance(ring.Nodes[Selected].Angle, angle))
+            && RadialGeometry.Effective(ring.Nodes[nearest].Angle, angle, CardinalBias) + SwitchMargin
+               >= RadialGeometry.Effective(ring.Nodes[Selected].Angle, angle, CardinalBias))
             return; // not clearly closer to the neighbour yet
 
         Selected = ring.Nodes[nearest].Enabled ? nearest : -1;

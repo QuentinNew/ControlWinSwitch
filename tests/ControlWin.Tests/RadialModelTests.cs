@@ -224,3 +224,52 @@ public class RadialStickTests
         Assert.Equal(1, released);
     }
 }
+
+public class RadialCardinalBiasTests
+{
+    private static RadialRing Ring8() =>
+        RadialModel.BuildRing(new MenuPage("Root",
+            Enumerable.Range(0, 8).Select(i => new MenuEntry { Label = $"e{i}" }).ToList()), 0, null);
+
+    private static Stick Tilt(float degrees, float magnitude = 0.9f)
+    {
+        float a = degrees * MathF.PI / 180f;
+        return new Stick(MathF.Sin(a) * magnitude, -MathF.Cos(a) * magnitude); // 0 = up, clockwise
+    }
+
+    [Fact]
+    public void Without_bias_the_sectors_are_equal()
+    {
+        var stick = new RadialStick(100);
+        var ring = Ring8();
+        stick.Update(default, 0, ring);
+
+        stick.Update(Tilt(27), 16, ring);
+
+        Assert.Equal(1, stick.Selected); // the diagonal (45 degrees) is closer
+    }
+
+    [Fact]
+    public void With_bias_the_straight_directions_get_a_wider_sector()
+    {
+        var stick = new RadialStick(100) { CardinalBias = 12 * MathF.PI / 180f };
+        var ring = Ring8();
+        stick.Update(default, 0, ring);
+
+        stick.Update(Tilt(27), 16, ring);
+
+        Assert.Equal(0, stick.Selected); // still "up"
+    }
+
+    [Fact]
+    public void The_diagonal_is_still_reachable_with_bias()
+    {
+        var stick = new RadialStick(100) { CardinalBias = 12 * MathF.PI / 180f };
+        var ring = Ring8();
+        stick.Update(default, 0, ring);
+
+        stick.Update(Tilt(40), 16, ring);
+
+        Assert.Equal(1, stick.Selected);
+    }
+}

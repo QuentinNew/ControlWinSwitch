@@ -205,6 +205,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         {
             _radial.Reset(RadialTree.ToPage("ControlWin", Config.RadialMenu ?? [], PadDetail, HeadsetDetail));
             _radialStick.ReleaseMs = Config.RadialReleaseMs;
+            _radialStick.CardinalBias = Config.RadialCardinalBias * MathF.PI / 180f;
             _radialStick.Reset(); // a stick already tilted must come back to the center first
             _heldDirection = Dir.None;
             _radialOverlay.Show(_radial);

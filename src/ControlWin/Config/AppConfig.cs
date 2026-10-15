@@ -116,6 +116,12 @@ internal sealed class AppConfig
     /// <summary>Radial menu: the stick must travel from "pushed" to "centered" within this time to count as a release.</summary>
     public int RadialReleaseMs { get; set; } = 100;
 
+    /// <summary>
+    /// Radial menu: degrees by which the straight up / down / left / right nodes are made easier to hit
+    /// (diagonals are naturally favoured by an octagonal stick gate).
+    /// </summary>
+    public int RadialCardinalBias { get; set; } = 12;
+
     public VirtualPadConfig VirtualPad { get; set; } = new();
     public MouseConfig Mouse { get; set; } = new();
     /// <summary>
@@ -140,6 +146,7 @@ internal sealed class AppConfig
         MenuLayout = string.Equals(MenuLayout?.Trim(), MenuLayouts.Radial, StringComparison.OrdinalIgnoreCase)
             ? MenuLayouts.Radial : MenuLayouts.List;
         RadialReleaseMs = Math.Clamp(RadialReleaseMs, 20, 500);
+        RadialCardinalBias = Math.Clamp(RadialCardinalBias, 0, 25);
         VirtualPad ??= new();
         VirtualPad.DisableWhileRunning ??= [];
         VirtualPad.DisableWhileRunning = VirtualPad.DisableWhileRunning
