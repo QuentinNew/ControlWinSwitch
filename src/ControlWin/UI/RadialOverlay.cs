@@ -168,6 +168,18 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         if (index >= 0) NodeClicked?.Invoke(index);
     }
 
+    /// <summary>Width in pixels of a line of text in a font.</summary>
+    private static int MeasureText(string text, nint font)
+    {
+        var dc = CreateCompatibleDC(0);
+        var old = SelectObject(dc, font);
+        var size = new SIZE();
+        GetTextExtentPoint32W(dc, text, text.Length, &size);
+        SelectObject(dc, old);
+        DeleteDC(dc);
+        return size.cx;
+    }
+
     /// <summary>Idle shade of a custom color, relative to the highlighted color the user picked.</summary>
     private const float IdleShade = 0.45f;
 
@@ -237,7 +249,8 @@ internal sealed unsafe class RadialOverlay : NativeWindow
             if (!model.IsConfirming && selectedNode.Entry?.Detail?.Invoke() is { Length: > 0 } detail) text += " - " + detail;
 
             var (nx, ny) = positions[model.Selected];
-            int half = Math.Min(Px(190), Math.Max(Px(70), text.Length * Px(6) + Px(26)));
+            int half = (MeasureText(text, Gdi.GetFonts(_dpi).Detail) + Px(32)) / 2;
+            half = Math.Clamp(half, Px(50), Px(200));
             int height = Px(PillHeightDip);
             pillL = Math.Clamp(nx - half, _work.Left + Px(8), Math.Max(_work.Left + Px(8), _work.Right - Px(8) - half * 2));
             pillR = pillL + half * 2;
