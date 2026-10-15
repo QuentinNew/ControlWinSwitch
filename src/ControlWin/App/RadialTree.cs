@@ -88,7 +88,7 @@ internal static class RadialTree
                     Command = new(CommandKind.Launch),
                     Launch = new ShortcutConfig
                     {
-                        Name = Label(node.Target ?? "Shortcut"), Target = node.Target ?? "", Args = node.Args, WorkingDir = node.WorkingDir,
+                        Name = Label(node.Target ?? "Shortcut"), Target = node.Target ?? "", Args = node.Args, WorkingDir = node.WorkingDir, RunAsAdmin = node.RunAsAdmin,
                     },
                 };
             case RadialNodeTypes.Folder:

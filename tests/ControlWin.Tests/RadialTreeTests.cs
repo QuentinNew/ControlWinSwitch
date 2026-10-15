@@ -270,3 +270,20 @@ public class RadialAppearanceTests
         Assert.Equal("glyph", fixedTree[3].Icon!.Kind);
     }
 }
+
+public class RadialAdminTests
+{
+    [Fact]
+    public void Run_as_admin_reaches_the_launch_info_and_round_trips()
+    {
+        var node = new RadialNodeConfig { Type = "shortcut", Slot = 0, Target = "game.exe", RunAsAdmin = true };
+
+        var entry = RadialTree.ToPage("Root", [node]).Entries[0];
+        Assert.True(entry.Launch!.RunAsAdmin);
+
+        var cfg = ConfigStore.Parse("{}");
+        cfg.RadialMenu![1].Children![0].RunAsAdmin = true;
+        var again = ConfigStore.Parse(ConfigStore.Serialize(cfg));
+        Assert.True(again.RadialMenu![1].Children![0].RunAsAdmin);
+    }
+}

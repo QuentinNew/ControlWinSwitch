@@ -668,7 +668,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private void LaunchTarget(ShortcutConfig shortcut)
     {
         _toast.Show(MenuPages.Play, $"Launching {shortcut.Name}");
-        var error = UnelevatedLauncher.Launch(shortcut.Target, shortcut.Args, shortcut.WorkingDir);
+        var error = UnelevatedLauncher.Launch(shortcut.Target, shortcut.Args, shortcut.WorkingDir, shortcut.RunAsAdmin == true);
         if (error is not null)
         {
             Log.Error($"Shortcut '{shortcut.Name}': {error}");

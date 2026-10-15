@@ -23,7 +23,7 @@ internal static class RadialDefaults
         static List<RadialNodeConfig> Launchers(IEnumerable<ShortcutConfig> items) =>
             items.Select((s, i) => new RadialNodeConfig
             {
-                Type = RadialNodeTypes.Shortcut, Slot = i, Name = s.Name, Target = s.Target, Args = s.Args, WorkingDir = s.WorkingDir,
+                Type = RadialNodeTypes.Shortcut, Slot = i, Name = s.Name, Target = s.Target, Args = s.Args, WorkingDir = s.WorkingDir, RunAsAdmin = s.RunAsAdmin,
             }).ToList();
 
         var root = new List<RadialNodeConfig>

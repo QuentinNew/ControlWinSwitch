@@ -10,12 +10,17 @@ namespace ControlWin.Actions;
 internal static unsafe class UnelevatedLauncher
 {
     /// <summary>Launches <paramref name="target"/> (an .exe, a URI such as steam://..., a .lnk, a document). Returns an error message, or null.</summary>
-    public static string? Launch(string target, string? args = null, string? workingDir = null)
+    public static string? Launch(string target, string? args = null, string? workingDir = null, bool asAdmin = false)
     {
         if (string.IsNullOrWhiteSpace(target)) return "Empty target";
 
         bool isExe = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && !target.Contains("://");
-        if (!IsElevated()) return ShellExecute(target, args, workingDir);
+        bool elevated = IsElevated();
+
+        // Run as administrator: ControlWin already is one, so the program inherits that without a UAC prompt.
+        // When ControlWin is not elevated this asks Windows for elevation ("runas"), which does prompt.
+        if (asAdmin) return ShellExecute(target, args, workingDir, elevated ? "open" : "runas");
+        if (!elevated) return ShellExecute(target, args, workingDir, "open");
 
         string commandLine;
         string? directory = null;
@@ -94,9 +99,9 @@ internal static unsafe class UnelevatedLauncher
         }
     }
 
-    private static string? ShellExecute(string target, string? args, string? workingDir)
+    private static string? ShellExecute(string target, string? args, string? workingDir, string verbName)
     {
-        fixed (char* verb = "open")
+        fixed (char* verb = verbName)
         fixed (char* file = target)
         fixed (char* parameters = args)
         fixed (char* dir = workingDir)

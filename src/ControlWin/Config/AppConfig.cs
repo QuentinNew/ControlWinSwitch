@@ -30,6 +30,9 @@ internal sealed class ShortcutConfig
     public string Target { get; set; } = "";
     public string? Args { get; set; }
     public string? WorkingDir { get; set; }
+
+    /// <summary>Start the program with administrator rights (no UAC prompt while ControlWin itself runs elevated).</summary>
+    public bool? RunAsAdmin { get; set; }
 }
 
 /// <summary>Values of <see cref="RadialNodeConfig.Type"/>.</summary>
@@ -76,6 +79,9 @@ internal sealed class RadialNodeConfig
     public string? Args { get; set; }
     public string? WorkingDir { get; set; }
 
+    /// <summary>Shortcuts: start the program with administrator rights.</summary>
+    public bool? RunAsAdmin { get; set; }
+
     /// <summary>Folders only; folders do not nest.</summary>
     public List<RadialNodeConfig>? Children { get; set; }
 
@@ -89,6 +95,7 @@ internal sealed class RadialNodeConfig
         Target = Target,
         Args = Args,
         WorkingDir = WorkingDir,
+        RunAsAdmin = RunAsAdmin,
         Children = Children?.Select(c => c.Clone()).ToList(),
     };
 }

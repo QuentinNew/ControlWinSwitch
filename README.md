@@ -152,7 +152,7 @@ Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A*
 
 ### Configuration
 
-`%APPDATA%\ControlWin\config.json` (created with defaults on first run, comments and trailing commas allowed). Shortcuts launch with normal user rights even though ControlWin itself runs elevated. Example of what is planned:
+`%APPDATA%\ControlWin\config.json` (created with defaults on first run, comments and trailing commas allowed). Shortcuts launch with normal user rights even though ControlWin itself runs elevated; a shortcut with `"runAsAdmin": true` (the "Run as administrator" switch in the radial editor) starts elevated instead, without a UAC prompt as long as ControlWin was started elevated (scheduled task / its shortcut). Steam games are started by Steam: for those, Steam itself has to run as administrator. Example of what is planned:
 
 ```jsonc
 {

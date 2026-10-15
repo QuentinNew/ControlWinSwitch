@@ -774,6 +774,10 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             TextField(Field.Args, "Arguments", bx, by, bx + bw, node.Args ?? "");
             by += Px(62);
             TextField(Field.WorkDir, "Start in", bx, by, bx + bw, node.WorkingDir ?? "");
+            by += Px(66);
+            bool admin = node.RunAsAdmin == true;
+            Button(bx, by, bx + bw, by + Px(36), admin ? "Run as administrator: On" : "Run as administrator: Off",
+                () => node.RunAsAdmin = admin ? null : true, active: admin);
         }
 
         // Delete.
