@@ -482,11 +482,46 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 StartHeadsetWork(toggle: true);
                 break;
 
+            case CommandKind.Sleep:
+            case CommandKind.Restart:
+            case CommandKind.Shutdown:
+                RunPower(PowerActions.FromCommand(command.Kind)!.Value, entry);
+                break;
+
             default:
-                // Implemented by F6.
-                _toast.Show(entry.Glyph, $"{entry.Label}: not implemented yet");
+                _toast.Show(entry.Glyph, $"{entry.Label}: not implemented");
                 break;
         }
+    }
+
+    /// <summary>The menu is already closed. Mouse mode is off and the pad state cleared before the PC goes away.</summary>
+    private void RunPower(PowerAction action, MenuEntry entry)
+    {
+        if (_mode == Mode.Mouse) ExitMouse(announce: false);
+        _state.Reset();
+        _toast.Show(entry.Glyph, action switch
+        {
+            PowerAction.Sleep => "Sleeping...",
+            PowerAction.Restart => "Restarting...",
+            _ => "Shutting down...",
+        });
+
+        // Sleep blocks until the PC wakes, so it never runs on the UI thread.
+        new Thread(() =>
+        {
+            var error = PowerActions.Run(action);
+            if (error is not null)
+            {
+                Log.Error($"Power {action}: {error}");
+                PostMessageW(_window.Handle, AppMessages.PowerFailed, 0, 0);
+            }
+        }) { IsBackground = true, Name = "power" }.Start();
+    }
+
+    /// <summary>AppMessages.PowerFailed, on the UI thread.</summary>
+    public void OnPowerFailed()
+    {
+        if (!_shutDown) _toast.Show(MenuPages.Power, "Power action failed - see log");
     }
 
     private void LaunchShortcut(int index)

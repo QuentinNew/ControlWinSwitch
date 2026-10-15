@@ -12,6 +12,9 @@ internal static class AppMessages
     /// <summary>Posted by the headset worker thread: wParam = <c>HeadsetState</c>, lParam = 1 when it was a connect/disconnect.</summary>
     public const uint HeadsetDone = WM_APP + 2;
 
+    /// <summary>Posted by the power worker thread when sleep / restart / shut down was refused.</summary>
+    public const uint PowerFailed = WM_APP + 3;
+
     /// <summary>Posts <paramref name="message"/> to the running instance. False when none is running.</summary>
     public static bool PostToRunningInstance(uint message)
     {
