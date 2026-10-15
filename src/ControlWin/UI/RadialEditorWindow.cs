@@ -883,9 +883,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             by += Px(62);
             TextField(Field.Args, "Arguments", bx, by, bx + bw, node.Args ?? "");
             by += Px(62);
-            Text(Gdi.GetFonts(_dpi).Footer, Gdi.Dim, "Steam", bx, by, bx + bw, by + Px(18), DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-            Button(bx, by + Px(20), bx + bw, by + Px(56), "Find a recently played Steam game", OpenSteamPicker);
-            by += Px(66);
+            Button(bx, by, bx + bw, by + Px(36), "Find a recently played Steam game", OpenSteamPicker);
+            by += Px(46);
             bool admin = node.RunAsAdmin == true;
             Button(bx, by, bx + bw, by + Px(36), admin ? "Run as administrator: On" : "Run as administrator: Off",
                 () => node.RunAsAdmin = admin ? null : true, active: admin);
@@ -1018,13 +1017,13 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         _steamOpen = true;
     }
 
-    /// <summary>Points the selected shortcut at a Steam game: its link, its name (if still unnamed) and its cover.</summary>
+    /// <summary>Points the selected shortcut at a Steam game: its link, its name and its cover.</summary>
     internal void ApplySteamGame(SteamGame game)
     {
         if (_model.Selected is not { } node) return;
 
         node.Target = game.LaunchTarget;
-        if (string.IsNullOrWhiteSpace(node.Name) || node.Name == "New shortcut") node.Name = game.Name;
+        node.Name = game.Name;
         if (game.CoverPath is not null) node.Icon = new RadialIconConfig { Kind = "image", Path = game.CoverPath };
     }
 

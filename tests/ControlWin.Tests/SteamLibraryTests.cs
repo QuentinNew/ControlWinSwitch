@@ -87,13 +87,15 @@ public class RadialEditorSteamTests
     }
 
     [Fact]
-    public void A_name_the_user_chose_is_kept()
+    public void Choosing_another_game_updates_the_name_and_target_again()
     {
         var (window, shortcut) = Open("My game");
 
-        window.ApplySteamGame(new SteamGame("5", "Other", 1, null));
+        window.ApplySteamGame(new SteamGame("5", "First", 1, null));
+        window.ApplySteamGame(new SteamGame("6", "Second", 1, null));
 
-        Assert.Equal("My game", shortcut.Name);
+        Assert.Equal("Second", shortcut.Name);
+        Assert.Equal("steam://rungameid/6", shortcut.Target);
         Assert.Null(shortcut.Icon);
     }
 }
