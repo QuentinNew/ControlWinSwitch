@@ -47,6 +47,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         public RECT R;
         public Action<int, int>? Down, Drag, Up;
         public bool Hand = true;
+        public string? Tag;
     }
 
     private readonly record struct TextOp(nint Font, uint Color, string Text, RECT Rc, uint Format);
@@ -70,6 +71,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     // Text editing.
     private Field _field;
     private string _buffer = "";
+    private bool _selectAll;      // the whole value is selected: the next key replaces it
+    private nint _sceneDc;        // device context of the paint in progress (text measuring)
 
     private bool _pipetting;     // the eyedropper button is held
     private int _addSlot = -1;    // empty slot whose "add" list is open
@@ -138,6 +141,58 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private int Px(int dip) => (int)Math.Round(dip * _dpi / 96.0);
 
     private void Redraw() => InvalidateRect(Handle, null, 0);
+
+    // ---- test hooks (no window is shown) ------------------------------------------------------
+
+    internal RadialEditorModel DebugModel => _model;
+
+    internal string DebugBuffer => _buffer;
+
+    internal bool DebugEditing => _field != Field.None;
+
+    internal void DebugInit(IEnumerable<RadialNodeConfig> tree, IReadOnlyList<ShortcutConfig> shortcuts)
+    {
+        _model = new RadialEditorModel(tree);
+        _shortcuts = shortcuts;
+        _field = Field.None;
+    }
+
+    /// <summary>Builds the hit list the way a paint does, into a throw-away bitmap.</summary>
+    internal void DebugRender()
+    {
+        _w = Px(WidthDip);
+        _h = Px(HeightDip);
+        var info = new BITMAPINFOHEADER
+        {
+            biSize = (uint)sizeof(BITMAPINFOHEADER), biWidth = _w, biHeight = -_h, biPlanes = 1, biBitCount = 32,
+        };
+        void* bits;
+        var dc = CreateCompatibleDC(0);
+        var dib = CreateDIBSection(dc, &info, 0, &bits, 0, 0);
+        var old = SelectObject(dc, dib);
+        SetBkMode(dc, TRANSPARENT);
+        _bits = bits;
+        using (_canvas = new CircleCanvas(bits, _w, _h)) Scene(dc);
+        _canvas = null;
+        SelectObject(dc, old);
+        DeleteObject(dib);
+        DeleteDC(dc);
+    }
+
+    /// <summary>A left click (down and up) in the middle of the hit tagged <paramref name="tag"/>.</summary>
+    internal bool DebugClick(string tag)
+    {
+        var hit = _hits.FindLast(h => h.Tag == tag);
+        if (hit is null) return false;
+        int x = (hit.R.Left + hit.R.Right) / 2, y = (hit.R.Top + hit.R.Bottom) / 2;
+        OnDown(x, y);
+        var active = _active;
+        _active = null;
+        active?.Up?.Invoke(x, y);
+        return true;
+    }
+
+    internal void DebugChar(char c) => OnChar(c);
 
     // ---- messages ----------------------------------------------------------------------------
 
@@ -224,14 +279,24 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                 CommitField();
                 return;
             case '\b':
-                if (_buffer.Length > 0) _buffer = _buffer[..^1];
+                if (_selectAll) _buffer = "";
+                else if (_buffer.Length > 0) _buffer = _buffer[..^1];
+                _selectAll = false;
+                break;
+            case (char)0x01: // Ctrl+A
+                _selectAll = true;
                 break;
             case (char)0x16: // Ctrl+V
+                if (_selectAll) _buffer = "";
+                _selectAll = false;
                 _buffer = (_buffer + ClipboardText()).Replace("\r", "").Replace("\n", "");
                 if (_buffer.Length > 260) _buffer = _buffer[..260];
                 break;
             default:
-                if (c >= ' ' && _buffer.Length < 260) _buffer += c;
+                if (c < ' ') break;
+                if (_selectAll) _buffer = "";
+                _selectAll = false;
+                if (_buffer.Length < 260) _buffer += c;
                 break;
         }
         Redraw();
@@ -269,6 +334,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     {
         _field = field;
         _buffer = current;
+        _selectAll = current.Length > 0; // typing replaces the value; a click can't place a caret
         _fieldHit = hit;
         Redraw();
     }
@@ -445,6 +511,28 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         EndPaint(Handle, &ps);
     }
 
+    private int MeasureNow(string text, nint font)
+    {
+        if (_sceneDc == 0 || text.Length == 0) return 0;
+        var old = SelectObject(_sceneDc, font);
+        var size = new SIZE();
+        GetTextExtentPoint32W(_sceneDc, text, text.Length, &size);
+        SelectObject(_sceneDc, old);
+        return size.cx;
+    }
+
+    /// <summary>The end of <paramref name="text"/> that fits <paramref name="maxWidth"/>, with a leading ellipsis when cut.</summary>
+    private string FitTail(string text, nint font, int maxWidth)
+    {
+        if (MeasureNow(text, font) <= maxWidth) return text;
+        for (int start = 1; start < text.Length; start++)
+        {
+            string candidate = "…" + text[start..];
+            if (MeasureNow(candidate, font) <= maxWidth) return candidate;
+        }
+        return text[^1..];
+    }
+
     private void Text(nint font, uint color, string text, int l, int t, int r, int b, uint format) =>
         _texts.Add(new TextOp(font, color, text, new RECT(l, t, r, b), format));
 
@@ -497,14 +585,27 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         RoundRect(l, top, r, bottom, Px(8), editing ? Gdi.Selection : Rim);
         RoundRect(l + Px(2), top + Px(2), r - Px(2), bottom - Px(2), Px(7), FieldFill);
 
-        string shown = editing ? _buffer + "|" : value;
+        int textL = l + Px(10), textR = r - Px(8);
         bool empty = !editing && value.Length == 0;
-        Text(fonts.Detail, empty ? Gdi.Dim : Gdi.TextColor, empty ? placeholder : shown, l + Px(10), top, r - Px(8), bottom,
-            DT_LEFT | oneLine | DT_END_ELLIPSIS);
+        if (editing)
+        {
+            // The end of the value is what is being typed: keep it visible, cut the front instead.
+            string shown = FitTail(_selectAll ? _buffer : _buffer + "|", fonts.Detail, textR - textL);
+            if (_selectAll)
+                RoundRect(textL - Px(2), top + Px(6), textL + Math.Min(MeasureNow(shown, fonts.Detail), textR - textL) + Px(2), bottom - Px(6),
+                    Px(4), Gdi.Selection);
+            Text(fonts.Detail, Gdi.TextColor, shown, textL, top, textR, bottom, DT_LEFT | oneLine);
+        }
+        else
+        {
+            Text(fonts.Detail, empty ? Gdi.Dim : Gdi.TextColor, empty ? placeholder : value, textL, top, textR, bottom,
+                DT_LEFT | oneLine | DT_END_ELLIPSIS);
+        }
 
         Hit? hit = null;
         hit = AddHit(l, top, r, bottom, (_, _) => BeginEdit(field, value, hit!));
         hit.Hand = false;
+        hit.Tag = field.ToString();
         return hit;
     }
 
@@ -512,6 +613,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     {
         _hits.Clear();
         _texts.Clear();
+        _sceneDc = dc;
         var fonts = Gdi.GetFonts(_dpi);
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
         int w = _w, h = _h;
