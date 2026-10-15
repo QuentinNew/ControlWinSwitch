@@ -1,6 +1,7 @@
 using ControlWin.Actions;
 using ControlWin.Config;
 using ControlWin.Input;
+using ControlWin.Setup;
 using ControlWin.UI;
 using static ControlWin.Native.Win32;
 
@@ -859,6 +860,20 @@ internal sealed class AppController : IDisposable, ISettingsHost
     string ISettingsHost.HeadsetStatus => _headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
 
     void ISettingsHost.EditRadialMenu() => OpenRadialEditor();
+
+    bool ISettingsHost.StartOnLogon => Startup.IsEnabled;
+
+    void ISettingsHost.SetStartOnLogon(bool enabled)
+    {
+        string exe = Environment.ProcessPath ?? "";
+        var mode = Startup.Set(enabled, exe, out var error);
+        Log.Info($"Launch on startup: {(enabled ? "on" : "off")} -> {mode}{(error is null ? "" : " (" + error + ")")}");
+
+        string message = error ?? (enabled
+            ? mode == Startup.Mode.Task ? "ControlWin will start with Windows" : "ControlWin will start with Windows (without administrator rights)"
+            : "ControlWin will no longer start with Windows");
+        _toast.Show(MenuPages.Gear, message);
+    }
 
     private void OpenRadialEditor()
     {

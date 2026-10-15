@@ -21,6 +21,8 @@ public class SettingsModelTests
         public void ToggleHeadset() { }
         public void OpenBluetoothSettings() { }
         public void EditRadialMenu() { }
+        public bool StartOnLogon { get; private set; }
+        public void SetStartOnLogon(bool enabled) => StartOnLogon = enabled;
         public Action<string>? Commit;
         public string? Editing;
         public void EditText(string current, Action<string> commit) { Editing = current; Commit = commit; }
@@ -31,6 +33,19 @@ public class SettingsModelTests
         var store = new ConfigStore(Path.Combine(Path.GetTempPath(), "unused-config.json"));
         var host = new FakeHost();
         return (SettingsPages.Create(store, host), store, host);
+    }
+
+    [Fact]
+    public void General_tab_has_a_launch_on_startup_toggle()
+    {
+        var (m, _, host) = Create();
+        var item = m.Tab.Items.Single(i => i.Label == "Launch on startup");
+
+        Assert.False(item.IsOn!());
+        item.Activate!();
+
+        Assert.True(host.StartOnLogon);
+        Assert.True(item.IsOn!());
     }
 
     [Fact]
@@ -57,7 +72,7 @@ public class SettingsModelTests
         // General: row 0 is an info row (config path), so the first selectable is "Edit config file".
         Assert.Equal(1, m.Selected);
         m.Move(-1); // wraps to the last row
-        Assert.Equal(3, m.Selected);
+        Assert.Equal(4, m.Selected);
     }
 
     [Fact]

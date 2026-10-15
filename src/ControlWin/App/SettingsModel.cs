@@ -191,6 +191,10 @@ internal interface ISettingsHost
     void OpenBluetoothSettings();
     /// <summary>Opens the radial menu editor (a mouse window).</summary>
     void EditRadialMenu();
+
+    /// <summary>ControlWin is registered to start when Windows starts.</summary>
+    bool StartOnLogon { get; }
+    void SetStartOnLogon(bool enabled);
 }
 
 internal static class SettingsPages
@@ -206,6 +210,7 @@ internal static class SettingsPages
             SettingItem.Action("Edit config file", host.EditConfig),
             SettingItem.Action("Reload config file", host.ReloadConfig),
             SettingItem.Action("Open log", host.OpenLog),
+            SettingItem.Toggle("Launch on startup", () => host.StartOnLogon, host.SetStartOnLogon),
         ]);
 
         var layout = new SettingsTab("Layout",
