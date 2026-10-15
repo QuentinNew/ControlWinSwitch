@@ -66,11 +66,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _watchRunning = ProbeProcesses();
         _padEnabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
         UpdateWatchTimer();
-        if (_gate.HeldOff) _toast.Show(MenuPages.Game, $"Virtual pad off: {ProcessList.DisplayName(_watchName)} is running");
 
         _overlay.RowHovered += OnMenuRowHovered;
         _overlay.RowClicked += OnMenuRowClicked;
         _overlay.BackRequested += OnMenuBackRequested;
+        _overlay.CloseRequested += () => { if (_mode == Mode.Menu) CloseMenu(); };
         _overlay.Scrolled += OnMenuScrolled;
         _overlay.ConfirmAnswered += OnMenuConfirmAnswered;
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
@@ -597,11 +597,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
         {
             case PadGate.Change.Disable:
                 SetPadEnabled(false);
-                _toast.Show(MenuPages.Game, $"Virtual pad off: {name} is running");
                 break;
             case PadGate.Change.Enable:
                 SetPadEnabled(true);
-                _toast.Show(MenuPages.Game, _padFailed ? "Virtual pad unavailable (ViGEmBus?)" : $"Virtual pad on: {name} closed");
                 break;
         }
         if (_mode == Mode.Menu) _overlay.Refresh();

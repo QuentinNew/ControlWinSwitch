@@ -15,6 +15,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     // Layout in DIPs.
     private const int WidthDip = 520, HeaderDip = 64, RowDip = 60, FooterDip = 48, MaxRows = 7, ConfirmRows = 2;
+    private const int CloseDip = 48;
     private const int SideDip = 12, GlyphXDip = 24, GlyphWidthDip = 32, LabelXDip = 72, DetailWidthDip = 150;
 
     private MenuModel? _model;
@@ -22,7 +23,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     /// <summary>Mouse: row index hovered / clicked, "back" (right click), confirmation answered, wheel step (-1 / +1).</summary>
     public event Action<int>? RowHovered, RowClicked, Scrolled;
-    public event Action? BackRequested;
+    public event Action? BackRequested, CloseRequested;
     public event Action<bool>? ConfirmAnswered;
     private RECT _work;
     private uint _dpi = 96;
@@ -112,6 +113,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         GetCursorPos(&pt);
         ScreenToClient(Handle, &pt);
 
+        if (IsCloseButton(pt.X, pt.Y)) return true;
         if (_model.IsConfirming) return pt.Y >= Px(HeaderDip); // body answers the question
         int index = RowAt(pt.Y);
         return index >= 0 && _model.Page.Entries[index].Enabled;
@@ -130,9 +132,16 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         if (index >= 0) RowHovered?.Invoke(index);
     }
 
+    private bool IsCloseButton(int x, int y) => y < Px(HeaderDip) && x >= Px(WidthDip) - Px(CloseDip);
+
     private void OnClick(int x, int y)
     {
         if (_model is null) return;
+        if (IsCloseButton(x, y))
+        {
+            CloseRequested?.Invoke();
+            return;
+        }
         if (_model.IsConfirming)
         {
             if (y >= Px(HeaderDip)) ConfirmAnswered?.Invoke(x < Px(WidthDip) / 2);
@@ -177,13 +186,15 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         if (model.IsConfirming)
         {
             var entry = model.CurrentEntry;
-            Gdi.Text(dc, fonts.Title, Gdi.TextColor, entry?.Label ?? "", Px(24), 0, width - Px(24), headerH, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+            Gdi.Text(dc, fonts.Title, Gdi.TextColor, entry?.Label ?? "", Px(24), 0, width - Px(CloseDip), headerH, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+            Gdi.Text(dc, fonts.GlyphSmall, Gdi.Dim, "", width - Px(CloseDip), 0, width, headerH, DT_CENTER | oneLine);
             Gdi.Text(dc, fonts.Title, Gdi.TextColor, model.ConfirmPrompt ?? "", Px(24), headerH, width - Px(24), bodyBottom, DT_CENTER | oneLine | DT_END_ELLIPSIS);
             Gdi.Text(dc, fonts.Footer, Gdi.Dim, "Yes (A / left click)     No (B / right click)", 0, bodyBottom, width, bodyBottom + footerH, DT_CENTER | oneLine);
             return;
         }
 
-        Gdi.Text(dc, fonts.Title, Gdi.TextColor, model.Page.Title, Px(24), 0, width - Px(24), headerH, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+        Gdi.Text(dc, fonts.Title, Gdi.TextColor, model.Page.Title, Px(24), 0, width - Px(CloseDip), headerH, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+        Gdi.Text(dc, fonts.GlyphSmall, Gdi.Dim, "", width - Px(CloseDip), 0, width, headerH, DT_CENTER | oneLine);
 
         var entries = model.Page.Entries;
         if (!ReferenceEquals(_topPage, model.Page))
