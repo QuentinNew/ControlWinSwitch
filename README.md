@@ -81,6 +81,10 @@ Capture opens or closes an overlay that you navigate with the D-pad or left stic
 
 While the menu is open the game receives a neutral pad, and **Capture is never forwarded** to the game.
 
+### Radial layout
+
+Settings → Layout → **Main menu** switches between the list and a radial menu (`"menuLayout": "list" | "radial"` in `config.json`, applied the next time the menu opens). In the radial menu, tilt the left stick towards a node to highlight it (its name appears under it) and **let go to run it**; moving the stick slowly back to the center only clears the highlight. D-pad left / right steps around the ring and **A** runs the highlighted node; **B** goes back (or closes at the root); the mouse hovers, left-clicks and right-clicks as in the list. A submenu opens a smaller ring around the node you picked, with a Back node on the way you came; confirmations need the same node selected twice. `radialReleaseMs` (default 100) is how fast the stick must return to the center to count as "let go".
+
 ## Tray icon
 
 A controller glyph appears in the taskbar notification area while ControlWin runs. Windows 11 puts new tray icons in the overflow (the `^` menu): drag it onto the taskbar to keep it visible.

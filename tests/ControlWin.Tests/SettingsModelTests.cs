@@ -60,15 +60,20 @@ public class SettingsModelTests
     }
 
     [Fact]
-    public void Layout_tab_has_nothing_selectable()
+    public void Layout_tab_selects_the_main_menu_layout()
     {
-        var (m, _, _) = Create();
+        var (m, store, host) = Create();
         m.SetTab(1);
-        Assert.Equal(-1, m.Selected);
-        Assert.Null(m.CurrentItem);
-        m.Move(1);
-        m.Activate();
-        m.Adjust(1); // must not throw
+        Assert.Equal("List", m.CurrentItem!.Value());
+        Assert.Equal(MenuLayouts.List, store.Current.MenuLayout);
+
+        m.Adjust(1);
+        Assert.Equal("Radial", m.CurrentItem!.Value());
+        Assert.Equal(MenuLayouts.Radial, store.Current.MenuLayout);
+        Assert.Equal(1, host.Changes);
+
+        m.Activate(); // cycles and wraps
+        Assert.Equal(MenuLayouts.List, store.Current.MenuLayout);
     }
 
     [Fact]

@@ -28,6 +28,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly MainWindow _window;
     private readonly MenuModel _menu = new();
     private readonly MenuOverlay _overlay = new();
+    private readonly RadialModel _radial = new();
+    private readonly RadialOverlay _radialOverlay = new();
+    private readonly RadialStick _radialStick = new(100);
+    private bool _radialShown;   // the open menu is the radial one (layout is read when the menu opens)
     private readonly SettingsWindow _settingsWindow = new();
     private readonly SettingsModel _settings;
     private readonly Toast _toast = new();
@@ -73,6 +77,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _overlay.CloseRequested += () => { if (_mode == Mode.Menu) CloseMenu(); };
         _overlay.Scrolled += OnMenuScrolled;
         _overlay.ConfirmAnswered += OnMenuConfirmAnswered;
+        _radialOverlay.NodeHovered += OnRadialNodeHovered;
+        _radialOverlay.NodeClicked += OnRadialNodeClicked;
+        _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
     }
 
@@ -184,12 +191,25 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) CloseSettings();
 
         ReloadConfigIfChanged();
-        _menu.Reset(MenuPages.Root(PadDetail, HeadsetDetail, BuildShortcutsPage));
+        var root = MenuPages.Root(PadDetail, HeadsetDetail, BuildShortcutsPage);
+        _radialShown = Config.MenuLayout == MenuLayouts.Radial;
         _pad.Submit(default); // neutral pad while the menu owns the input
-        _heldDirection = ReadDirection(horizontal: false); // a stick already tilted must be released first, not scroll on open
         _mode = Mode.Menu;
-        _overlay.Show(_menu);
-        Log.Info("Menu opened");
+        if (_radialShown)
+        {
+            _radial.Reset(root);
+            _radialStick.ReleaseMs = Config.RadialReleaseMs;
+            _radialStick.Reset(); // a stick already tilted must come back to the center first
+            _heldDirection = Dir.None;
+            _radialOverlay.Show(_radial);
+        }
+        else
+        {
+            _menu.Reset(root);
+            _heldDirection = ReadDirection(horizontal: false); // a stick already tilted must be released first, not scroll on open
+            _overlay.Show(_menu);
+        }
+        Log.Info(_radialShown ? "Menu opened (radial)" : "Menu opened");
         StartHeadsetWork(toggle: false); // refresh the status shown in the menu
     }
 
@@ -200,8 +220,21 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mode = Mode.Idle;
         _ignoreMask = _state.Current;
         _ignoreSticks = true;
-        _overlay.Hide();
+        HideMenu();
         Log.Info("Menu closed");
+    }
+
+    private void HideMenu()
+    {
+        if (_radialShown) _radialOverlay.Hide();
+        else _overlay.Hide();
+    }
+
+    /// <summary>Repaints whichever menu layout is open.</summary>
+    private void RefreshMenu()
+    {
+        if (_radialShown) _radialOverlay.Refresh();
+        else _overlay.Refresh();
     }
 
     private MenuPage BuildShortcutsPage()
@@ -219,10 +252,86 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     private void HandleMenuInput()
     {
+        if (_radialShown)
+        {
+            HandleRadialInput();
+            return;
+        }
+
         TrackDirection(horizontal: false);
 
         if (_state.Pressed(Buttons.A)) AcceptMenu();
         else if (_state.Pressed(Buttons.B)) BackMenu();
+    }
+
+    // ---- radial menu -------------------------------------------------------------------------
+
+    private void HandleRadialInput()
+    {
+        // Left stick: tilt highlights, a quick release runs the highlighted node.
+        int before = _radialStick.Selected;
+        int released = _radialStick.Update(_state.Left, Environment.TickCount64, _radial.Ring);
+        if (released >= 0)
+        {
+            _radial.Select(released);
+            AcceptRadial();
+            return;
+        }
+
+        // Only a change made by the stick touches the highlight, so a D-pad selection survives a resting stick.
+        bool changed = _radialStick.Selected != before && _radial.Select(_radialStick.Selected);
+
+        if (_state.Pressed(Buttons.Left)) { _radial.Step(-1); changed = true; }
+        else if (_state.Pressed(Buttons.Right)) { _radial.Step(1); changed = true; }
+
+        if (_state.Pressed(Buttons.A))
+        {
+            AcceptRadial();
+            return;
+        }
+        if (_state.Pressed(Buttons.B))
+        {
+            BackMenu();
+            return;
+        }
+
+        if (changed) _radialOverlay.Refresh();
+    }
+
+    private void AcceptRadial()
+    {
+        var node = _radial.CurrentNode;
+        var result = _radial.Activate();
+        if (result is { } run)
+        {
+            if (run.Command.Kind == CommandKind.OpenSettings)
+            {
+                // Straight from the menu to the settings: no close-then-open flicker.
+                Log.Info($"Menu command: {CommandKind.OpenSettings} ({run.Entry.Label})");
+                OpenSettings();
+            }
+            else
+            {
+                CloseMenu();
+                Execute(run.Entry, run.Command);
+            }
+            return;
+        }
+
+        if (node is not null) _radialStick.Reset(); // the ring changed under the stick: start from the center again
+        _radialOverlay.Refresh();
+    }
+
+    private void OnRadialNodeHovered(int index)
+    {
+        if (_mode == Mode.Menu && _radialShown && _radial.Select(index)) _radialOverlay.Refresh();
+    }
+
+    private void OnRadialNodeClicked(int index)
+    {
+        if (_mode != Mode.Menu || !_radialShown) return;
+        _radial.Select(index);
+        if (_radial.CurrentNode is not null) AcceptRadial();
     }
 
     private void AcceptMenu()
@@ -248,6 +357,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     private void BackMenu()
     {
+        if (_radialShown)
+        {
+            if (_radial.Back())
+            {
+                _radialStick.Reset();
+                _radialOverlay.Refresh();
+            }
+            else CloseMenu();
+            return;
+        }
+
         if (_menu.Back()) _overlay.Refresh();
         else CloseMenu();
     }
@@ -306,7 +426,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
         _settingsWindow.Show(_settings);
-        if (fromMenu) _overlay.Hide(); // hidden only once the settings window is up
+        if (fromMenu) HideMenu(); // hidden only once the settings window is up
         Log.Info("Settings opened");
         StartHeadsetWork(toggle: false); // refresh the status shown on the Headset tab
     }
@@ -554,7 +674,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         UserSetPad(!_padEnabled);
         _toast.Show(glyph, _padFailed ? "Virtual pad unavailable (ViGEmBus?)"
             : _padEnabled ? "Virtual pad: on" : "Virtual pad: off");
-        if (_mode == Mode.Menu) _overlay.Refresh(); // the pad row shows its state
+        if (_mode == Mode.Menu) RefreshMenu(); // the pad row shows its state
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
@@ -637,7 +757,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 SetPadEnabled(true);
                 break;
         }
-        if (_mode == Mode.Menu) _overlay.Refresh();
+        if (_mode == Mode.Menu) RefreshMenu();
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
@@ -853,7 +973,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                     break;
             }
         }
-        if (_mode == Mode.Menu) _overlay.Refresh();
+        if (_mode == Mode.Menu) RefreshMenu();
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 

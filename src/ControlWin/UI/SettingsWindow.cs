@@ -259,6 +259,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 item.Activate?.Invoke();
                 break;
             case SettingKind.Number:
+            case SettingKind.Choice:
                 // Left half of the value area decrements, right half increments.
                 int valueLeft = width - Px(SideDip) - Px(ValueWidthDip);
                 if (x >= valueLeft) item.Adjust?.Invoke(x < valueLeft + Px(ValueWidthDip) / 2 ? -1 : 1);
@@ -294,8 +295,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             bool current = i == model.TabIndex;
             if (current)
                 Gdi.RoundedFill(dc, Gdi.SelectionBrush, l + Px(6), headerH + Px(6), r - Px(6), headerH + tabsH - Px(6), Px(16));
-            bool dimmed = model.Tabs[i].Title == "Layout" && !current;
-            Gdi.Text(dc, fonts.Label, dimmed ? Gdi.Dim : Gdi.TextColor, model.Tabs[i].Title, l, headerH, r, headerH + tabsH, DT_CENTER | oneLine);
+            Gdi.Text(dc, fonts.Label, Gdi.TextColor, model.Tabs[i].Title, l, headerH, r, headerH + tabsH, DT_CENTER | oneLine);
         }
 
         // Rows
@@ -314,13 +314,14 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
             uint labelColor = item.Kind == SettingKind.Info ? Gdi.Dim : Gdi.TextColor;
             uint valueColor = selected ? Gdi.TextColor : (item.Kind == SettingKind.Info ? Gdi.Dim : Gdi.TextColor);
-            int labelRight = item.Kind == SettingKind.Info && item.Label == "Not implemented yet" ? width : valueLeft - Px(8);
+            int labelRight = valueLeft - Px(8);
             Gdi.Text(dc, fonts.Label, labelColor, item.Label, Px(28), y, labelRight, y + rowH, DT_LEFT | oneLine | DT_END_ELLIPSIS);
 
             string value = item.Value();
             switch (item.Kind)
             {
                 case SettingKind.Number:
+                case SettingKind.Choice:
                     Gdi.Text(dc, fonts.GlyphSmall, selected ? Gdi.TextColor : Gdi.Dim, ChevronLeft, valueLeft, y, valueLeft + Px(ArrowDip), y + rowH, DT_CENTER | oneLine);
                     Gdi.Text(dc, fonts.Label, valueColor, value, valueLeft + Px(ArrowDip), y, valueRight - Px(ArrowDip) + Px(8), y + rowH, DT_CENTER | oneLine | DT_END_ELLIPSIS);
                     Gdi.Text(dc, fonts.GlyphSmall, selected ? Gdi.TextColor : Gdi.Dim, ChevronRight, valueRight - Px(ArrowDip) + Px(8), y, valueRight + Px(8), y + rowH, DT_CENTER | oneLine);

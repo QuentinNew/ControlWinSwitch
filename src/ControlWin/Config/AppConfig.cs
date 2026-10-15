@@ -32,9 +32,22 @@ internal sealed class ShortcutConfig
     public string? WorkingDir { get; set; }
 }
 
+/// <summary>Values of <see cref="AppConfig.MenuLayout"/>.</summary>
+internal static class MenuLayouts
+{
+    public const string List = "list", Radial = "radial";
+}
+
 internal sealed class AppConfig
 {
     public string HeadsetName { get; set; } = "WH-CH700N";
+
+    /// <summary>How the main menu is drawn: <see cref="MenuLayouts.List"/> or <see cref="MenuLayouts.Radial"/>.</summary>
+    public string MenuLayout { get; set; } = MenuLayouts.List;
+
+    /// <summary>Radial menu: the stick must travel from "pushed" to "centered" within this time to count as a release.</summary>
+    public int RadialReleaseMs { get; set; } = 100;
+
     public VirtualPadConfig VirtualPad { get; set; } = new();
     public MouseConfig Mouse { get; set; } = new();
     public List<ShortcutConfig> Shortcuts { get; set; } =
@@ -47,6 +60,9 @@ internal sealed class AppConfig
     public AppConfig Sanitize()
     {
         HeadsetName ??= "";
+        MenuLayout = string.Equals(MenuLayout?.Trim(), MenuLayouts.Radial, StringComparison.OrdinalIgnoreCase)
+            ? MenuLayouts.Radial : MenuLayouts.List;
+        RadialReleaseMs = Math.Clamp(RadialReleaseMs, 20, 500);
         VirtualPad ??= new();
         VirtualPad.DisableWhileRunning ??= [];
         VirtualPad.DisableWhileRunning = VirtualPad.DisableWhileRunning

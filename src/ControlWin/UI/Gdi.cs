@@ -120,6 +120,75 @@ internal static unsafe class Gdi
     }
 }
 
+/// <summary>
+/// Antialiased circles and rectangles with alpha (GDI+) drawn straight into a 32-bit premultiplied-alpha
+/// pixel buffer. Text is drawn afterwards with GDI.
+/// </summary>
+internal sealed unsafe class CircleCanvas : IDisposable
+{
+    private static nuint s_token;
+    private static bool s_started;
+
+    private nint _bitmap, _graphics;
+
+    public CircleCanvas(void* pixels, int width, int height)
+    {
+        if (!s_started)
+        {
+            s_started = true; // one attempt: without GDI+ nothing is drawn
+            var input = new GdiplusStartupInput { GdiplusVersion = 1 };
+            nuint token;
+            if (GdiplusStartup(&token, &input, 0) == 0) s_token = token;
+        }
+        if (s_token == 0) return;
+
+        nint bitmap, g;
+        if (GdipCreateBitmapFromScan0(width, height, width * 4, PixelFormat32bppPARGB, (byte*)pixels, &bitmap) != 0) return;
+        if (GdipGetImageGraphicsContext(bitmap, &g) != 0)
+        {
+            GdipDisposeImage(bitmap);
+            return;
+        }
+        _bitmap = bitmap;
+        _graphics = g;
+        GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+    }
+
+    /// <summary>Fills a circle; <paramref name="rgb"/> is a COLORREF, <paramref name="alpha"/> 0..255.</summary>
+    public void Circle(int cx, int cy, int radius, uint rgb, byte alpha = 255)
+    {
+        if (!TryBrush(rgb, alpha, out var brush)) return;
+        GdipFillEllipseI(_graphics, brush, cx - radius, cy - radius, radius * 2, radius * 2);
+        GdipDeleteBrush(brush);
+    }
+
+    public void Rect(int l, int t, int r, int b, uint rgb, byte alpha = 255)
+    {
+        if (!TryBrush(rgb, alpha, out var brush)) return;
+        GdipFillRectangleI(_graphics, brush, l, t, r - l, b - t);
+        GdipDeleteBrush(brush);
+    }
+
+    private bool TryBrush(uint rgb, byte alpha, out nint brush)
+    {
+        brush = 0;
+        if (_graphics == 0) return false;
+        // COLORREF is 0x00BBGGRR, GDI+ wants 0xAARRGGBB.
+        uint argb = ((uint)alpha << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
+        nint b;
+        if (GdipCreateSolidFill(argb, &b) != 0) return false;
+        brush = b;
+        return true;
+    }
+
+    public void Dispose()
+    {
+        if (_graphics != 0) GdipDeleteGraphics(_graphics);
+        if (_bitmap != 0) GdipDisposeImage(_bitmap);
+        _graphics = _bitmap = 0;
+    }
+}
+
 /// <summary>WM_PAINT helper: a double-buffered device context that is blitted to the window on dispose.</summary>
 internal sealed unsafe class BufferedPaint : IDisposable
 {

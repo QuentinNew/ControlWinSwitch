@@ -50,6 +50,23 @@ internal unsafe struct PAINTSTRUCT
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct SIZE { public int cx, cy; }
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct BLENDFUNCTION
+{
+    public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct GdiplusStartupInput
+{
+    public uint GdiplusVersion;
+    public nint DebugEventCallback;
+    public int SuppressBackgroundThread, SuppressExternalCodecs;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct MONITORINFO
 {
     public uint cbSize;
@@ -307,7 +324,7 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial nint GetDC(nint hwnd);
     [LibraryImport("user32.dll")] public static partial int ReleaseDC(nint hwnd, nint hdc);
     [LibraryImport("user32.dll")] public static partial int SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags);
-    public const uint LWA_ALPHA = 0x2;
+    public const uint LWA_ALPHA = 0x2, LWA_COLORKEY = 0x1;
 
     // ---- gdi32 ----------------------------------------------------------------------------
     [LibraryImport("gdi32.dll")] public static partial nint CreateCompatibleDC(nint hdc);
@@ -327,6 +344,24 @@ internal static unsafe partial class Win32
     [LibraryImport("gdi32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial nint CreateFontW(int height, int width, int escapement, int orientation, int weight, uint italic,
         uint underline, uint strikeOut, uint charSet, uint outPrecision, uint clipPrecision, uint quality, uint pitchAndFamily, string face);
+
+    // ---- gdiplus (flat API: antialiased circles with alpha for the radial menu) ----------------
+    [LibraryImport("gdiplus.dll")] public static partial int GdiplusStartup(nuint* token, GdiplusStartupInput* input, nint output);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCreateFromHDC(nint hdc, nint* graphics);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipDeleteGraphics(nint graphics);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipSetSmoothingMode(nint graphics, int mode);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCreateSolidFill(uint argb, nint* brush);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipDeleteBrush(nint brush);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipFillEllipseI(nint graphics, nint brush, int x, int y, int w, int h);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipFillRectangleI(nint graphics, nint brush, int x, int y, int w, int h);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCreateBitmapFromScan0(int width, int height, int stride, int format, byte* scan0, nint* bitmap);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipGetImageGraphicsContext(nint image, nint* graphics);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipDisposeImage(nint image);
+    public const int PixelFormat32bppPARGB = 0x000E200B;
+    [LibraryImport("user32.dll")]
+    public static partial int UpdateLayeredWindow(nint hwnd, nint dstDc, POINT* dst, SIZE* size, nint srcDc, POINT* src, uint key, BLENDFUNCTION* blend, uint flags);
+    public const uint ULW_ALPHA = 0x2;
+    public const int SmoothingModeAntiAlias = 4;
 
     // ---- kernel32 -------------------------------------------------------------------------
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial nint GetModuleHandleW(string? name);

@@ -3,7 +3,7 @@ using ControlWin.Config;
 
 namespace ControlWin.App;
 
-internal enum SettingKind { Toggle, Number, Action, Info, Text }
+internal enum SettingKind { Toggle, Number, Action, Info, Text, Choice }
 
 /// <summary>One row of the settings window.</summary>
 internal sealed class SettingItem
@@ -50,6 +50,20 @@ internal sealed class SettingItem
             set(MathF.Round(Math.Clamp(v, min, max) / step) * step);
         },
     };
+
+    /// <summary>One value out of a short list; left / right (or "A") cycle through it, wrapping.</summary>
+    public static SettingItem Choice(string label, IReadOnlyList<string> options, Func<int> get, Action<int> set)
+    {
+        void Cycle(int delta) => set(((get() + Math.Sign(delta)) % options.Count + options.Count) % options.Count);
+        return new()
+        {
+            Label = label,
+            Kind = SettingKind.Choice,
+            Value = () => options[Math.Clamp(get(), 0, options.Count - 1)],
+            Adjust = Cycle,
+            Activate = () => Cycle(1),
+        };
+    }
 
     public static SettingItem Action(string label, Action run, Func<string>? value = null) => new()
     {
@@ -194,7 +208,9 @@ internal static class SettingsPages
 
         var layout = new SettingsTab("Layout",
         [
-            SettingItem.Info("Not implemented yet", () => ""),
+            SettingItem.Choice("Main menu", ["List", "Radial"],
+                () => cfg().MenuLayout == MenuLayouts.Radial ? 1 : 0,
+                i => { cfg().MenuLayout = i == 1 ? MenuLayouts.Radial : MenuLayouts.List; Changed(); }),
         ]);
 
         var controller = new SettingsTab("Controller",

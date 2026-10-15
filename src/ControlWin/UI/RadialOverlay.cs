@@ -1,0 +1,310 @@
+using ControlWin.App;
+using ControlWin.Native;
+using static ControlWin.Native.Win32;
+
+namespace ControlWin.UI;
+
+/// <summary>
+/// The radial menu: a topmost, never-activating, background-less popup (per-pixel alpha, so edges are smooth).
+/// The root ring is centered on the monitor and never moves. A submenu opens a smaller ring centered on the
+/// node it came from, which stays at the center as a hub; the other nodes of the parent ring are hidden.
+/// It paints what <see cref="RadialModel"/> says; the stick, D-pad and buttons come from the controller, or
+/// from the mouse (hover highlights, left click runs, right click or the hub goes back).
+/// </summary>
+internal sealed unsafe class RadialOverlay : NativeWindow
+{
+    public const string ClassName = "ControlWin.Radial";
+
+    // Layout in DIPs.
+    private const int RingDip = 150, RingStepDip = 28, MinRingDip = 96;
+    private const int NodeDip = 34, SelectedNodeDip = 40, PillHeightDip = 34;
+
+    private static readonly uint NodeColor = Rgb(0x2A, 0x2A, 0x30);   // same as the list's panels
+    private static readonly uint RimColor = Rgb(0x4A, 0x4A, 0x54);
+    private static readonly uint SelectedColor = Gdi.Selection;       // same as the list's selection
+    private static readonly uint ConfirmColor = Rgb(0xE8, 0x9B, 0x2E);
+
+    private RadialModel? _model;
+    private RECT _work;
+    private uint _dpi = 96;
+    private (int X, int Y) _center;   // root ring center, screen coordinates
+    private (int X, int Y) _origin;   // screen position of the window's top-left pixel
+    private int _lastMouseX = -1, _lastMouseY = -1;
+
+    /// <summary>Mouse: node hovered / clicked (index in the current ring), back (right click or the hub).</summary>
+    public event Action<int>? NodeHovered, NodeClicked;
+    public event Action? BackRequested;
+
+    public RadialOverlay()
+    {
+        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED);
+    }
+
+    public bool IsShown => IsWindowVisible(Handle) != 0;
+
+    public void Show(RadialModel model)
+    {
+        _model = model;
+        _lastMouseX = _lastMouseY = -1;
+        Gdi.GetMonitorUnderCursor(out _work, out _dpi);
+        _center = (_work.Left + _work.Width / 2, _work.Top + _work.Height / 2);
+
+        Render();
+        ShowWindow(Handle, SW_SHOWNOACTIVATE);
+    }
+
+    /// <summary>Call after the model changed.</summary>
+    public void Refresh() => Render();
+
+    public void Hide()
+    {
+        ShowWindow(Handle, SW_HIDE);
+        K32EmptyWorkingSet(GetCurrentProcess());
+    }
+
+    protected override nint WndProc(uint msg, nuint wParam, nint lParam)
+    {
+        switch (msg)
+        {
+            case WM_ERASEBKGND:
+                return 1;
+            case WM_MOUSEACTIVATE:
+                return MA_NOACTIVATE;
+            case WM_SETCURSOR when (lParam & 0xFFFF) == HTCLIENT:
+                SetCursor(LoadCursorW(0, IsClickableAtCursor() ? IDC_HAND : IDC_ARROW));
+                return 1;
+            case WM_MOUSEMOVE:
+                OnMouseMove(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
+                return 0;
+            case WM_LBUTTONDOWN:
+                OnClick(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
+                return 0;
+            case WM_RBUTTONUP:
+                BackRequested?.Invoke();
+                return 0;
+        }
+        return base.WndProc(msg, wParam, lParam);
+    }
+
+    private int Px(int dip) => (int)Math.Round(dip * _dpi / 96.0);
+
+    private static int RingRadiusDip(int depth) => Math.Max(MinRingDip, RingDip - depth * RingStepDip);
+
+    private (int X, int Y) NodePosition((int X, int Y) center, int depth, float angle)
+    {
+        int radius = Px(RingRadiusDip(depth));
+        return (center.X + (int)MathF.Round(radius * MathF.Sin(angle)), center.Y - (int)MathF.Round(radius * MathF.Cos(angle)));
+    }
+
+    /// <summary>Screen center of ring <paramref name="depth"/>: each ring is centered on the node it was opened from.</summary>
+    private (int X, int Y) RingCenter(int depth)
+    {
+        var center = _center;
+        if (_model is null) return center;
+        for (int d = 1; d <= depth; d++)
+            center = NodePosition(center, d - 1, _model.Rings[d].ParentAngle ?? 0f);
+        return center;
+    }
+
+    /// <summary>Node of the current ring under a client point, or -1.</summary>
+    private int NodeAt(int clientX, int clientY)
+    {
+        if (_model is null) return -1;
+        int x = clientX + _origin.X, y = clientY + _origin.Y;
+        var ring = _model.Ring;
+        int reach = Px(NodeDip) + Px(4);
+        int depth = _model.Depth - 1;
+        var center = RingCenter(depth);
+        for (int i = 0; i < ring.Nodes.Count; i++)
+        {
+            var (cx, cy) = NodePosition(center, depth, ring.Nodes[i].Angle);
+            long dx = x - cx, dy = y - cy;
+            if (dx * dx + dy * dy <= (long)reach * reach) return i;
+        }
+        return -1;
+    }
+
+    private bool IsHub(int clientX, int clientY)
+    {
+        if (_model is null || _model.Depth < 2) return false;
+        var c = RingCenter(_model.Depth - 1);
+        long dx = clientX + _origin.X - c.X, dy = clientY + _origin.Y - c.Y;
+        long reach = Px(NodeDip) + Px(4);
+        return dx * dx + dy * dy <= reach * reach;
+    }
+
+    private bool IsClickableAtCursor()
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(Handle, &pt);
+        if (IsHub(pt.X, pt.Y)) return true;
+        int index = NodeAt(pt.X, pt.Y);
+        return index >= 0 && _model!.Ring.Nodes[index].Enabled;
+    }
+
+    private void OnMouseMove(int x, int y)
+    {
+        // The menu appearing under a resting cursor sends a mouse move: only react to real movement.
+        bool first = _lastMouseX < 0;
+        bool moved = x != _lastMouseX || y != _lastMouseY;
+        _lastMouseX = x;
+        _lastMouseY = y;
+        if (first || !moved) return;
+
+        int index = NodeAt(x, y);
+        if (index >= 0) NodeHovered?.Invoke(index);
+    }
+
+    private void OnClick(int x, int y)
+    {
+        if (IsHub(x, y))
+        {
+            BackRequested?.Invoke();
+            return;
+        }
+        int index = NodeAt(x, y);
+        if (index >= 0) NodeClicked?.Invoke(index);
+    }
+
+    /// <summary>Draws the menu into a 32-bit premultiplied bitmap and hands it to the window.</summary>
+    private void Render()
+    {
+        if (_model is not { } model || model.Rings.Count == 0) return;
+
+        int top = model.Depth - 1;
+        var ring = model.Ring;
+        var center = RingCenter(top);
+        int pad = Px(SelectedNodeDip) + Px(8);
+
+        // Node positions and the bounds of everything to draw (the window is only as big as that).
+        int l = center.X - pad, t = center.Y - pad, r = center.X + pad, b = center.Y + pad;
+        var positions = new (int X, int Y)[ring.Nodes.Count];
+        for (int i = 0; i < positions.Length; i++)
+        {
+            positions[i] = NodePosition(center, top, ring.Nodes[i].Angle);
+            l = Math.Min(l, positions[i].X - pad);
+            t = Math.Min(t, positions[i].Y - pad);
+            r = Math.Max(r, positions[i].X + pad);
+            b = Math.Max(b, positions[i].Y + pad);
+        }
+
+        // Name of the highlighted node, in a pill right under it.
+        string? text = null;
+        int pillL = 0, pillT = 0, pillR = 0, pillB = 0;
+        if (model.CurrentNode is { } selectedNode && model.Selected >= 0)
+        {
+            text = model.IsConfirming ? $"Confirm: {selectedNode.Label}?" : selectedNode.Label;
+            if (!model.IsConfirming && selectedNode.Entry?.Detail?.Invoke() is { Length: > 0 } detail) text += " - " + detail;
+
+            var (nx, ny) = positions[model.Selected];
+            int half = Math.Min(Px(190), Math.Max(Px(70), text.Length * Px(6) + Px(26)));
+            int height = Px(PillHeightDip);
+            pillL = Math.Clamp(nx - half, _work.Left + Px(8), Math.Max(_work.Left + Px(8), _work.Right - Px(8) - half * 2));
+            pillR = pillL + half * 2;
+            pillT = Math.Min(ny + Px(SelectedNodeDip) + Px(10), _work.Bottom - Px(8) - height);
+            pillB = pillT + height;
+            l = Math.Min(l, pillL);
+            t = Math.Min(t, pillT);
+            r = Math.Max(r, pillR);
+            b = Math.Max(b, pillB);
+        }
+
+        l = Math.Max(l, _work.Left);
+        t = Math.Max(t, _work.Top);
+        r = Math.Min(r, _work.Right);
+        b = Math.Min(b, _work.Bottom);
+        int w = r - l, h = b - t;
+        if (w <= 0 || h <= 0) return;
+        _origin = (l, t);
+
+        var info = new BITMAPINFOHEADER
+        {
+            biSize = (uint)sizeof(BITMAPINFOHEADER), biWidth = w, biHeight = -h, biPlanes = 1, biBitCount = 32,
+        };
+        void* bits;
+        var dc = CreateCompatibleDC(0);
+        var dib = CreateDIBSection(dc, &info, 0, &bits, 0, 0);
+        if (dib == 0)
+        {
+            DeleteDC(dc);
+            return;
+        }
+        var oldBitmap = SelectObject(dc, dib);
+        SetBkMode(dc, TRANSPARENT);
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        int half2 = Px(SelectedNodeDip);
+
+        RadialNode? hub = null;
+        if (top > 0)
+        {
+            float parentAngle = ring.ParentAngle ?? 0f;
+            foreach (var n in model.Rings[top - 1].Nodes)
+                if (RadialGeometry.Distance(n.Angle, parentAngle) < 0.001f) hub = n;
+        }
+
+        // Shapes (antialiased, with alpha) first...
+        using (var canvas = new CircleCanvas(bits, w, h))
+        {
+            if (hub is not null)
+            {
+                canvas.Circle(center.X - l, center.Y - t, Px(NodeDip) + Px(2), SelectedColor);
+                canvas.Circle(center.X - l, center.Y - t, Px(NodeDip), SelectedColor);
+            }
+
+            for (int i = 0; i < positions.Length; i++)
+            {
+                bool selected = i == model.Selected;
+                bool armed = i == model.Armed;
+                int radius = Px(selected ? SelectedNodeDip : NodeDip);
+                uint fill = armed ? ConfirmColor : selected ? SelectedColor : NodeColor;
+                uint rim = armed || selected ? fill : RimColor;
+                canvas.Circle(positions[i].X - l, positions[i].Y - t, radius + Px(2), rim);
+                canvas.Circle(positions[i].X - l, positions[i].Y - t, radius, fill);
+            }
+
+            if (text is not null)
+            {
+                int rad = (pillB - pillT) / 2;
+                canvas.Circle(pillL + rad - l, pillT + rad - t, rad, NodeColor);
+                canvas.Circle(pillR - rad - l, pillT + rad - t, rad, NodeColor);
+                canvas.Rect(pillL + rad - l, pillT - t, pillR - rad - l, pillB - t, NodeColor);
+            }
+        }
+
+        // ...then icons and text with GDI.
+        if (hub is not null)
+            Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, hub.Glyph.ToString(),
+                center.X - l - half2, center.Y - t - half2, center.X - l + half2, center.Y - t + half2, DT_CENTER | oneLine);
+
+        for (int i = 0; i < positions.Length; i++)
+        {
+            var node = ring.Nodes[i];
+            string glyph = i == model.Armed ? "" : node.Glyph.ToString();
+            int x = positions[i].X - l, y = positions[i].Y - t;
+            Gdi.Text(dc, fonts.Glyph, node.Enabled ? Gdi.TextColor : Gdi.Dim, glyph, x - half2, y - half2, x + half2, y + half2, DT_CENTER | oneLine);
+        }
+
+        if (text is not null)
+            Gdi.Text(dc, fonts.Detail, model.IsConfirming ? ConfirmColor : Gdi.TextColor, text,
+                pillL - l + Px(8), pillT - t, pillR - l - Px(8), pillB - t, DT_CENTER | oneLine | DT_END_ELLIPSIS);
+
+        GdiFlush();
+
+        // GDI text may clear the alpha byte of the pixels it touched (always on a drawn shape): make them opaque.
+        uint* pixels = (uint*)bits;
+        for (int i = 0, n = w * h; i < n; i++)
+            if ((pixels[i] >> 24) == 0 && (pixels[i] & 0x00FFFFFF) != 0) pixels[i] |= 0xFF000000;
+
+        var dst = new POINT { X = l, Y = t };
+        var size = new SIZE { cx = w, cy = h };
+        var src = new POINT();
+        var blend = new BLENDFUNCTION { BlendOp = 0, SourceConstantAlpha = 255, AlphaFormat = 1 }; // AC_SRC_OVER, AC_SRC_ALPHA
+        UpdateLayeredWindow(Handle, 0, &dst, &size, dc, &src, 0, &blend, ULW_ALPHA);
+
+        SelectObject(dc, oldBitmap);
+        DeleteObject(dib);
+        DeleteDC(dc);
+    }
+}
