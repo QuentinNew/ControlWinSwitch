@@ -106,6 +106,38 @@ internal static class RadialTree
         }
     }
 
+    /// <summary>The icon a node of this type has when none is configured.</summary>
+    internal static char DefaultGlyph(string type) => type switch
+    {
+        RadialNodeTypes.Close => MenuPages.Close,
+        RadialNodeTypes.Quit => MenuPages.Quit,
+        RadialNodeTypes.Sleep => MenuPages.Sleep,
+        RadialNodeTypes.Restart => MenuPages.Restart,
+        RadialNodeTypes.Shutdown => MenuPages.Power,
+        RadialNodeTypes.Settings => MenuPages.Gear,
+        RadialNodeTypes.Headset => MenuPages.Headphone,
+        RadialNodeTypes.MouseMode => MenuPages.Mouse,
+        RadialNodeTypes.VirtualPad => MenuPages.Game,
+        RadialNodeTypes.Folder => MenuPages.Folder,
+        _ => MenuPages.Play,
+    };
+
+    /// <summary>The name a node of this type has when none is configured.</summary>
+    internal static string DefaultLabel(string type) => type switch
+    {
+        RadialNodeTypes.Close => "Close menu",
+        RadialNodeTypes.Quit => "Quit ControlWin",
+        RadialNodeTypes.Sleep => "Sleep",
+        RadialNodeTypes.Restart => "Restart",
+        RadialNodeTypes.Shutdown => "Shut down",
+        RadialNodeTypes.Settings => "Settings",
+        RadialNodeTypes.Headset => "Headset",
+        RadialNodeTypes.MouseMode => "Mouse mode",
+        RadialNodeTypes.VirtualPad => "Virtual pad",
+        RadialNodeTypes.Folder => "Folder",
+        _ => "App shortcut",
+    };
+
     /// <summary>The code point of a "glyph" icon, or null (not a glyph icon, or not a valid hex code point).</summary>
     internal static char? GlyphOf(RadialIconConfig? icon)
     {

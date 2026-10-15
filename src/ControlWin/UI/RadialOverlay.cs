@@ -172,16 +172,18 @@ internal sealed unsafe class RadialOverlay : NativeWindow
     private const float IdleShade = 0.45f;
 
     /// <summary>Idle fill, idle rim and highlighted fill of a node: its own color, or the theme colors.</summary>
-    private static (uint Idle, uint IdleRim, uint Lit) Style(MenuEntry? entry)
+    private static (uint Idle, uint IdleRim, uint Lit) Style(MenuEntry? entry) => Style(entry?.Color);
+
+    internal static (uint Idle, uint IdleRim, uint Lit) Style(uint? color)
     {
-        if (entry?.Color is not { } picked) return (NodeColor, RimColor, SelectedColor);
+        if (color is not { } picked) return (NodeColor, RimColor, SelectedColor);
 
         uint idle = Rgb((byte)((picked & 0xFF) * IdleShade), (byte)(((picked >> 8) & 0xFF) * IdleShade), (byte)(((picked >> 16) & 0xFF) * IdleShade));
         return (idle, Blend(idle, Rgb(255, 255, 255), 0.18f), picked);
     }
 
     /// <summary>White icon, except on a highlighted node whose color is so bright that white would vanish.</summary>
-    private static uint GlyphColor(uint lit, bool highlighted)
+    internal static uint GlyphColor(uint lit, bool highlighted)
     {
         if (!highlighted) return Gdi.TextColor;
         double luma = 0.299 * (lit & 0xFF) + 0.587 * ((lit >> 8) & 0xFF) + 0.114 * ((lit >> 16) & 0xFF);
@@ -198,7 +200,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         return true;
     }
 
-    private static uint Blend(uint from, uint to, float t)
+    internal static uint Blend(uint from, uint to, float t)
     {
         static byte Mix(uint a, uint b, float t) => (byte)Math.Round(a + (b - a) * t);
         return Rgb(Mix(from & 0xFF, to & 0xFF, t), Mix((from >> 8) & 0xFF, (to >> 8) & 0xFF, t), Mix((from >> 16) & 0xFF, (to >> 16) & 0xFF, t));

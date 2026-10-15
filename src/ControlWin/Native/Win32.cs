@@ -155,6 +155,27 @@ internal unsafe struct NOTIFYICONDATAW
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal unsafe struct OPENFILENAMEW
+{
+    public uint lStructSize;
+    public nint hwndOwner, hInstance;
+    public char* lpstrFilter, lpstrCustomFilter;
+    public uint nMaxCustFilter, nFilterIndex;
+    public char* lpstrFile;
+    public uint nMaxFile;
+    public char* lpstrFileTitle;
+    public uint nMaxFileTitle;
+    public char* lpstrInitialDir, lpstrTitle;
+    public uint Flags;
+    public ushort nFileOffset, nFileExtension;
+    public char* lpstrDefExt;
+    public nint lCustData, lpfnHook;
+    public char* lpTemplateName;
+    public nint pvReserved;
+    public uint dwReserved, FlagsEx;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal unsafe struct SHFILEINFOW
 {
     public nint hIcon;
@@ -335,6 +356,16 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int ReleaseDC(nint hwnd, nint hdc);
     [LibraryImport("user32.dll")] public static partial int SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags);
     public const uint LWA_ALPHA = 0x2, LWA_COLORKEY = 0x1;
+    [LibraryImport("user32.dll")] public static partial nint SetCapture(nint hwnd);
+    [LibraryImport("user32.dll")] public static partial int ReleaseCapture();
+    [LibraryImport("user32.dll")] public static partial int OpenClipboard(nint owner);
+    [LibraryImport("user32.dll")] public static partial int CloseClipboard();
+    [LibraryImport("user32.dll")] public static partial nint GetClipboardData(uint format);
+    public const uint CF_UNICODETEXT = 13;
+    [LibraryImport("kernel32.dll")] public static partial void* GlobalLock(nint handle);
+    [LibraryImport("kernel32.dll")] public static partial int GlobalUnlock(nint handle);
+    [LibraryImport("comdlg32.dll", EntryPoint = "GetOpenFileNameW")] public static partial int GetOpenFileNameW(OPENFILENAMEW* ofn);
+    public const uint OFN_FILEMUSTEXIST = 0x1000, OFN_PATHMUSTEXIST = 0x800, OFN_EXPLORER = 0x80000, OFN_NOCHANGEDIR = 0x8;
 
     // ---- gdi32 ----------------------------------------------------------------------------
     [LibraryImport("gdi32.dll")] public static partial nint CreateCompatibleDC(nint hdc);

@@ -16,18 +16,21 @@ internal static unsafe class RadialIcons
     /// The image for the entry's icon, or 0 when it has none (the glyph is drawn instead).
     /// <paramref name="cover"/>: the image fills the node; otherwise it sits inside it.
     /// </summary>
-    public static nint Get(MenuEntry entry, out bool cover)
+    public static nint Get(MenuEntry entry, out bool cover) => Get(entry.Icon, entry.Launch?.Target, out cover);
+
+    /// <summary>Same, for an icon setting and the shortcut target it belongs to (may be null).</summary>
+    public static nint Get(Config.RadialIconConfig? icon, string? target, out bool cover)
     {
         cover = false;
-        if (entry.Icon is not { } icon) return 0;
+        if (icon is null) return 0;
 
         if (icon.Kind.Equals("image", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(icon.Path))
         {
             cover = true;
             return Cached("image|" + icon.Path, () => LoadImage(icon.Path!));
         }
-        if (icon.Kind.Equals("auto", StringComparison.OrdinalIgnoreCase) && entry.Launch is { Target.Length: > 0 } launch)
-            return Cached("auto|" + launch.Target, () => LoadFileIcon(launch.Target));
+        if (icon.Kind.Equals("auto", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(target))
+            return Cached("auto|" + target, () => LoadFileIcon(target));
         return 0;
     }
 

@@ -20,6 +20,7 @@ public class SettingsModelTests
         public void OpenLog() { }
         public void ToggleHeadset() { }
         public void OpenBluetoothSettings() { }
+        public void EditRadialMenu() { }
         public Action<string>? Commit;
         public string? Editing;
         public void EditText(string current, Action<string> commit) { Editing = current; Commit = commit; }

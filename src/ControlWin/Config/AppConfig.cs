@@ -78,6 +78,19 @@ internal sealed class RadialNodeConfig
 
     /// <summary>Folders only; folders do not nest.</summary>
     public List<RadialNodeConfig>? Children { get; set; }
+
+    public RadialNodeConfig Clone() => new()
+    {
+        Type = Type,
+        Slot = Slot,
+        Name = Name,
+        Color = Color,
+        Icon = Icon is null ? null : new RadialIconConfig { Kind = Icon.Kind, Glyph = Icon.Glyph, Path = Icon.Path },
+        Target = Target,
+        Args = Args,
+        WorkingDir = WorkingDir,
+        Children = Children?.Select(c => c.Clone()).ToList(),
+    };
 }
 
 /// <summary>Values of <see cref="AppConfig.MenuLayout"/>.</summary>

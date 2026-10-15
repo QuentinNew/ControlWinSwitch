@@ -189,6 +189,8 @@ internal interface ISettingsHost
     /// <summary>Starts inline text editing; <paramref name="commit"/> receives the new text on Enter / A.</summary>
     void EditText(string current, Action<string> commit);
     void OpenBluetoothSettings();
+    /// <summary>Opens the radial menu editor (a mouse window).</summary>
+    void EditRadialMenu();
 }
 
 internal static class SettingsPages
@@ -211,6 +213,7 @@ internal static class SettingsPages
             SettingItem.Choice("Main menu", ["List", "Radial"],
                 () => cfg().MenuLayout == MenuLayouts.Radial ? 1 : 0,
                 i => { cfg().MenuLayout = i == 1 ? MenuLayouts.Radial : MenuLayouts.List; Changed(); }),
+            SettingItem.Action("Edit radial menu", host.EditRadialMenu),
         ]);
 
         var controller = new SettingsTab("Controller",

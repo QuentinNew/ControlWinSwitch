@@ -17,7 +17,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
 
-    private enum Mode { Idle, Menu, Mouse, Settings }
+    private enum Mode { Idle, Menu, Mouse, Settings, Editor }
 
     private enum Dir { None, Up, Down, Left, Right }
 
@@ -30,6 +30,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly MenuOverlay _overlay = new();
     private readonly RadialModel _radial = new();
     private readonly RadialOverlay _radialOverlay = new();
+    private readonly RadialEditorWindow _radialEditor = new();
     private readonly RadialStick _radialStick = new(100);
     private bool _radialShown;   // the open menu is the radial one (layout is read when the menu opens)
     private readonly SettingsWindow _settingsWindow = new();
@@ -81,6 +82,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _radialOverlay.NodeClicked += OnRadialNodeClicked;
         _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
+        _radialEditor.Saved += OnRadialEditorSaved;
+        _radialEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseRadialEditor(); };
     }
 
     private AppConfig Config => _store.Current;
@@ -121,6 +124,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 case Mode.Menu: CloseMenu(); break;
                 case Mode.Mouse: ExitMouse(announce: true); break;
                 case Mode.Settings: CloseSettings(); break;
+                case Mode.Editor: break; // the editor is mouse only
                 default: OpenMenu(); break;
             }
             return;
@@ -133,6 +137,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 break;
             case Mode.Settings:
                 HandleSettingsInput();
+                break;
+            case Mode.Editor:
                 break;
             case Mode.Mouse:
                 _mouse.OnReport();
@@ -411,7 +417,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Opens the settings window (menu entry, tray); no-op when it is already open.</summary>
     public void ShowSettings()
     {
-        if (_shutDown || _mode == Mode.Settings) return;
+        if (_shutDown || _mode is Mode.Settings or Mode.Editor) return;
         OpenSettings();
     }
 
@@ -851,6 +857,41 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     string ISettingsHost.HeadsetStatus => _headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
 
+    void ISettingsHost.EditRadialMenu() => OpenRadialEditor();
+
+    private void OpenRadialEditor()
+    {
+        if (_shutDown || _mode == Mode.Editor) return;
+        if (_mode == Mode.Mouse) _mouse.Deactivate();
+        if (_mode == Mode.Menu) CloseMenu();
+        if (_mode == Mode.Settings) CloseSettings();
+
+        _pad.Submit(default); // neutral pad while the editor is open
+        _heldDirection = Dir.None;
+        _mode = Mode.Editor;
+        _radialEditor.Show(Config.RadialMenu ?? [], Config.Shortcuts);
+        Log.Info("Radial editor opened");
+    }
+
+    private void CloseRadialEditor()
+    {
+        _radialEditor.Hide();
+        _mode = Mode.Idle;
+        _ignoreMask = _state.Current;
+        _ignoreSticks = true;
+        Log.Info("Radial editor closed");
+    }
+
+    private void OnRadialEditorSaved(List<RadialNodeConfig> tree)
+    {
+        if (_mode != Mode.Editor) return;
+        Config.RadialMenu = tree;
+        Config.Sanitize();
+        ((ISettingsHost)this).ConfigChanged();
+        CloseRadialEditor();
+        _toast.Show(MenuPages.Gear, "Radial menu saved");
+    }
+
     void ISettingsHost.ConfigChanged()
     {
         var error = _store.Save();
@@ -993,14 +1034,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Opens the menu (tray, second launch); no-op when it is already open.</summary>
     public void ShowMenu()
     {
-        if (_shutDown || _mode == Mode.Menu) return;
+        if (_shutDown || _mode is Mode.Menu or Mode.Editor) return;
         OpenMenu();
     }
 
     /// <summary>Tray left click.</summary>
     public void ToggleMenu()
     {
-        if (_shutDown) return;
+        if (_shutDown || _mode == Mode.Editor) return;
         if (_mode == Mode.Menu) CloseMenu();
         else OpenMenu();
     }
@@ -1018,6 +1059,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         StopRepeat();
         if (_mode == Mode.Menu) CloseMenu();
         if (_mode == Mode.Settings) CloseSettings();
+        if (_mode == Mode.Editor) CloseRadialEditor();
         _mouse.Deactivate(); // releases held mouse buttons
         _mode = Mode.Idle;
         _toast.Hide();
