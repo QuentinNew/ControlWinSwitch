@@ -15,8 +15,11 @@ internal sealed class AppController : IDisposable
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
 
-    private enum Mode { Idle, Menu }
+    private enum Mode { Idle, Menu, Mouse }
 
+    private readonly SendInputMouse _mouseOutput = new();
+    private readonly MouseMode _mouse;
+    private char _mouseGlyph;
     private readonly ControllerState _state;
     private readonly MainWindow _window;
     private readonly MenuModel _menu = new();
@@ -43,6 +46,47 @@ internal sealed class AppController : IDisposable
     {
         _state = state;
         _window = window;
+        _mouse = new MouseMode(state, _mouseOutput);
+    }
+
+    /// <summary>Waitable timer handle for the message loop; signalled only while a stick moves the mouse.</summary>
+    public nint MouseTimerHandle => _mouseOutput.TimerHandle;
+
+    /// <summary>The mouse timer fired.</summary>
+    public void OnMouseTick()
+    {
+        if (_mode == Mode.Mouse) _mouse.Tick();
+        else _mouse.Deactivate(); // stray tick: make sure the timer is stopped
+    }
+
+    /// <summary>PC going to sleep or resuming: nothing may stay pressed, and the old state is stale.</summary>
+    public void OnPowerChange()
+    {
+        _state.Reset();
+        if (_shutDown) return;
+        if (_mode == Mode.Mouse) ExitMouse(announce: false);
+        _ignoreMask = Buttons.None;
+        _ignoreSticks = false;
+    }
+
+    private void EnterMouse(char glyph)
+    {
+        _mouseGlyph = glyph;
+        _pad.Submit(default); // neutral pad while the mouse owns the input
+        _mode = Mode.Mouse;
+        _mouse.Activate(_state.Current);
+        _toast.Show(glyph, "Mouse mode - Capture to exit");
+        Log.Info("Mouse mode on");
+    }
+
+    private void ExitMouse(bool announce)
+    {
+        _mouse.Deactivate(); // releases left / right buttons
+        _mode = Mode.Idle;
+        _ignoreMask = _state.Current;
+        _ignoreSticks = true;
+        if (announce) _toast.Show(_mouseGlyph, "Mouse mode: off");
+        Log.Info("Mouse mode off");
     }
 
     /// <summary>Report handler: updates the shared state first, so later subscribers (the debug printer) see it.</summary>
@@ -55,6 +99,7 @@ internal sealed class AppController : IDisposable
         if (_state.Pressed(Buttons.Capture))
         {
             if (_mode == Mode.Menu) CloseMenu();
+            else if (_mode == Mode.Mouse) ExitMouse(announce: true);
             else OpenMenu();
             return;
         }
@@ -63,6 +108,9 @@ internal sealed class AppController : IDisposable
         {
             case Mode.Menu:
                 HandleMenuInput();
+                break;
+            case Mode.Mouse:
+                _mouse.OnReport();
                 break;
             default:
                 Forward();
@@ -77,6 +125,7 @@ internal sealed class AppController : IDisposable
         if (_shutDown) return;
         _pad.Detach(); // re-plugged on the next report
         if (_mode == Mode.Menu) CloseMenu();
+        else if (_mode == Mode.Mouse) ExitMouse(announce: false);
         _ignoreMask = Buttons.None;
         _ignoreSticks = false;
     }
@@ -98,6 +147,7 @@ internal sealed class AppController : IDisposable
 
     private void OpenMenu()
     {
+        if (_mode == Mode.Mouse) _mouse.Deactivate(); // tray / second launch while the mouse is on
         _menu.Reset(MenuPages.Root(PadDetail, HeadsetDetail));
         _pad.Submit(default); // neutral pad while the menu owns the input
         _heldDirection = ReadDirection(); // a stick already tilted must be released first, not scroll on open
@@ -185,6 +235,10 @@ internal sealed class AppController : IDisposable
                 PostMessageW(_window.Handle, WM_CLOSE, 0, 0);
                 break;
 
+            case CommandKind.MouseMode:
+                EnterMouse(entry.Glyph);
+                break;
+
             case CommandKind.ToggleVirtualPad:
                 TogglePad(entry.Glyph);
                 break;
@@ -243,6 +297,8 @@ internal sealed class AppController : IDisposable
 
         StopRepeat();
         if (_mode == Mode.Menu) CloseMenu();
+        _mouse.Deactivate(); // releases held mouse buttons
+        _mode = Mode.Idle;
         _toast.Hide();
         _pad.Dispose(); // unplugs the pad: it disappears from the games
         _window.RemoveTray();
@@ -323,7 +379,12 @@ internal sealed class AppController : IDisposable
         _pad.Submit(XInputMapper.Map(held, left, right, VirtualPadDefaults.SwapAB, VirtualPadDefaults.SwapXY));
     }
 
-    public void Dispose() => _pad.Dispose();
+    public void Dispose()
+    {
+        _mouse.Deactivate();
+        _mouseOutput.Dispose();
+        _pad.Dispose();
+    }
 }
 
 /// <summary>Code defaults until the config file (F4) provides them.</summary>

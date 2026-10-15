@@ -120,6 +120,10 @@ internal sealed unsafe class MainWindow : NativeWindow
                 OnDeviceChange(wParam, lParam);
                 return 1; // TRUE: grant the request
 
+            case WM_POWERBROADCAST:
+                if (wParam == PBT_APMSUSPEND || wParam == PBT_APMRESUMEAUTOMATIC) Controller?.OnPowerChange();
+                return 1; // BROADCAST_QUERY_DENY is not used
+
             case WM_TIMER:
                 Controller?.OnTimer(wParam);
                 return 0;

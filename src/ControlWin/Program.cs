@@ -57,7 +57,7 @@ internal static unsafe class Program
             if (!reader.IsOpen) Log.Info("Pro Controller not connected yet (waiting for it)");
             window.UpdateTray();
 
-            RunMessageLoop(reader);
+            RunMessageLoop(reader, controller);
             controller.Shutdown(); // no-op when WM_CLOSE already did it
             controller.Dispose();
             return 0;
@@ -70,15 +70,20 @@ internal static unsafe class Program
     }
 
     /// <summary>Event-driven loop: blocks until a message or a controller report arrives (~0% CPU idle).</summary>
-    private static void RunMessageLoop(HidControllerReader reader)
+    private static void RunMessageLoop(HidControllerReader reader, AppController controller)
     {
-        nint handle = reader.EventHandle; // the mouse timer handle joins it in F3
+        // [0] controller reports, [1] mouse timer (signalled only while a stick moves the cursor)
+        nint* handles = stackalloc nint[2];
+        handles[0] = reader.EventHandle;
+        handles[1] = controller.MouseTimerHandle;
+        uint count = handles[1] != 0 ? 2u : 1u;
         MSG msg;
         while (true)
         {
-            uint r = MsgWaitForMultipleObjectsEx(1, &handle, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            uint r = MsgWaitForMultipleObjectsEx(count, handles, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             if (r == uint.MaxValue) return; // WAIT_FAILED
             if (r == WAIT_OBJECT_0) reader.OnSignaled();
+            else if (r == WAIT_OBJECT_0 + 1 && count == 2) controller.OnMouseTick();
 
             while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE) != 0)
             {
