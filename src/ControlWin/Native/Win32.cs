@@ -376,6 +376,7 @@ internal static unsafe partial class Win32
     [LibraryImport("gdi32.dll")] public static partial int DeleteObject(nint obj);
     [LibraryImport("gdi32.dll")] public static partial int DeleteDC(nint hdc);
     [LibraryImport("gdi32.dll")] public static partial int GdiFlush();
+    [LibraryImport("gdi32.dll")] public static partial uint GetPixel(nint hdc, int x, int y);
     [LibraryImport("gdi32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial int GetTextExtentPoint32W(nint hdc, string text, int count, SIZE* size);
     [LibraryImport("gdi32.dll")] public static partial int BitBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, uint rop);

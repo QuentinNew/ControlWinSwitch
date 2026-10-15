@@ -71,6 +71,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private Field _field;
     private string _buffer = "";
 
+    private bool _pipetting;     // the eyedropper button is held
     private int _addSlot = -1;    // empty slot whose "add" list is open
     private string? _error;
     private float _hue = 210f, _sat = 0.8f, _val = 0.9f;
@@ -750,9 +751,10 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         DrawColorPicker(node, bx, by, svW, svH, hueW);
         by += svH + Px(10);
 
-        int hexW = Px(130);
+        int hexW = Px(112), pipW = Px(46), gap = Px(6);
         TextField(Field.Hex, "Hex", bx, by, bx + hexW, node.Color ?? "", "default");
-        Button(bx + hexW + Px(8), by + Px(18), bx + bw, by + Px(52), "Default color", () => node.Color = null);
+        Button(bx + hexW + gap, by + Px(18), bx + bw - pipW - gap, by + Px(52), "Default", () => node.Color = null);
+        DrawPipette(node, bx + bw - pipW, by, bx + bw, by + Px(52));
         by += Px(66);
 
         if (isFolder && _model.Folder is null)
@@ -783,6 +785,47 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         // Delete.
         int footerTop = Px(HeightDip - FooterDip);
         Button(ax, footerTop - Px(52), ax + Px(130), footerTop - Px(16), "Delete node", () => _model.Delete(node), fill: Danger);
+    }
+
+    /// <summary>
+    /// Eyedropper: press it and drag onto any pixel of the screen (the mouse stays captured while the button is
+    /// held); the node's color follows the pixel under the cursor and is kept on release.
+    /// </summary>
+    private void DrawPipette(RadialNodeConfig node, int l, int t, int r, int b)
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        int top = t + Px(18);
+        Text(fonts.Footer, Gdi.Dim, "Pick", l, t, r, top, DT_CENTER | oneLine);
+        RoundRect(l, top, r, b, Px(8), _pipetting ? Gdi.Selection : PanelLight);
+        Text(fonts.Glyph, Gdi.TextColor, "", l, top, r, b, DT_CENTER | oneLine);
+
+        var hit = AddHit(l, top, r, b);
+        hit.Down = (_, _) =>
+        {
+            CommitField();
+            _pipetting = true;
+            SampleScreen(node);
+        };
+        hit.Drag = (_, _) => SampleScreen(node);
+        hit.Up = (_, _) =>
+        {
+            _pipetting = false;
+            Redraw();
+        };
+    }
+
+    private void SampleScreen(RadialNodeConfig node)
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        var screen = GetDC(0);
+        uint colorref = GetPixel(screen, pt.X, pt.Y);
+        ReleaseDC(0, screen);
+        if (colorref == 0xFFFFFFFF) return; // CLR_INVALID: outside every monitor
+
+        SetColor(node, $"#{colorref & 0xFF:X2}{(colorref >> 8) & 0xFF:X2}{(colorref >> 16) & 0xFF:X2}");
+        Redraw();
     }
 
     private void DrawColorPicker(RadialNodeConfig node, int l, int t, int w, int h, int hueW)
