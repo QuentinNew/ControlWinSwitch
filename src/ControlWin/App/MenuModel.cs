@@ -179,7 +179,7 @@ internal sealed class MenuModel
 internal static class MenuPages
 {
     // Segoe Fluent Icons code points.
-    internal const char Folder = '', Close = '';
+    internal const char Folder = '', Close = '';
     internal const char Gear ='', Mouse = '', Play = '', Game = '', Headphone = '',
         Power = '', Sleep = '', Restart = '', Quit = '';
 
