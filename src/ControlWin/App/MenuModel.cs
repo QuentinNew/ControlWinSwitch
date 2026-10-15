@@ -5,7 +5,7 @@ internal enum CommandKind
     None,
     MouseMode,
     Shortcut,
-    ToggleBetterJoy,
+    ToggleVirtualPad,
     ToggleHeadset,
     Sleep,
     Restart,
@@ -153,11 +153,11 @@ internal static class MenuPages
     private const char Mouse = '', Play = '', Game = '', Headphone = '',
         Power = '', Sleep = '', Restart = '', Quit = '';
 
-    public static MenuPage Root() => new("ControlWin",
+    public static MenuPage Root(Func<string?>? virtualPadDetail = null) => new("ControlWin",
     [
         new MenuEntry { Label = "Mouse mode", Glyph = Mouse, Command = new(CommandKind.MouseMode) },
         new MenuEntry { Label = "Shortcuts", Glyph = Play, Submenu = Shortcuts },
-        new MenuEntry { Label = "BetterJoy", Glyph = Game, Command = new(CommandKind.ToggleBetterJoy) },
+        new MenuEntry { Label = "Virtual pad", Glyph = Game, Detail = virtualPadDetail, Command = new(CommandKind.ToggleVirtualPad) },
         new MenuEntry { Label = "Headset", Glyph = Headphone, Command = new(CommandKind.ToggleHeadset) },
         new MenuEntry { Label = "Power", Glyph = Power, Submenu = PowerPage },
         new MenuEntry

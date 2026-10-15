@@ -342,6 +342,8 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll", SetLastError = true)] public static partial nint RegisterDeviceNotificationW(nint recipient, void* filter, uint flags);
     [LibraryImport("user32.dll")] public static partial int UnregisterDeviceNotification(nint handle);
     public static readonly nint INVALID_HANDLE_VALUE = -1;
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial int DeviceIoControl(nint device, uint code, void* input, uint inputSize, void* output, uint outputSize, uint* returned, nint overlapped);
 
     [LibraryImport("hid.dll")] public static partial byte HidD_GetPreparsedData(nint file, nint* preparsed);
     [LibraryImport("hid.dll")] public static partial byte HidD_FreePreparsedData(nint preparsed);

@@ -44,6 +44,7 @@ internal static unsafe class Program
             if (!reader.IsOpen) Log.Info("Pro Controller not connected yet (waiting for it)");
 
             RunMessageLoop(reader);
+            controller.Dispose();
             return 0;
         }
         catch (Exception ex)

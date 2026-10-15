@@ -174,7 +174,7 @@ public class MenuModelTests
         m.Reset(MenuPages.Root());
 
         var labels = m.Page.Entries.Select(e => e.Label).ToArray();
-        Assert.Equal(["Mouse mode", "Shortcuts", "BetterJoy", "Headset", "Power", "Quit ControlWin"], labels);
+        Assert.Equal(["Mouse mode", "Shortcuts", "Virtual pad", "Headset", "Power", "Quit ControlWin"], labels);
 
         // Quit must ask for confirmation, and Power opens a page of three confirmed actions.
         var quit = m.Page.Entries[^1];

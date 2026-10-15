@@ -1,6 +1,6 @@
 # ControlWin
 
-A tiny background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads such as the 8BitDo in Switch mode): open a menu with the **Capture** button, drive the mouse with the sticks, launch Steam or games, start and stop BetterJoy, connect a Bluetooth headset, sleep or shut down the PC, all from the couch.
+A tiny background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads such as the 8BitDo in Switch mode): open a menu with the **Capture** button, drive the mouse with the sticks, launch Steam or games, expose a virtual Xbox 360 pad, connect a Bluetooth headset, sleep or shut down the PC, all from the couch.
 
 It is written in C# / .NET 10, compiled with **NativeAOT** to a single small exe (about 1 MB), and uses plain Win32 and GDI with no WinForms or WPF. Goal: a few MB of RAM and no CPU use while idle.
 
@@ -14,7 +14,7 @@ It is written in C# / .NET 10, compiled with **NativeAOT** to a single small exe
 | Menu overlay, Capture toggle, navigation (actions are stubs, only Quit works) | **Done** |
 | Mouse mode (sticks = mouse, A/B = clicks, right stick = scroll) | Planned |
 | Config file + launching shortcuts without admin rights | Planned |
-| BetterJoy start/stop | Planned |
+| Virtual Xbox 360 pad via ViGEmBus (needs ViGEmBus; stop BetterJoy first) | **Done** (needs real-pad validation) |
 | Power: sleep, restart, shut down | Planned |
 | Bluetooth headset connect/disconnect | Planned |
 | Tray icon, single instance, installer, start at logon | Planned |
@@ -79,7 +79,7 @@ Capture opens or closes an overlay that you navigate with the D-pad or left stic
 
 - Mouse mode
 - Shortcuts (from the config file: Steam Big Picture, games, any exe, URI or shortcut)
-- BetterJoy start/stop
+- Virtual pad on/off
 - Bluetooth headset connect/disconnect
 - Power: Sleep / Restart / Shut down (each with a confirmation)
 - Quit
@@ -94,7 +94,6 @@ Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A*
 
 ```jsonc
 {
-  "betterJoyPath": "C:\\Users\\you\\Downloads\\BetterJoy_v7.1\\BetterJoyForCemu.exe",
   "headsetName": "WH-CH700N",
   "mouse": { "speed": 1400, "fastMultiplier": 2.5, "slowMultiplier": 0.3, "deadzone": 0.15, "scrollSpeed": 12 },
   "shortcuts": [
