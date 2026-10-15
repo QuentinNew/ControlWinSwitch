@@ -155,6 +155,16 @@ internal unsafe struct NOTIFYICONDATAW
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal unsafe struct SHFILEINFOW
+{
+    public nint hIcon;
+    public int iIcon;
+    public uint dwAttributes;
+    public fixed char szDisplayName[260];
+    public fixed char szTypeName[80];
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct ICONINFO
 {
     public int fIcon;
@@ -358,6 +368,23 @@ internal static unsafe partial class Win32
     [LibraryImport("gdiplus.dll")] public static partial int GdipGetImageGraphicsContext(nint image, nint* graphics);
     [LibraryImport("gdiplus.dll")] public static partial int GdipDisposeImage(nint image);
     public const int PixelFormat32bppPARGB = 0x000E200B;
+    [LibraryImport("gdiplus.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial int GdipCreateBitmapFromFile(string file, nint* bitmap);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCreateBitmapFromHICON(nint icon, nint* bitmap);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipGetImageWidth(nint image, uint* width);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipGetImageHeight(nint image, uint* height);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipDrawImageRectI(nint graphics, nint image, int x, int y, int w, int h);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCreatePath(int fillMode, nint* path);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipDeletePath(nint path);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipAddPathEllipseI(nint path, int x, int y, int w, int h);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipSetClipPath(nint graphics, nint path, int combineMode);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipResetClip(nint graphics);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipSetInterpolationMode(nint graphics, int mode);
+    public const int InterpolationModeHighQualityBicubic = 7;
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial nuint SHGetFileInfoW(string path, uint attributes, SHFILEINFOW* info, uint size, uint flags);
+    public const uint SHGFI_ICON = 0x100, SHGFI_LARGEICON = 0x0;
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial uint SearchPathW(string? path, string file, string? extension, uint bufferLength, char* buffer, nint filePart);
     [LibraryImport("user32.dll")]
     public static partial int UpdateLayeredWindow(nint hwnd, nint dstDc, POINT* dst, SIZE* size, nint srcDc, POINT* src, uint key, BLENDFUNCTION* blend, uint flags);
     public const uint ULW_ALPHA = 0x2;

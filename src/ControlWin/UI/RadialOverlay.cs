@@ -49,6 +49,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         Gdi.GetMonitorUnderCursor(out _work, out _dpi);
         _center = (_work.Left + _work.Width / 2, _work.Top + _work.Height / 2);
 
+        RadialIcons.Clear(); // pictures are read again each time the menu opens
         Render();
         ShowWindow(Handle, SW_SHOWNOACTIVATE);
     }
@@ -167,6 +168,42 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         if (index >= 0) NodeClicked?.Invoke(index);
     }
 
+    /// <summary>Idle shade of a custom color, relative to the highlighted color the user picked.</summary>
+    private const float IdleShade = 0.45f;
+
+    /// <summary>Idle fill, idle rim and highlighted fill of a node: its own color, or the theme colors.</summary>
+    private static (uint Idle, uint IdleRim, uint Lit) Style(MenuEntry? entry)
+    {
+        if (entry?.Color is not { } picked) return (NodeColor, RimColor, SelectedColor);
+
+        uint idle = Rgb((byte)((picked & 0xFF) * IdleShade), (byte)(((picked >> 8) & 0xFF) * IdleShade), (byte)(((picked >> 16) & 0xFF) * IdleShade));
+        return (idle, Blend(idle, Rgb(255, 255, 255), 0.18f), picked);
+    }
+
+    /// <summary>White icon, except on a highlighted node whose color is so bright that white would vanish.</summary>
+    private static uint GlyphColor(uint lit, bool highlighted)
+    {
+        if (!highlighted) return Gdi.TextColor;
+        double luma = 0.299 * (lit & 0xFF) + 0.587 * ((lit >> 8) & 0xFF) + 0.114 * ((lit >> 16) & 0xFF);
+        return luma > 185 ? Rgb(0x1B, 0x1B, 0x1F) : Gdi.TextColor;
+    }
+
+    /// <summary>Draws the node's picture (program icon or image file) when it has one. Returns true when it did.</summary>
+    private static bool DrawPicture(CircleCanvas canvas, MenuEntry? entry, int x, int y, int radius)
+    {
+        if (entry is null) return false;
+        nint image = RadialIcons.Get(entry, out bool cover);
+        if (image == 0) return false;
+        canvas.Image(image, x, y, radius, cover);
+        return true;
+    }
+
+    private static uint Blend(uint from, uint to, float t)
+    {
+        static byte Mix(uint a, uint b, float t) => (byte)Math.Round(a + (b - a) * t);
+        return Rgb(Mix(from & 0xFF, to & 0xFF, t), Mix((from >> 8) & 0xFF, (to >> 8) & 0xFF, t), Mix((from >> 16) & 0xFF, (to >> 16) & 0xFF, t));
+    }
+
     /// <summary>Draws the menu into a 32-bit premultiplied bitmap and hands it to the window.</summary>
     private void Render()
     {
@@ -244,24 +281,32 @@ internal sealed unsafe class RadialOverlay : NativeWindow
                 if (RadialGeometry.Distance(n.Angle, parentAngle) < 0.001f) hub = n;
         }
 
-        // Shapes (antialiased, with alpha) first...
+        // Shapes and pictures (antialiased, with alpha) first...
+        var pictured = new bool[positions.Length];
+        bool hubPictured = false;
         using (var canvas = new CircleCanvas(bits, w, h))
         {
             if (hub is not null)
             {
-                canvas.Circle(center.X - l, center.Y - t, Px(NodeDip) + Px(2), SelectedColor);
-                canvas.Circle(center.X - l, center.Y - t, Px(NodeDip), SelectedColor);
+                uint lit = Style(hub.Entry).Lit;
+                canvas.Circle(center.X - l, center.Y - t, Px(NodeDip) + Px(2), lit);
+                canvas.Circle(center.X - l, center.Y - t, Px(NodeDip), lit);
+                hubPictured = DrawPicture(canvas, hub.Entry, center.X - l, center.Y - t, Px(NodeDip));
             }
 
             for (int i = 0; i < positions.Length; i++)
             {
+                var entry = ring.Nodes[i].Entry;
+                var style = Style(entry);
                 bool selected = i == model.Selected;
                 bool armed = i == model.Armed;
                 int radius = Px(selected ? SelectedNodeDip : NodeDip);
-                uint fill = armed ? ConfirmColor : selected ? SelectedColor : NodeColor;
-                uint rim = armed || selected ? fill : RimColor;
-                canvas.Circle(positions[i].X - l, positions[i].Y - t, radius + Px(2), rim);
-                canvas.Circle(positions[i].X - l, positions[i].Y - t, radius, fill);
+                uint fill = armed ? ConfirmColor : selected ? style.Lit : style.Idle;
+                uint rim = armed || selected ? fill : style.IdleRim;
+                int x = positions[i].X - l, y = positions[i].Y - t;
+                canvas.Circle(x, y, radius + Px(2), rim);
+                canvas.Circle(x, y, radius, fill);
+                if (!armed) pictured[i] = DrawPicture(canvas, entry, x, y, radius);
             }
 
             if (text is not null)
@@ -274,16 +319,18 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         }
 
         // ...then icons and text with GDI.
-        if (hub is not null)
-            Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, hub.Glyph.ToString(),
+        if (hub is not null && !hubPictured)
+            Gdi.Text(dc, fonts.Glyph, GlyphColor(Style(hub.Entry).Lit, true), hub.Glyph.ToString(),
                 center.X - l - half2, center.Y - t - half2, center.X - l + half2, center.Y - t + half2, DT_CENTER | oneLine);
 
         for (int i = 0; i < positions.Length; i++)
         {
+            if (pictured[i]) continue;
             var node = ring.Nodes[i];
             string glyph = i == model.Armed ? "" : node.Glyph.ToString();
             int x = positions[i].X - l, y = positions[i].Y - t;
-            Gdi.Text(dc, fonts.Glyph, node.Enabled ? Gdi.TextColor : Gdi.Dim, glyph, x - half2, y - half2, x + half2, y + half2, DT_CENTER | oneLine);
+            uint color = !node.Enabled ? Gdi.Dim : i == model.Armed ? Gdi.TextColor : GlyphColor(Style(node.Entry).Lit, i == model.Selected);
+            Gdi.Text(dc, fonts.Glyph, color, glyph, x - half2, y - half2, x + half2, y + half2, DT_CENTER | oneLine);
         }
 
         if (text is not null)

@@ -99,6 +99,23 @@ internal static class RadialMenuRepair
                 notes.Add($"{where}: invalid color '{node.Color}' ignored");
                 node.Color = null;
             }
+            if (node.Icon is { } icon)
+            {
+                string kind = (icon.Kind ?? "").Trim().ToLowerInvariant();
+                bool valid = kind switch
+                {
+                    "glyph" => !string.IsNullOrWhiteSpace(icon.Glyph),
+                    "auto" => true,
+                    "image" => !string.IsNullOrWhiteSpace(icon.Path),
+                    _ => false,
+                };
+                if (valid) icon.Kind = kind;
+                else
+                {
+                    notes.Add($"{where}: unusable icon ignored");
+                    node.Icon = null;
+                }
+            }
             if (node.Type == RadialNodeTypes.Folder)
                 node.Children = Fix(node.Children ?? [], RadialDefaults.FolderSlots, allowFolders: false, node.Name ?? "folder", notes);
             else
@@ -180,6 +197,14 @@ internal static class RadialMenuRepair
             return true;
         }
         return false;
+    }
+
+    /// <summary>"#RRGGBB" as a COLORREF (0x00BBGGRR), or null when missing or invalid.</summary>
+    public static uint? ParseColor(string? value)
+    {
+        if (value is null || !IsColor(value)) return null;
+        uint rgb = uint.Parse(value.AsSpan(1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
+        return ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
     }
 
     public static bool IsColor(string value) =>

@@ -21,67 +21,70 @@ internal static class RadialTree
     {
         string Label(string fallback) => node.Name ?? fallback;
         char Glyph(char fallback) => GlyphOf(node.Icon) ?? fallback;
+        uint? color = RadialMenuRepair.ParseColor(node.Color);
+        // App shortcuts show the program's own icon unless told otherwise.
+        var icon = node.Icon ?? (node.Type == RadialNodeTypes.Shortcut ? new RadialIconConfig { Kind = "auto" } : null);
 
         switch (node.Type)
         {
             case RadialNodeTypes.Close:
                 return new MenuEntry
                 {
-                    Label = Label("Close menu"), Glyph = Glyph(MenuPages.Close), Slot = node.Slot,
+                    Label = Label("Close menu"), Glyph = Glyph(MenuPages.Close), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.CloseMenu),
                 };
             case RadialNodeTypes.Quit:
                 return new MenuEntry
                 {
-                    Label = Label("Quit ControlWin"), Glyph = Glyph(MenuPages.Quit), Slot = node.Slot,
+                    Label = Label("Quit ControlWin"), Glyph = Glyph(MenuPages.Quit), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.Quit), ConfirmPrompt = "Quit ControlWin?",
                 };
             case RadialNodeTypes.Sleep:
                 return new MenuEntry
                 {
-                    Label = Label("Sleep"), Glyph = Glyph(MenuPages.Sleep), Slot = node.Slot,
+                    Label = Label("Sleep"), Glyph = Glyph(MenuPages.Sleep), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.Sleep), ConfirmPrompt = "Put the PC to sleep?",
                 };
             case RadialNodeTypes.Restart:
                 return new MenuEntry
                 {
-                    Label = Label("Restart"), Glyph = Glyph(MenuPages.Restart), Slot = node.Slot,
+                    Label = Label("Restart"), Glyph = Glyph(MenuPages.Restart), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.Restart), ConfirmPrompt = "Restart the PC?",
                 };
             case RadialNodeTypes.Shutdown:
                 return new MenuEntry
                 {
-                    Label = Label("Shut down"), Glyph = Glyph(MenuPages.Power), Slot = node.Slot,
+                    Label = Label("Shut down"), Glyph = Glyph(MenuPages.Power), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.Shutdown), ConfirmPrompt = "Shut down the PC?",
                 };
             case RadialNodeTypes.Settings:
                 return new MenuEntry
                 {
-                    Label = Label("Settings"), Glyph = Glyph(MenuPages.Gear), Slot = node.Slot,
+                    Label = Label("Settings"), Glyph = Glyph(MenuPages.Gear), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.OpenSettings),
                 };
             case RadialNodeTypes.Headset:
                 return new MenuEntry
                 {
-                    Label = Label("Headset"), Glyph = Glyph(MenuPages.Headphone), Slot = node.Slot,
+                    Label = Label("Headset"), Glyph = Glyph(MenuPages.Headphone), Slot = node.Slot, Color = color, Icon = icon,
                     Detail = headsetDetail, Command = new(CommandKind.ToggleHeadset),
                 };
             case RadialNodeTypes.MouseMode:
                 return new MenuEntry
                 {
-                    Label = Label("Mouse mode"), Glyph = Glyph(MenuPages.Mouse), Slot = node.Slot,
+                    Label = Label("Mouse mode"), Glyph = Glyph(MenuPages.Mouse), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.MouseMode),
                 };
             case RadialNodeTypes.VirtualPad:
                 return new MenuEntry
                 {
-                    Label = Label("Virtual pad"), Glyph = Glyph(MenuPages.Game), Slot = node.Slot,
+                    Label = Label("Virtual pad"), Glyph = Glyph(MenuPages.Game), Slot = node.Slot, Color = color, Icon = icon,
                     Detail = padDetail, Command = new(CommandKind.ToggleVirtualPad),
                 };
             case RadialNodeTypes.Shortcut:
                 return new MenuEntry
                 {
-                    Label = Label(node.Target ?? "Shortcut"), Glyph = Glyph(MenuPages.Play), Slot = node.Slot,
+                    Label = Label(node.Target ?? "Shortcut"), Glyph = Glyph(MenuPages.Play), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.Launch),
                     Launch = new ShortcutConfig
                     {
@@ -94,7 +97,7 @@ internal static class RadialTree
                 var children = node.Children ?? [];
                 return new MenuEntry
                 {
-                    Label = name, Glyph = Glyph(MenuPages.Folder), Slot = node.Slot,
+                    Label = name, Glyph = Glyph(MenuPages.Folder), Slot = node.Slot, Color = color, Icon = icon,
                     Submenu = () => ToPage(name, children, padDetail, headsetDetail),
                 };
             }

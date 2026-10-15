@@ -46,6 +46,12 @@ internal sealed class MenuEntry
 
     /// <summary>App shortcut entries (<see cref="CommandKind.Launch"/>): what to start.</summary>
     public ShortcutConfig? Launch { get; init; }
+
+    /// <summary>Radial menu only: the node's own color (COLORREF) as shown when highlighted; null = theme colors.</summary>
+    public uint? Color { get; init; }
+
+    /// <summary>Radial menu only: configured icon (glyph / auto / image); the glyph above is the fallback.</summary>
+    public RadialIconConfig? Icon { get; init; }
 }
 
 internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries, bool slotted = false)

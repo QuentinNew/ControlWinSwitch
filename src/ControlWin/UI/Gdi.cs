@@ -131,16 +131,22 @@ internal sealed unsafe class CircleCanvas : IDisposable
 
     private nint _bitmap, _graphics;
 
-    public CircleCanvas(void* pixels, int width, int height)
+    /// <summary>Starts GDI+ once (one attempt: without it nothing is drawn). Returns whether it is available.</summary>
+    public static bool EnsureStarted()
     {
         if (!s_started)
         {
-            s_started = true; // one attempt: without GDI+ nothing is drawn
+            s_started = true;
             var input = new GdiplusStartupInput { GdiplusVersion = 1 };
             nuint token;
             if (GdiplusStartup(&token, &input, 0) == 0) s_token = token;
         }
-        if (s_token == 0) return;
+        return s_token != 0;
+    }
+
+    public CircleCanvas(void* pixels, int width, int height)
+    {
+        if (!EnsureStarted()) return;
 
         nint bitmap, g;
         if (GdipCreateBitmapFromScan0(width, height, width * 4, PixelFormat32bppPARGB, (byte*)pixels, &bitmap) != 0) return;
@@ -167,6 +173,38 @@ internal sealed unsafe class CircleCanvas : IDisposable
         if (!TryBrush(rgb, alpha, out var brush)) return;
         GdipFillRectangleI(_graphics, brush, l, t, r - l, b - t);
         GdipDeleteBrush(brush);
+    }
+
+    /// <summary>
+    /// Draws a GDI+ image centered on a point. <paramref name="cover"/>: fills the whole circle of
+    /// <paramref name="radius"/> (cropped to it); otherwise it is fitted in a square inside the circle.
+    /// </summary>
+    public void Image(nint image, int cx, int cy, int radius, bool cover)
+    {
+        if (_graphics == 0 || image == 0) return;
+
+        uint iw, ih;
+        if (GdipGetImageWidth(image, &iw) != 0 || GdipGetImageHeight(image, &ih) != 0 || iw == 0 || ih == 0) return;
+
+        double diameter = radius * 2;
+        double box = cover ? diameter : diameter * 0.62;
+        // cover: the short side fills the box; otherwise the long side fits it.
+        double scale = cover ? box / Math.Min(iw, ih) : box / Math.Max(iw, ih);
+        int w = (int)Math.Round(iw * scale), h = (int)Math.Round(ih * scale);
+
+        nint path = 0;
+        if (cover && GdipCreatePath(0, &path) == 0)
+        {
+            GdipAddPathEllipseI(path, cx - radius, cy - radius, radius * 2, radius * 2);
+            GdipSetClipPath(_graphics, path, 0);
+        }
+        GdipSetInterpolationMode(_graphics, InterpolationModeHighQualityBicubic);
+        GdipDrawImageRectI(_graphics, image, cx - w / 2, cy - h / 2, w, h);
+        if (path != 0)
+        {
+            GdipResetClip(_graphics);
+            GdipDeletePath(path);
+        }
     }
 
     private bool TryBrush(uint rgb, byte alpha, out nint brush)

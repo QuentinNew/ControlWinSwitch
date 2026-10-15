@@ -211,3 +211,62 @@ public class RadialTreeTests
         Assert.Equal("-x", entry.Launch.Args);
     }
 }
+
+public class RadialAppearanceTests
+{
+    [Fact]
+    public void Colors_parse_to_colorref_order()
+    {
+        Assert.Equal(0x00E88E3Fu, RadialMenuRepair.ParseColor("#3F8EE8")); // BBGGRR
+        Assert.Null(RadialMenuRepair.ParseColor("3F8EE8"));
+        Assert.Null(RadialMenuRepair.ParseColor("#12345"));
+        Assert.Null(RadialMenuRepair.ParseColor(null));
+    }
+
+    [Fact]
+    public void Node_color_reaches_the_menu_entry()
+    {
+        var node = new RadialNodeConfig { Type = "settings", Slot = 0, Color = "#FF0000" };
+
+        var entry = RadialTree.ToPage("Root", [node]).Entries[0];
+
+        Assert.Equal(0x0000FFu, entry.Color);
+    }
+
+    [Fact]
+    public void App_shortcuts_default_to_the_programs_own_icon()
+    {
+        var node = new RadialNodeConfig { Type = "shortcut", Slot = 0, Target = "notepad.exe" };
+
+        var entry = RadialTree.ToPage("Root", [node]).Entries[0];
+
+        Assert.Equal("auto", entry.Icon!.Kind);
+    }
+
+    [Fact]
+    public void Other_nodes_have_no_picture_icon_by_default()
+    {
+        var entry = RadialTree.ToPage("Root", [new RadialNodeConfig { Type = "quit", Slot = 0 }]).Entries[0];
+
+        Assert.Null(entry.Icon);
+    }
+
+    [Fact]
+    public void Unusable_icons_are_dropped_and_kinds_are_normalized()
+    {
+        var tree = new List<RadialNodeConfig>
+        {
+            new() { Type = "settings", Slot = 0, Icon = new() { Kind = "Image", Path = "C:\a.png" } },
+            new() { Type = "quit", Slot = 1, Icon = new() { Kind = "image" } },
+            new() { Type = "close", Slot = 2, Icon = new() { Kind = "sparkle" } },
+            new() { Type = "sleep", Slot = 3, Icon = new() { Kind = "glyph", Glyph = "E7E8" } },
+        };
+
+        var fixedTree = RadialMenuRepair.Run(tree, [], []);
+
+        Assert.Equal("image", fixedTree[0].Icon!.Kind);
+        Assert.Null(fixedTree[1].Icon);
+        Assert.Null(fixedTree[2].Icon);
+        Assert.Equal("glyph", fixedTree[3].Icon!.Kind);
+    }
+}
