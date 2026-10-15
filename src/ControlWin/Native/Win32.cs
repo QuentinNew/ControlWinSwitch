@@ -175,7 +175,12 @@ internal static unsafe partial class Win32
         WM_DEVICECHANGE = 0x0219, WM_NULL = 0x0000, WM_DPICHANGED = 0x02E0,
         WM_QUERYENDSESSION = 0x0011, WM_ENDSESSION = 0x0016, WM_LBUTTONUP = 0x0202, WM_RBUTTONUP = 0x0205, WM_CONTEXTMENU = 0x007B, WM_APP = 0x8000;
 
-    public const uint WM_MOUSEACTIVATE = 0x0021;
+    public const uint WM_CHAR = 0x0102, WM_KILLFOCUS = 0x0008;
+    public const int GWL_EXSTYLE = -20;
+    public const byte VK_MENU = 0x12;
+    public const uint KEYEVENTF_KEYUP = 0x2;
+    public const nint MA_ACTIVATE = 1;
+    public const uint WM_MOUSEACTIVATE = 0x0021, WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_RBUTTONDOWN = 0x0204, WM_MOUSEWHEEL = 0x020A;
     public const nint MA_NOACTIVATE = 3;
 
     public const uint WS_POPUP = 0x80000000;
@@ -284,6 +289,13 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int TrackPopupMenu(nint menu, uint flags, int x, int y, int reserved, nint hwnd, nint rect);
     [LibraryImport("user32.dll")] public static partial int DestroyMenu(nint menu);
     [LibraryImport("user32.dll")] public static partial int SetForegroundWindow(nint hwnd);
+    [LibraryImport("user32.dll")] public static partial nint GetForegroundWindow();
+    [LibraryImport("user32.dll")] public static partial nint LoadCursorW(nint instance, nint name);
+    public const nint IDC_ARROW = 32512;
+    [LibraryImport("user32.dll")] public static partial nint SetFocus(nint hwnd);
+    [LibraryImport("user32.dll")] public static partial void keybd_event(byte vk, byte scan, uint flags, nuint extra);
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static partial nint GetWindowLongPtrW(nint hwnd, int index);
+    [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static partial nint SetWindowLongPtrW(nint hwnd, int index, nint value);
     [LibraryImport("user32.dll")] public static partial nint CreateIconIndirect(ICONINFO* info);
     [LibraryImport("user32.dll")] public static partial int DestroyIcon(nint icon);
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial int MessageBoxW(nint hwnd, string text, string caption, uint type);

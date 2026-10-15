@@ -25,6 +25,7 @@ internal abstract unsafe class NativeWindow
                     cbSize = (uint)sizeof(WNDCLASSEXW),
                     lpfnWndProc = &StaticWndProc,
                     hInstance = hInstance,
+                    hCursor = LoadCursorW(0, IDC_ARROW),
                     lpszClassName = name,
                 };
                 if (RegisterClassExW(&wc) == 0)

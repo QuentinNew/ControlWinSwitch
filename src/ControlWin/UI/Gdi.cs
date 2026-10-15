@@ -27,13 +27,16 @@ internal static unsafe class Gdi
     public static readonly uint Dim = Rgb(0xA0, 0xA0, 0xA8);
     public static readonly uint DimOnSelection = Rgb(0xE0, 0xE6, 0xFA);
 
-    private static nint s_backgroundBrush, s_selectionBrush, s_dimBrush;
+    private static nint s_backgroundBrush, s_selectionBrush, s_dimBrush, s_panelBrush, s_onBrush;
     private static FontSet? s_fonts;
     private static string? s_iconFace;
 
     public static nint BackgroundBrush => s_backgroundBrush != 0 ? s_backgroundBrush : s_backgroundBrush = CreateSolidBrush(Background);
     public static nint SelectionBrush => s_selectionBrush != 0 ? s_selectionBrush : s_selectionBrush = CreateSolidBrush(Selection);
     public static nint DimBrush => s_dimBrush != 0 ? s_dimBrush : s_dimBrush = CreateSolidBrush(Rgb(0x55, 0x55, 0x5C));
+
+    public static nint PanelBrush => s_panelBrush != 0 ? s_panelBrush : s_panelBrush = CreateSolidBrush(Rgb(0x2A, 0x2A, 0x30));
+    public static nint OnBrush => s_onBrush != 0 ? s_onBrush : s_onBrush = CreateSolidBrush(Rgb(0x2E, 0x9E, 0x5B));
 
     public static FontSet GetFonts(uint dpi)
     {

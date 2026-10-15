@@ -174,7 +174,7 @@ public class MenuModelTests
         m.Reset(MenuPages.Root());
 
         var labels = m.Page.Entries.Select(e => e.Label).ToArray();
-        Assert.Equal(["Mouse mode", "Shortcuts", "Virtual pad", "Headset", "Power", "Quit ControlWin"], labels);
+        Assert.Equal(["Mouse mode", "Shortcuts", "Virtual pad", "Headset", "Settings", "Power", "Quit ControlWin"], labels);
 
         // Quit must ask for confirmation, and Power opens a page of three confirmed actions.
         var quit = m.Page.Entries[^1];
@@ -184,5 +184,17 @@ public class MenuModelTests
         var power = m.Page.Entries.Single(e => e.Label == "Power").Submenu!();
         Assert.Equal(3, power.Entries.Count);
         Assert.All(power.Entries, e => Assert.NotNull(e.ConfirmPrompt));
+    }
+
+    [Fact]
+    public void Select_moves_to_enabled_entries_only()
+    {
+        var m = Open(Entry("a"), Entry("b", enabled: false), Entry("c"));
+        Assert.False(m.Select(1)); // disabled
+        Assert.Equal(0, m.Selected);
+        Assert.True(m.Select(2));
+        Assert.Equal(2, m.Selected);
+        Assert.False(m.Select(2)); // unchanged
+        Assert.False(m.Select(9));
     }
 }

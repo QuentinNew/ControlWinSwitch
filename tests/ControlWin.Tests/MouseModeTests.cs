@@ -25,7 +25,7 @@ public class MouseModeTests
     {
         var state = new ControllerState();
         var output = new FakeOutput();
-        return (state, output, new MouseMode(state, output, () => 0));
+        return (state, output, new MouseMode(state, output, clock: () => 0));
     }
 
     [Fact]

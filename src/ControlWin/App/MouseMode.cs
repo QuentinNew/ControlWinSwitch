@@ -1,17 +1,12 @@
+using ControlWin.Config;
 using ControlWin.Input;
 
 namespace ControlWin.App;
 
-/// <summary>Code defaults until the config file (F4) provides them.</summary>
+/// <summary>Timing constants of mouse mode (the tunable values live in <see cref="ControlWin.Config.MouseConfig"/>).</summary>
 internal static class MouseDefaults
 {
-    public const float Speed = 800f;           // px/s at full deflection
-    public const float FastMultiplier = 2.5f;  // ZR
-    public const float SlowMultiplier = 0.3f;  // ZL
-    public const float DpadSpeed = 120f;       // px/s once the D-pad is held past DpadDelay
     public const double DpadDelay = 0.3;       // s: a short tap moves exactly 1 px
-    public const float Deadzone = 0.15f;
-    public const float ScrollSpeed = 12f;      // notches/s at full deflection
     public const int TickMs = 8;
 }
 
@@ -33,6 +28,7 @@ internal sealed class MouseMode
     private readonly ControllerState _state;
     private readonly IMouseOutput _output;
     private readonly Func<long> _clock;
+    private readonly Func<MouseConfig> _config;
 
     private bool _active;
     private Buttons _ignoreMask;
@@ -42,10 +38,12 @@ internal sealed class MouseMode
     private double _dpadHeld;
     private float _fracX, _fracY, _wheel, _hwheel;
 
-    public MouseMode(ControllerState state, IMouseOutput output, Func<long>? clock = null)
+    public MouseMode(ControllerState state, IMouseOutput output, Func<MouseConfig>? config = null, Func<long>? clock = null)
     {
         _state = state;
         _output = output;
+        var fallback = new MouseConfig();
+        _config = config ?? (() => fallback);
         _clock = clock ?? System.Diagnostics.Stopwatch.GetTimestamp;
     }
 
@@ -117,8 +115,9 @@ internal sealed class MouseMode
         }
         dt = Math.Clamp(dt, 0, 0.05); // a stalled loop must not teleport the cursor
 
-        var move = _state.Left.WithDeadzone(MouseDefaults.Deadzone);
-        var scroll = _state.Right.WithDeadzone(MouseDefaults.Deadzone);
+        var cfg = _config();
+        var move = _state.Left.WithDeadzone(cfg.Deadzone);
+        var scroll = _state.Right.WithDeadzone(cfg.Deadzone);
         var (dpx, dpy) = DpadVector(_state.Current & ~_ignoreMask);
         bool dpad = dpx != 0 || dpy != 0;
         if (move == default && scroll == default && !dpad)
@@ -129,12 +128,12 @@ internal sealed class MouseMode
 
         float multiplier = 1f;
         var live = _state.Current & ~_ignoreMask;
-        if ((live & Buttons.ZR) != 0) multiplier *= MouseDefaults.FastMultiplier;
-        if ((live & Buttons.ZL) != 0) multiplier *= MouseDefaults.SlowMultiplier;
+        if ((live & Buttons.ZR) != 0) multiplier *= cfg.FastMultiplier;
+        if ((live & Buttons.ZL) != 0) multiplier *= cfg.SlowMultiplier;
 
         if (move != default)
         {
-            float k = MouseMath.Speed(move, MouseDefaults.Speed, multiplier) / move.Magnitude * (float)dt;
+            float k = MouseMath.Speed(move, cfg.Speed, multiplier) / move.Magnitude * (float)dt;
             _fracX += move.X * k;
             _fracY += move.Y * k;
             int dx = (int)_fracX, dy = (int)_fracY;
@@ -148,8 +147,8 @@ internal sealed class MouseMode
             _dpadHeld += dt;
             if (_dpadHeld > MouseDefaults.DpadDelay)
             {
-                _fracX += dpx * MouseDefaults.DpadSpeed * (float)dt;
-                _fracY += dpy * MouseDefaults.DpadSpeed * (float)dt;
+                _fracX += dpx * cfg.DpadSpeed * (float)dt;
+                _fracY += dpy * cfg.DpadSpeed * (float)dt;
                 int dx = (int)_fracX, dy = (int)_fracY;
                 _fracX -= dx;
                 _fracY -= dy;
@@ -160,8 +159,8 @@ internal sealed class MouseMode
 
         if (scroll != default)
         {
-            _wheel += -scroll.Y * MouseDefaults.ScrollSpeed * 120f * (float)dt;
-            _hwheel += scroll.X * MouseDefaults.ScrollSpeed * 120f * (float)dt;
+            _wheel += -scroll.Y * cfg.ScrollSpeed * 120f * (float)dt;
+            _hwheel += scroll.X * cfg.ScrollSpeed * 120f * (float)dt;
             int w = TakeChunks(ref _wheel);
             if (w != 0) _output.Wheel(w);
             int h = TakeChunks(ref _hwheel);
@@ -177,8 +176,8 @@ internal sealed class MouseMode
     }
 
     private bool SticksActive() =>
-        _state.Left.WithDeadzone(MouseDefaults.Deadzone) != default ||
-        _state.Right.WithDeadzone(MouseDefaults.Deadzone) != default ||
+        _state.Left.WithDeadzone(_config().Deadzone) != default ||
+        _state.Right.WithDeadzone(_config().Deadzone) != default ||
         DpadVector(_state.Current & ~_ignoreMask) != (0, 0);
 
     private static (int X, int Y) DpadVector(Buttons b) =>

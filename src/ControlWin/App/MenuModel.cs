@@ -12,6 +12,7 @@ internal enum CommandKind
     Shutdown,
     Quit,
     OpenBluetoothSettings,
+    OpenSettings,
 }
 
 internal readonly record struct MenuCommand(CommandKind Kind, int Arg = 0);
@@ -91,6 +92,15 @@ internal sealed class MenuModel
         }
     }
 
+    /// <summary>Selects an entry directly (mouse hover / click). Returns true when the selection changed.</summary>
+    public bool Select(int index)
+    {
+        if (IsConfirming || _stack.Count == 0) return false;
+        if (index < 0 || index >= Page.Entries.Count || !Page.Entries[index].Enabled || index == Selected) return false;
+        _stack[^1] = (Page, index);
+        return true;
+    }
+
     /// <summary>
     /// Handles "A". Opens a submenu or the confirmation step and returns null, or returns the command to run
     /// (right away, or after the confirmation).
@@ -150,15 +160,17 @@ internal sealed class MenuModel
 internal static class MenuPages
 {
     // Segoe Fluent Icons code points.
-    private const char Mouse = '', Play = '', Game = '', Headphone = '',
+    internal const char Gear = '', Mouse = '', Play = '', Game = '', Headphone = '',
         Power = '', Sleep = '', Restart = '', Quit = '';
 
-    public static MenuPage Root(Func<string?>? virtualPadDetail = null, Func<string?>? headsetDetail = null) => new("ControlWin",
+    public static MenuPage Root(Func<string?>? virtualPadDetail = null, Func<string?>? headsetDetail = null,
+        Func<MenuPage>? shortcuts = null) => new("ControlWin",
     [
         new MenuEntry { Label = "Mouse mode", Glyph = Mouse, Command = new(CommandKind.MouseMode) },
-        new MenuEntry { Label = "Shortcuts", Glyph = Play, Submenu = Shortcuts },
+        new MenuEntry { Label = "Shortcuts", Glyph = Play, Submenu = shortcuts ?? Shortcuts },
         new MenuEntry { Label = "Virtual pad", Glyph = Game, Detail = virtualPadDetail, Command = new(CommandKind.ToggleVirtualPad) },
         new MenuEntry { Label = "Headset", Glyph = Headphone, Detail = headsetDetail, Command = new(CommandKind.ToggleHeadset) },
+        new MenuEntry { Label = "Settings", Glyph = Gear, Command = new(CommandKind.OpenSettings) },
         new MenuEntry { Label = "Power", Glyph = Power, Submenu = PowerPage },
         new MenuEntry
         {

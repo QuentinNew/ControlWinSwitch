@@ -7,7 +7,7 @@ namespace ControlWin.UI;
 internal sealed unsafe class TrayIcon : IDisposable
 {
     public const uint CallbackMessage = WM_APP + 1;
-    public const int CmdOpenMenu = 1, CmdTogglePad = 2, CmdOpenLog = 3, CmdQuit = 4;
+    public const int CmdOpenMenu = 1, CmdTogglePad = 2, CmdOpenLog = 3, CmdQuit = 4, CmdSettings = 5, CmdEditConfig = 6;
 
     private const uint IconId = 1;
     private const int IconSize = 32;
@@ -51,6 +51,8 @@ internal sealed unsafe class TrayIcon : IDisposable
         {
             AppendMenuW(menu, MF_STRING, CmdOpenMenu, "Open menu");
             AppendMenuW(menu, MF_STRING | (padEnabled ? MF_CHECKED : 0), CmdTogglePad, "Virtual pad");
+            AppendMenuW(menu, MF_STRING, CmdSettings, "Settings");
+            AppendMenuW(menu, MF_STRING, CmdEditConfig, "Edit config file");
             AppendMenuW(menu, MF_STRING, CmdOpenLog, "Open log");
             AppendMenuW(menu, MF_SEPARATOR, 0, null);
             AppendMenuW(menu, MF_STRING, CmdQuit, "Quit ControlWin");
@@ -63,27 +65,6 @@ internal sealed unsafe class TrayIcon : IDisposable
             return command;
         }
         finally { DestroyMenu(menu); }
-    }
-
-    /// <summary>Opens log.txt in Notepad.</summary>
-    public static void OpenLog()
-    {
-        var path = Log.FilePath;
-        if (path is null) return;
-        string parameters = $"\"{path}\"";
-        fixed (char* verb = "open")
-        fixed (char* file = "notepad.exe")
-        fixed (char* args = parameters)
-        {
-            var info = new SHELLEXECUTEINFOW
-            {
-                cbSize = (uint)sizeof(SHELLEXECUTEINFOW),
-                fMask = SEE_MASK_FLAG_NO_UI,
-                lpVerb = verb, lpFile = file, lpParameters = args,
-                nShow = SW_SHOWNORMAL,
-            };
-            if (ShellExecuteExW(&info) == 0) Log.Error("Cannot open the log in Notepad");
-        }
     }
 
     /// <summary>Removes the icon from the tray; safe to call twice.</summary>

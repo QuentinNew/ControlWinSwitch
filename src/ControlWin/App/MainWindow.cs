@@ -59,7 +59,9 @@ internal sealed unsafe class MainWindow : NativeWindow
                 {
                     case TrayIcon.CmdOpenMenu: Controller?.ShowMenu(); break;
                     case TrayIcon.CmdTogglePad: Controller?.TogglePad(''); break;
-                    case TrayIcon.CmdOpenLog: TrayIcon.OpenLog(); break;
+                    case TrayIcon.CmdOpenLog: Controller?.OpenLog(); break;
+                    case TrayIcon.CmdSettings: Controller?.ShowSettings(); break;
+                    case TrayIcon.CmdEditConfig: Controller?.EditConfig(); break;
                     case TrayIcon.CmdQuit: PostMessageW(Handle, WM_CLOSE, 0, 0); break;
                 }
                 break;

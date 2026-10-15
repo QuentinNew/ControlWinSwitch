@@ -5,8 +5,9 @@ using static ControlWin.Native.Win32;
 namespace ControlWin.UI;
 
 /// <summary>
-/// The menu: a topmost, click-through, never-activating popup centered on the monitor under the cursor.
-/// It only paints what <see cref="MenuModel"/> says; navigation is driven by the controller.
+/// The menu: a topmost, never-activating popup centered on the monitor under the cursor.
+/// It paints what <see cref="MenuModel"/> says; navigation comes from the controller, or from the mouse
+/// (hover selects, left click accepts, right click goes back, wheel moves).
 /// </summary>
 internal sealed unsafe class MenuOverlay : NativeWindow
 {
@@ -17,6 +18,12 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     private const int SideDip = 12, GlyphXDip = 24, GlyphWidthDip = 32, LabelXDip = 72, DetailWidthDip = 150;
 
     private MenuModel? _model;
+    private int _lastMouseX = -1, _lastMouseY = -1;
+
+    /// <summary>Mouse: row index hovered / clicked, "back" (right click), confirmation answered, wheel step (-1 / +1).</summary>
+    public event Action<int>? RowHovered, RowClicked, Scrolled;
+    public event Action? BackRequested;
+    public event Action<bool>? ConfirmAnswered;
     private RECT _work;
     private uint _dpi = 96;
     private int _top; // first visible row when the page is longer than MaxRows
@@ -24,7 +31,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     public MenuOverlay()
     {
-        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT);
+        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
 
         int round = DWMWCP_ROUND;
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(int)); // Windows 11 only, harmless otherwise
@@ -35,6 +42,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     public void Show(MenuModel model)
     {
         _model = model;
+        _lastMouseX = _lastMouseY = -1;
         _top = 0;
         _topPage = null;
         Gdi.GetMonitorUnderCursor(out _work, out _dpi);
@@ -67,8 +75,56 @@ internal sealed unsafe class MenuOverlay : NativeWindow
                 return 1;
             case WM_MOUSEACTIVATE:
                 return MA_NOACTIVATE;
+            case WM_MOUSEMOVE:
+                OnMouseMove(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
+                return 0;
+            case WM_LBUTTONDOWN:
+                OnClick(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
+                return 0;
+            case WM_RBUTTONUP:
+                BackRequested?.Invoke();
+                return 0;
+            case WM_MOUSEWHEEL:
+                Scrolled?.Invoke((short)((wParam >> 16) & 0xFFFF) > 0 ? -1 : 1);
+                return 0;
         }
         return base.WndProc(msg, wParam, lParam);
+    }
+
+    /// <summary>Row under a client y coordinate, or -1.</summary>
+    private int RowAt(int y)
+    {
+        if (_model is null || _model.IsConfirming) return -1;
+        int local = y - Px(HeaderDip);
+        if (local < 0) return -1;
+        int row = local / Px(RowDip);
+        int index = _top + row;
+        return row < VisibleRows() && index < _model.Page.Entries.Count ? index : -1;
+    }
+
+    private void OnMouseMove(int x, int y)
+    {
+        // The menu appearing under a resting cursor sends a mouse move: only react to real movement.
+        bool first = _lastMouseX < 0;
+        bool moved = x != _lastMouseX || y != _lastMouseY;
+        _lastMouseX = x;
+        _lastMouseY = y;
+        if (first || !moved) return;
+
+        int index = RowAt(y);
+        if (index >= 0) RowHovered?.Invoke(index);
+    }
+
+    private void OnClick(int x, int y)
+    {
+        if (_model is null) return;
+        if (_model.IsConfirming)
+        {
+            if (y >= Px(HeaderDip)) ConfirmAnswered?.Invoke(x < Px(WidthDip) / 2);
+            return;
+        }
+        int index = RowAt(y);
+        if (index >= 0) RowClicked?.Invoke(index);
     }
 
     private int Px(int dip) => (int)Math.Round(dip * _dpi / 96.0);
@@ -108,7 +164,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
             var entry = model.CurrentEntry;
             Gdi.Text(dc, fonts.Title, Gdi.TextColor, entry?.Label ?? "", Px(24), 0, width - Px(24), headerH, DT_LEFT | oneLine | DT_END_ELLIPSIS);
             Gdi.Text(dc, fonts.Title, Gdi.TextColor, model.ConfirmPrompt ?? "", Px(24), headerH, width - Px(24), bodyBottom, DT_CENTER | oneLine | DT_END_ELLIPSIS);
-            Gdi.Text(dc, fonts.Footer, Gdi.Dim, "A  Yes     B  No", 0, bodyBottom, width, bodyBottom + footerH, DT_CENTER | oneLine);
+            Gdi.Text(dc, fonts.Footer, Gdi.Dim, "Yes (A / left click)     No (B / right click)", 0, bodyBottom, width, bodyBottom + footerH, DT_CENTER | oneLine);
             return;
         }
 
@@ -163,6 +219,6 @@ internal sealed unsafe class MenuOverlay : NativeWindow
             Gdi.Fill(dc, Gdi.DimBrush, width - Px(7), thumbTop, width - Px(4), thumbTop + thumbHeight);
         }
 
-        Gdi.Text(dc, fonts.Footer, Gdi.Dim, "A  Select     B  Back     Capture  Close", 0, bodyBottom, width, bodyBottom + footerH, DT_CENTER | oneLine);
+        Gdi.Text(dc, fonts.Footer, Gdi.Dim, "A / click  Select     B / right click  Back     Capture  Close", 0, bodyBottom, width, bodyBottom + footerH, DT_CENTER | oneLine);
     }
 }
