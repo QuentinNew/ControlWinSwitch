@@ -165,6 +165,13 @@ internal interface ISettingsHost
     void ReloadConfig();
     void OpenLog();
     void ToggleHeadset();
+
+    /// <summary>Effective state of the virtual pad (off while a watched process runs).</summary>
+    bool PadEnabled { get; }
+    /// <summary>The user switched the pad from the settings window.</summary>
+    void SetPad(bool enabled);
+    /// <summary>The list of watched processes changed.</summary>
+    void WatchListChanged();
     /// <summary>Starts inline text editing; <paramref name="commit"/> receives the new text on Enter / A.</summary>
     void EditText(string current, Action<string> commit);
     void OpenBluetoothSettings();
@@ -192,9 +199,17 @@ internal static class SettingsPages
 
         var controller = new SettingsTab("Controller",
         [
-            SettingItem.Toggle("Virtual Xbox pad", () => cfg().VirtualPad.Enabled, v => { cfg().VirtualPad.Enabled = v; Changed(); }),
+            SettingItem.Toggle("Virtual Xbox pad", () => host.PadEnabled, host.SetPad),
             SettingItem.Toggle("Swap A / B", () => cfg().VirtualPad.SwapAB, v => { cfg().VirtualPad.SwapAB = v; Changed(); }),
             SettingItem.Toggle("Swap X / Y", () => cfg().VirtualPad.SwapXY, v => { cfg().VirtualPad.SwapXY = v; Changed(); }),
+            SettingItem.Text("Pad off while running",
+                () => cfg().VirtualPad.DisableWhileRunning.Count == 0 ? "(off)" : ProcessList.Format(cfg().VirtualPad.DisableWhileRunning),
+                () => host.EditText(ProcessList.Format(cfg().VirtualPad.DisableWhileRunning), v =>
+                {
+                    cfg().VirtualPad.DisableWhileRunning = ProcessList.Parse(v);
+                    Changed();
+                    host.WatchListChanged();
+                })),
         ]);
 
         var mouse = new SettingsTab("Mouse",

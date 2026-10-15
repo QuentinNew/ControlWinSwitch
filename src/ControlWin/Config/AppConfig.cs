@@ -9,6 +9,9 @@ internal sealed class VirtualPadConfig
     /// <summary>Label-based mapping: Switch A = Xbox A, B = B, X = X, Y = Y.</summary>
     public bool SwapAB { get; set; } = true;
     public bool SwapXY { get; set; } = true;
+
+    /// <summary>The pad is switched off while one of these processes runs (empty = feature off).</summary>
+    public List<string> DisableWhileRunning { get; set; } = ["steam.exe"];
 }
 
 internal sealed class MouseConfig
@@ -45,6 +48,10 @@ internal sealed class AppConfig
     {
         HeadsetName ??= "";
         VirtualPad ??= new();
+        VirtualPad.DisableWhileRunning ??= [];
+        VirtualPad.DisableWhileRunning = VirtualPad.DisableWhileRunning
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         Mouse ??= new();
         Shortcuts ??= [];
         Shortcuts.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Target));

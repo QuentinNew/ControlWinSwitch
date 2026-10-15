@@ -55,7 +55,7 @@ internal sealed unsafe class MainWindow : NativeWindow
 
             case WM_CONTEXTMENU:
             case WM_RBUTTONUP:
-                switch (_tray.ShowMenu(Controller?.PadEnabled ?? false))
+                switch (_tray.ShowMenu(Controller?.PadEnabled ?? false, Controller?.PadNote))
                 {
                     case TrayIcon.CmdOpenMenu: Controller?.ShowMenu(); break;
                     case TrayIcon.CmdTogglePad: Controller?.TogglePad(''); break;

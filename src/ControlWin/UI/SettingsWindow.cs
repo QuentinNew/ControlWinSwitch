@@ -53,6 +53,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         int y = _work.Top + (_work.Height - height) / 2;
         SetWindowPos(Handle, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         InvalidateRect(Handle, null, 0);
+        UpdateWindow(Handle); // paint now: the caller may hide another window right after, and an unpainted frame would flash
     }
 
     public void Refresh()
@@ -129,6 +130,9 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             case WM_KILLFOCUS when _editing:
                 EndEdit(commit: false);
                 return 0;
+            case WM_SETCURSOR when (lParam & 0xFFFF) == HTCLIENT:
+                SetCursor(LoadCursorW(0, IsClickableAtCursor() ? IDC_HAND : IDC_ARROW));
+                return 1;
             case WM_MOUSEMOVE:
                 OnMouseMove(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
@@ -159,6 +163,22 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (y < top) return -1;
         int row = (y - top) / Px(RowDip);
         return row < Rows ? row : -1;
+    }
+
+    private bool IsClickableAtCursor()
+    {
+        if (_model is null) return false;
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(Handle, &pt);
+        int x = pt.X, y = pt.Y;
+
+        if (_editing) return true; // a click confirms
+        if (y < TabsTop) return x >= Px(WidthDip) - Px(CloseDip); // close button
+        if (y < RowsTop) return true;                             // tabs
+
+        int row = RowAt(y);
+        return row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Selectable;
     }
 
     private void OnChar(char c)

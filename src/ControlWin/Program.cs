@@ -72,18 +72,31 @@ internal static unsafe class Program
     /// <summary>Event-driven loop: blocks until a message or a controller report arrives (~0% CPU idle).</summary>
     private static void RunMessageLoop(HidControllerReader reader, AppController controller)
     {
-        // [0] controller reports, [1] mouse timer (signalled only while a stick moves the cursor)
-        nint* handles = stackalloc nint[2];
-        handles[0] = reader.EventHandle;
-        handles[1] = controller.MouseTimerHandle;
-        uint count = handles[1] != 0 ? 2u : 1u;
+        // Wait set: controller reports, the mouse timer (signalled only while a stick moves the cursor), and
+        // the watched process (signalled when it exits). The last one changes at run time, so it is re-read.
+        nint* handles = stackalloc nint[3];
         MSG msg;
         while (true)
         {
+            uint count = 0;
+            handles[count++] = reader.EventHandle;
+            uint mouseIndex = uint.MaxValue, watchIndex = uint.MaxValue;
+            if (controller.MouseTimerHandle != 0)
+            {
+                mouseIndex = count;
+                handles[count++] = controller.MouseTimerHandle;
+            }
+            if (controller.WatchHandle != 0)
+            {
+                watchIndex = count;
+                handles[count++] = controller.WatchHandle;
+            }
+
             uint r = MsgWaitForMultipleObjectsEx(count, handles, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             if (r == uint.MaxValue) return; // WAIT_FAILED
             if (r == WAIT_OBJECT_0) reader.OnSignaled();
-            else if (r == WAIT_OBJECT_0 + 1 && count == 2) controller.OnMouseTick();
+            else if (r == WAIT_OBJECT_0 + mouseIndex) controller.OnMouseTick();
+            else if (r == WAIT_OBJECT_0 + watchIndex) controller.OnWatchedProcessExited();
 
             while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE) != 0)
             {

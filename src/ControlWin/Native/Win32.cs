@@ -228,6 +228,7 @@ internal static unsafe partial class Win32
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
     public const uint SEE_MASK_NOCLOSEPROCESS = 0x40, SEE_MASK_FLAG_NO_UI = 0x400;
 
+    public const uint SYNCHRONIZE = 0x00100000;
     public const uint PROCESS_QUERY_INFORMATION = 0x400, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     public const uint TOKEN_QUERY = 0x8, TOKEN_DUPLICATE = 0x2, TOKEN_ASSIGN_PRIMARY = 0x1,
         TOKEN_ADJUST_DEFAULT = 0x80, TOKEN_ADJUST_SESSIONID = 0x100, TOKEN_ADJUST_PRIVILEGES = 0x20;
@@ -291,7 +292,11 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int SetForegroundWindow(nint hwnd);
     [LibraryImport("user32.dll")] public static partial nint GetForegroundWindow();
     [LibraryImport("user32.dll")] public static partial nint LoadCursorW(nint instance, nint name);
-    public const nint IDC_ARROW = 32512;
+    public const nint IDC_ARROW = 32512, IDC_HAND = 32649;
+    public const uint WM_SETCURSOR = 0x0020;
+    public const int HTCLIENT = 1;
+    [LibraryImport("user32.dll")] public static partial nint SetCursor(nint cursor);
+    [LibraryImport("user32.dll")] public static partial int ScreenToClient(nint hwnd, POINT* pt);
     [LibraryImport("user32.dll")] public static partial nint SetFocus(nint hwnd);
     [LibraryImport("user32.dll")] public static partial void keybd_event(byte vk, byte scan, uint flags, nuint extra);
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static partial nint GetWindowLongPtrW(nint hwnd, int index);

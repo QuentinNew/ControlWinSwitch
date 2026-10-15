@@ -96,4 +96,16 @@ public class ConfigTests
             if (Directory.Exists(dir)) Directory.Delete(dir, true);
         }
     }
+
+    [Fact]
+    public void Watch_list_defaults_to_steam_and_is_cleaned()
+    {
+        Assert.Equal(["steam.exe"], new AppConfig().Sanitize().VirtualPad.DisableWhileRunning);
+
+        var c = ConfigStore.Parse("""{ "virtualPad": { "disableWhileRunning": [ " a.exe ", "", "A.EXE", "b.exe" ] } }""");
+        Assert.Equal(["a.exe", "b.exe"], c.VirtualPad.DisableWhileRunning);
+
+        var none = ConfigStore.Parse("""{ "virtualPad": { "disableWhileRunning": null } }""");
+        Assert.Empty(none.VirtualPad.DisableWhileRunning);
+    }
 }

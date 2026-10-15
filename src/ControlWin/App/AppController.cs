@@ -12,7 +12,8 @@ namespace ControlWin.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1;
+    private const nuint RepeatTimerId = 1, WatchTimerId = 4;
+    private const uint WatchPollMs = 5000, WatchFastPollMs = 1000, WatchFastWindowMs = 15000;
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
 
@@ -32,6 +33,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly Toast _toast = new();
     private readonly VirtualPad _pad = new();
     private readonly ConfigStore _store = new();
+    private readonly PadGate _gate = new();
+
+    private nint _watchHandle;        // the watched process we wait on (0 = none, polling instead)
+    private bool _watchRunning;
+    private string _watchName = "";   // list entry of the process that matched
+    private long _fastPollUntil;      // Environment.TickCount64 until which the poll is fast (after a shortcut launch)
 
     private bool _padEnabled;
     private bool _padFailed;
@@ -53,8 +60,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _settings = SettingsPages.Create(_store, this);
 
         var error = _store.Load();
-        _padEnabled = _store.Current.VirtualPad.Enabled;
         if (error is not null) _toast.Show('', error);
+
+        // Start-up: a watched process may already be running.
+        _watchRunning = ProbeProcesses();
+        _padEnabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
+        UpdateWatchTimer();
+        if (_gate.HeldOff) _toast.Show(MenuPages.Game, $"Virtual pad off: {ProcessList.DisplayName(_watchName)} is running");
 
         _overlay.RowHovered += OnMenuRowHovered;
         _overlay.RowClicked += OnMenuRowClicked;
@@ -140,6 +152,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>WM_TIMER of the main window: key-repeat of the held direction.</summary>
     public void OnTimer(nuint id)
     {
+        if (id == WatchTimerId)
+        {
+            CheckProcesses();
+            return;
+        }
         if (id != RepeatTimerId) return;
         bool menu = _mode == Mode.Menu, settings = _mode == Mode.Settings;
         if ((!menu && !settings) || _heldDirection == Dir.None)
@@ -212,7 +229,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         var entry = _menu.CurrentEntry;
         var command = _menu.Accept();
-        if (command is { } c && entry is not null)
+        if (command is { Kind: CommandKind.OpenSettings } && entry is not null)
+        {
+            // Straight from the menu to the settings: no close-then-open flicker.
+            Log.Info($"Menu command: {CommandKind.OpenSettings} ({entry.Label})");
+            OpenSettings();
+        }
+        else if (command is { } c && entry is not null)
         {
             CloseMenu();
             Execute(entry, c);
@@ -275,17 +298,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private void OpenSettings()
     {
         if (_mode == Mode.Mouse) _mouse.Deactivate();
-        if (_mode == Mode.Menu)
-        {
-            StopRepeat();
-            _overlay.Hide();
-        }
+        bool fromMenu = _mode == Mode.Menu;
+        if (fromMenu) StopRepeat();
 
         ReloadConfigIfChanged();
         _pad.Submit(default);
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
         _settingsWindow.Show(_settings);
+        if (fromMenu) _overlay.Hide(); // hidden only once the settings window is up
         Log.Info("Settings opened");
         StartHeadsetWork(toggle: false); // refresh the status shown on the Headset tab
     }
@@ -480,7 +501,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
         {
             Log.Error($"Shortcut '{shortcut.Name}': {error}");
             _toast.Show('', $"{shortcut.Name}: {error}");
+            return;
         }
+
+        // The launched program may be a watched one: look again right away and then every second for a while.
+        _fastPollUntil = Environment.TickCount64 + WatchFastWindowMs;
+        CheckProcesses();
     }
 
     // ---- virtual pad -------------------------------------------------------------------------
@@ -490,13 +516,110 @@ internal sealed class AppController : IDisposable, ISettingsHost
     public void TogglePad(char glyph)
     {
         if (_shutDown) return;
-        SetPadEnabled(!_padEnabled);
-        Config.VirtualPad.Enabled = _padEnabled;
-        _store.Save();
+        UserSetPad(!_padEnabled);
         _toast.Show(glyph, _padFailed ? "Virtual pad unavailable (ViGEmBus?)"
             : _padEnabled ? "Virtual pad: on" : "Virtual pad: off");
         if (_mode == Mode.Menu) _overlay.Refresh(); // the pad row shows its state
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    /// <summary>
+    /// The user's choice (menu, tray, settings). It wins over the process watcher; it is only saved to the
+    /// config while no watched process runs, so a choice made during Steam stays runtime-only.
+    /// </summary>
+    private void UserSetPad(bool enabled)
+    {
+        _gate.ManualOverride();
+        SetPadEnabled(enabled);
+        if (!_watchRunning)
+        {
+            Config.VirtualPad.Enabled = enabled;
+            _store.Save();
+        }
+    }
+
+    /// <summary>Note shown next to the pad in the menu and tray while a watched process holds it off.</summary>
+    public string? PadNote => _gate.HeldOff ? ProcessList.DisplayName(_watchName) : null;
+
+    // ---- process watcher ---------------------------------------------------------------------
+
+    /// <summary>Handle of the watched process for the message loop (0 = none).</summary>
+    public nint WatchHandle => _watchHandle;
+
+    /// <summary>The watched process exited (its handle was signalled).</summary>
+    public void OnWatchedProcessExited()
+    {
+        CloseWatchHandle();
+        CheckProcesses();
+    }
+
+    private void CloseWatchHandle()
+    {
+        if (_watchHandle == 0) return;
+        CloseHandle(_watchHandle);
+        _watchHandle = 0;
+    }
+
+    /// <summary>Looks for a watched process and keeps the wait handle in line. Returns whether one runs.</summary>
+    private bool ProbeProcesses()
+    {
+        var names = Config.VirtualPad.DisableWhileRunning;
+        if (names.Count == 0)
+        {
+            CloseWatchHandle();
+            return false;
+        }
+
+        int pid = ProcessList.FindRunning(names, out var matched);
+        if (pid == 0)
+        {
+            CloseWatchHandle();
+            return false;
+        }
+
+        _watchName = matched;
+        if (_watchHandle == 0) _watchHandle = OpenProcess(SYNCHRONIZE, 0, (uint)pid); // 0 on failure: the poll covers it
+        return true;
+    }
+
+    /// <summary>Poll tick, process exit or list change: apply the result to the pad.</summary>
+    private void CheckProcesses()
+    {
+        if (_shutDown) return;
+        bool running = ProbeProcesses();
+        UpdateWatchTimer();
+        if (running == _watchRunning) return;
+        _watchRunning = running;
+
+        string name = ProcessList.DisplayName(_watchName);
+        Log.Info($"Watched process {name}: {(running ? "running" : "closed")}");
+        switch (_gate.OnRunningChanged(running, _padEnabled))
+        {
+            case PadGate.Change.Disable:
+                SetPadEnabled(false);
+                _toast.Show(MenuPages.Game, $"Virtual pad off: {name} is running");
+                break;
+            case PadGate.Change.Enable:
+                SetPadEnabled(true);
+                _toast.Show(MenuPages.Game, _padFailed ? "Virtual pad unavailable (ViGEmBus?)" : $"Virtual pad on: {name} closed");
+                break;
+        }
+        if (_mode == Mode.Menu) _overlay.Refresh();
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    /// <summary>Poll only while there is something to wait for and no handle to wait on.</summary>
+    private void UpdateWatchTimer()
+    {
+        bool poll = Config.VirtualPad.DisableWhileRunning.Count > 0 && _watchHandle == 0;
+        if (!poll)
+        {
+            KillTimer(_window.Handle, WatchTimerId);
+            return;
+        }
+
+        uint interval = Environment.TickCount64 < _fastPollUntil ? WatchFastPollMs : WatchPollMs;
+        SetTimer(_window.Handle, WatchTimerId, interval, 0); // same id: replaces the interval
     }
 
     private void SetPadEnabled(bool enabled)
@@ -507,7 +630,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         else if (!_pad.Attach()) _padFailed = true;
     }
 
-    private string? PadDetail() => !_padEnabled ? "Off" : _padFailed ? "Unavailable" : "On";
+    private string? PadDetail() => !_padEnabled ? (_gate.HeldOff ? $"Off ({ProcessList.DisplayName(_watchName)})" : "Off") : _padFailed ? "Unavailable" : "On";
 
     /// <summary>The state is not consumed: it drives the virtual pad.</summary>
     private void Forward()
@@ -552,7 +675,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Brings the running parts in line with the current config.</summary>
     private void ApplyConfig()
     {
-        if (Config.VirtualPad.Enabled != _padEnabled) SetPadEnabled(Config.VirtualPad.Enabled);
+        // A file edit / reload is a fresh start for the watcher too (the list may have changed).
+        _watchRunning = ProbeProcesses();
+        bool enabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
+        UpdateWatchTimer();
+        if (enabled != _padEnabled) SetPadEnabled(enabled);
     }
 
     // ISettingsHost
@@ -590,6 +717,20 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_headsetBusy) return;
         _toast.Show(MenuPages.Headphone, _headsetState == HeadsetState.Connected ? "Disconnecting headset..." : "Connecting headset...");
         StartHeadsetWork(toggle: true);
+    }
+
+    bool ISettingsHost.PadEnabled => _padEnabled;
+
+    void ISettingsHost.SetPad(bool enabled)
+    {
+        if (enabled == _padEnabled) return;
+        UserSetPad(enabled);
+    }
+
+    void ISettingsHost.WatchListChanged()
+    {
+        // Re-evaluate against the new list: an emptied list gives the pad back, a new entry may take it.
+        CheckProcesses();
     }
 
     void ISettingsHost.EditText(string current, Action<string> commit) => _settingsWindow.BeginEdit(current, commit);

@@ -7,7 +7,11 @@ public class SettingsModelTests
 {
     private sealed class FakeHost : ISettingsHost
     {
-        public int Changes, Edits;
+        public int Changes, Edits, WatchChanges;
+        public bool Pad = true;
+        public bool PadEnabled => Pad;
+        public void SetPad(bool enabled) => Pad = enabled;
+        public void WatchListChanged() => WatchChanges++;
         public string ConfigPath => "x";
         public string HeadsetStatus => "Connected";
         public void ConfigChanged() => Changes++;
@@ -72,14 +76,42 @@ public class SettingsModelTests
     {
         var (m, store, host) = Create();
         m.SetTab(2); // Controller
-        Assert.True(store.Current.VirtualPad.Enabled);
+        m.Move(1);   // Swap A / B
+        Assert.True(store.Current.VirtualPad.SwapAB);
 
         m.Activate();
-        Assert.False(store.Current.VirtualPad.Enabled);
+        Assert.False(store.Current.VirtualPad.SwapAB);
         Assert.Equal(1, host.Changes);
 
         m.Adjust(1); // left / right toggles too
-        Assert.True(store.Current.VirtualPad.Enabled);
+        Assert.True(store.Current.VirtualPad.SwapAB);
+    }
+
+    [Fact]
+    public void Pad_toggle_goes_through_the_host_not_the_config()
+    {
+        var (m, store, host) = Create();
+        m.SetTab(2);
+        Assert.Equal(0, m.Selected);
+
+        m.Activate();
+        Assert.False(host.Pad);
+        Assert.True(store.Current.VirtualPad.Enabled); // the host decides whether it is persisted
+    }
+
+    [Fact]
+    public void Watch_list_is_edited_as_comma_separated_text()
+    {
+        var (m, store, host) = Create();
+        m.SetTab(2);
+        m.Move(-1); // wraps to the last row: "Pad off while running"
+        Assert.Equal("steam.exe", host.Editing ?? "steam.exe");
+        m.Activate();
+        Assert.Equal("steam.exe", host.Editing);
+
+        host.Commit!("steam.exe, EpicGamesLauncher.exe ;steam.exe");
+        Assert.Equal(["steam.exe", "EpicGamesLauncher.exe"], store.Current.VirtualPad.DisableWhileRunning);
+        Assert.Equal(1, host.WatchChanges);
     }
 
     [Fact]

@@ -44,13 +44,13 @@ internal sealed unsafe class TrayIcon : IDisposable
     }
 
     /// <summary>Shows the context menu at the cursor and returns the chosen command (0 = dismissed).</summary>
-    public int ShowMenu(bool padEnabled)
+    public int ShowMenu(bool padEnabled, string? padNote = null)
     {
         var menu = CreatePopupMenu();
         try
         {
             AppendMenuW(menu, MF_STRING, CmdOpenMenu, "Open menu");
-            AppendMenuW(menu, MF_STRING | (padEnabled ? MF_CHECKED : 0), CmdTogglePad, "Virtual pad");
+            AppendMenuW(menu, MF_STRING | (padEnabled ? MF_CHECKED : 0), CmdTogglePad, padNote is null ? "Virtual pad" : $"Virtual pad ({padNote})");
             AppendMenuW(menu, MF_STRING, CmdSettings, "Settings");
             AppendMenuW(menu, MF_STRING, CmdEditConfig, "Edit config file");
             AppendMenuW(menu, MF_STRING, CmdOpenLog, "Open log");

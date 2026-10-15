@@ -75,6 +75,9 @@ internal sealed unsafe class MenuOverlay : NativeWindow
                 return 1;
             case WM_MOUSEACTIVATE:
                 return MA_NOACTIVATE;
+            case WM_SETCURSOR when (lParam & 0xFFFF) == HTCLIENT:
+                SetCursor(LoadCursorW(0, IsClickableAtCursor() ? IDC_HAND : IDC_ARROW));
+                return 1;
             case WM_MOUSEMOVE:
                 OnMouseMove(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
@@ -100,6 +103,18 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         int row = local / Px(RowDip);
         int index = _top + row;
         return row < VisibleRows() && index < _model.Page.Entries.Count ? index : -1;
+    }
+
+    private bool IsClickableAtCursor()
+    {
+        if (_model is null) return false;
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(Handle, &pt);
+
+        if (_model.IsConfirming) return pt.Y >= Px(HeaderDip); // body answers the question
+        int index = RowAt(pt.Y);
+        return index >= 0 && _model.Page.Entries[index].Enabled;
     }
 
     private void OnMouseMove(int x, int y)
