@@ -22,7 +22,6 @@ internal sealed unsafe class RadialOverlay : NativeWindow
     private static readonly uint NodeColor = Rgb(0x2A, 0x2A, 0x30);   // same as the list's panels
     private static readonly uint RimColor = Rgb(0x4A, 0x4A, 0x54);
     private static readonly uint SelectedColor = Gdi.Selection;       // same as the list's selection
-    private static readonly uint ConfirmColor = Rgb(0xE8, 0x9B, 0x2E);
 
     private RadialModel? _model;
     private RECT _work;
@@ -316,7 +315,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
                 bool selected = i == model.Selected;
                 bool armed = i == model.Armed;
                 int radius = Px(selected ? SelectedNodeDip : NodeDip);
-                uint fill = armed ? ConfirmColor : selected ? style.Lit : style.Idle;
+                uint fill = armed || selected ? style.Lit : style.Idle; // a node waiting for confirmation keeps its own color
                 uint rim = armed || selected ? fill : style.IdleRim;
                 int x = positions[i].X - l, y = positions[i].Y - t;
                 canvas.Circle(x, y, radius + Px(2), rim);
@@ -349,7 +348,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         }
 
         if (text is not null)
-            Gdi.Text(dc, fonts.Detail, model.IsConfirming ? ConfirmColor : Gdi.TextColor, text,
+            Gdi.Text(dc, fonts.Detail, model.IsConfirming ? Blend(Style(selectedNode.Entry).Lit, Rgb(255, 255, 255), 0.35f) : Gdi.TextColor, text,
                 pillL - l + Px(8), pillT - t, pillR - l - Px(8), pillB - t, DT_CENTER | oneLine | DT_END_ELLIPSIS);
 
         GdiFlush();
