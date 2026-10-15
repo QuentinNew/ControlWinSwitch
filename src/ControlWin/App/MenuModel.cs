@@ -1,0 +1,193 @@
+namespace ControlWin.App;
+
+internal enum CommandKind
+{
+    None,
+    MouseMode,
+    Shortcut,
+    ToggleBetterJoy,
+    ToggleHeadset,
+    Sleep,
+    Restart,
+    Shutdown,
+    Quit,
+    OpenBluetoothSettings,
+}
+
+internal readonly record struct MenuCommand(CommandKind Kind, int Arg = 0);
+
+internal sealed class MenuEntry
+{
+    public required string Label { get; init; }
+
+    /// <summary>Segoe Fluent Icons / Segoe MDL2 Assets code point.</summary>
+    public char Glyph { get; init; }
+
+    /// <summary>Right-aligned status text (evaluated on every paint), or null.</summary>
+    public Func<string?>? Detail { get; init; }
+
+    public MenuCommand Command { get; init; }
+
+    /// <summary>Builds the child page each time the entry is opened, so it can reflect the current config.</summary>
+    public Func<MenuPage>? Submenu { get; init; }
+
+    /// <summary>When set, accepting the entry asks this yes/no question before the command runs.</summary>
+    public string? ConfirmPrompt { get; init; }
+
+    public bool Enabled { get; init; } = true;
+}
+
+internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries)
+{
+    public string Title { get; } = title;
+    public IReadOnlyList<MenuEntry> Entries { get; } = entries;
+}
+
+/// <summary>
+/// Menu state machine: a stack of pages with a selection each, plus the yes/no confirmation step.
+/// Pure (no Win32), driven by <c>AppController</c> and painted by <c>MenuOverlay</c>.
+/// </summary>
+internal sealed class MenuModel
+{
+    private readonly List<(MenuPage Page, int Selected)> _stack = [];
+
+    public bool IsConfirming { get; private set; }
+
+    public int Depth => _stack.Count;
+
+    public MenuPage Page => _stack[^1].Page;
+
+    public int Selected => _stack[^1].Selected;
+
+    public MenuEntry? CurrentEntry =>
+        _stack.Count > 0 && Selected >= 0 && Selected < Page.Entries.Count ? Page.Entries[Selected] : null;
+
+    public string? ConfirmPrompt => IsConfirming ? CurrentEntry?.ConfirmPrompt : null;
+
+    public void Reset(MenuPage root)
+    {
+        _stack.Clear();
+        IsConfirming = false;
+        _stack.Add((root, FirstEnabled(root)));
+    }
+
+    /// <summary>Moves the selection by one entry in the direction of <paramref name="delta"/>, wrapping and skipping disabled entries.</summary>
+    public void Move(int delta)
+    {
+        if (IsConfirming || delta == 0 || _stack.Count == 0) return;
+
+        var entries = Page.Entries;
+        int count = entries.Count;
+        int step = Math.Sign(delta);
+        int index = Selected;
+        for (int i = 0; i < count; i++)
+        {
+            index = ((index + step) % count + count) % count;
+            if (entries[index].Enabled)
+            {
+                _stack[^1] = (Page, index);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Handles "A". Opens a submenu or the confirmation step and returns null, or returns the command to run
+    /// (right away, or after the confirmation).
+    /// </summary>
+    public MenuCommand? Accept()
+    {
+        var entry = CurrentEntry;
+        if (entry is null || !entry.Enabled) return null;
+
+        if (IsConfirming)
+        {
+            IsConfirming = false;
+            return entry.Command;
+        }
+
+        if (entry.Submenu is { } build)
+        {
+            var page = build();
+            _stack.Add((page, FirstEnabled(page)));
+            return null;
+        }
+
+        if (entry.ConfirmPrompt is not null)
+        {
+            IsConfirming = true;
+            return null;
+        }
+
+        return entry.Command.Kind == CommandKind.None ? null : entry.Command;
+    }
+
+    /// <summary>Handles "B": cancels a confirmation or goes up one page. Returns false when the menu should close.</summary>
+    public bool Back()
+    {
+        if (IsConfirming)
+        {
+            IsConfirming = false;
+            return true;
+        }
+        if (_stack.Count > 1)
+        {
+            _stack.RemoveAt(_stack.Count - 1);
+            return true;
+        }
+        return false;
+    }
+
+    private static int FirstEnabled(MenuPage page)
+    {
+        for (int i = 0; i < page.Entries.Count; i++)
+            if (page.Entries[i].Enabled) return i;
+        return 0;
+    }
+}
+
+/// <summary>The pages of the menu tree. Status details and the shortcut list are filled in by F4, F5 and F7.</summary>
+internal static class MenuPages
+{
+    // Segoe Fluent Icons code points.
+    private const char Mouse = '', Play = '', Game = '', Headphone = '',
+        Power = '', Sleep = '', Restart = '', Quit = '';
+
+    public static MenuPage Root() => new("ControlWin",
+    [
+        new MenuEntry { Label = "Mouse mode", Glyph = Mouse, Command = new(CommandKind.MouseMode) },
+        new MenuEntry { Label = "Shortcuts", Glyph = Play, Submenu = Shortcuts },
+        new MenuEntry { Label = "BetterJoy", Glyph = Game, Command = new(CommandKind.ToggleBetterJoy) },
+        new MenuEntry { Label = "Headset", Glyph = Headphone, Command = new(CommandKind.ToggleHeadset) },
+        new MenuEntry { Label = "Power", Glyph = Power, Submenu = PowerPage },
+        new MenuEntry
+        {
+            Label = "Quit ControlWin", Glyph = Quit, Command = new(CommandKind.Quit),
+            ConfirmPrompt = "Quit ControlWin?",
+        },
+    ]);
+
+    private static MenuPage Shortcuts() => new("Shortcuts",
+    [
+        new MenuEntry { Label = "No shortcuts - edit config.json", Glyph = Play, Enabled = false },
+    ]);
+
+    private static MenuPage PowerPage() => new("Power",
+    [
+        new MenuEntry
+        {
+            Label = "Sleep", Glyph = Sleep, Command = new(CommandKind.Sleep),
+            ConfirmPrompt = "Put the PC to sleep?",
+        },
+        new MenuEntry
+        {
+            Label = "Restart", Glyph = Restart, Command = new(CommandKind.Restart),
+            ConfirmPrompt = "Restart the PC?",
+        },
+        new MenuEntry
+        {
+            Label = "Shut down", Glyph = Power, Command = new(CommandKind.Shutdown),
+            ConfirmPrompt = "Shut down the PC?",
+        },
+    ]);
+}

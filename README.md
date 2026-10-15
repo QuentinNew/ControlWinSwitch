@@ -4,14 +4,14 @@ A tiny background app that lets you control a Windows PC from a **Nintendo Switc
 
 It is written in C# / .NET 10, compiled with **NativeAOT** to a single small exe (about 1 MB), and uses plain Win32 and GDI with no WinForms or WPF. Goal: a few MB of RAM and no CPU use while idle.
 
-> **Status: work in progress.** Only the controller input layer is finished (see [Status](#status)). Everything under [Planned features](#planned-features) is not built yet.
+> **Status: work in progress.** The controller input layer and the menu overlay are finished (see [Status](#status)). Everything under [Planned features](#planned-features) is not built yet.
 
 ## Status
 
 | Feature | State |
 |---|---|
 | Controller reading (Bluetooth and USB) + `--debug-input` | **Done** |
-| Menu overlay, Capture toggle, navigation | Planned |
+| Menu overlay, Capture toggle, navigation (actions are stubs, only Quit works) | **Done** |
 | Mouse mode (sticks = mouse, A/B = clicks, right stick = scroll) | Planned |
 | Config file + launching shortcuts without admin rights | Planned |
 | BetterJoy start/stop | Planned |
@@ -52,7 +52,7 @@ A console opens and prints the decoded state **only when it changes**:
 
 That is: report format, held buttons, raw stick values, normalized sticks (-1..1, +Y = down) and the first bytes of the report. Lines tagged `[raw changed]` or `[unknown report]` show input the decoder does not understand, which is useful for unusual pads. Everything is also written to `%APPDATA%\ControlWin\log.txt`.
 
-Without `--debug-input` the app runs invisibly; until the tray icon exists, close it from Task Manager.
+Without `--debug-input` the app runs invisibly. Press **Capture** to open the menu (see [Menu](#menu-capture-button)); until the tray icon exists, quit from the menu (**Quit ControlWin**) or Task Manager.
 
 ## How it reads the controller
 
@@ -75,7 +75,7 @@ Without it, the log says *"Pro Controller found but access denied (error 5)"*. H
 
 ### Menu (Capture button)
 
-Capture opens or closes an overlay that you navigate with the D-pad or left stick; **A** selects, **B** goes back.
+Capture opens or closes an overlay that you navigate with the D-pad or left stick (hold to repeat); **A** selects, **B** goes back, and Sleep / Restart / Shut down / Quit ask for a confirmation first. The overlay is topmost, never takes focus, and appears on the monitor under the cursor. **Implemented now:** the overlay, navigation, confirmations and Quit; the other entries show a "not implemented yet" toast until their feature lands.
 
 - Mouse mode
 - Shortcuts (from the config file: Steam Big Picture, games, any exe, URI or shortcut)
@@ -136,6 +136,11 @@ src/ControlWin/
   Input/ControllerState.cs   edges, deadzone, calibration (pure, tested)
   Input/ProCommands.cs       output reports (pure, tested)
   Input/DebugInputPrinter.cs --debug-input output
+  App/AppController.cs       Idle / Menu modes: consumes or forwards controller input
+  App/MenuModel.cs           menu tree and state machine (pure, tested)
+  UI/MenuOverlay.cs          the menu window (GDI, double buffered)
+  UI/Toast.cs                short messages
+  UI/Gdi.cs                  palette, fonts per DPI, paint buffer
 tests/ControlWin.Tests/      xUnit
 ```
 

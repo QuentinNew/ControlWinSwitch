@@ -1,6 +1,9 @@
 namespace ControlWin.Input;
 
-/// <summary>--debug-input: prints the decoded controller state to the console, only when it changes.</summary>
+/// <summary>
+/// --debug-input: prints the decoded controller state to the console, only when it changes.
+/// <paramref name="state"/> is updated by AppController, which must be subscribed to reports before this printer.
+/// </summary>
 internal sealed class DebugInputPrinter(ControllerState state)
 {
     // Ignore stick jitter below ~1.5% of the axis range so a resting stick doesn't flood the console.
@@ -13,8 +16,6 @@ internal sealed class DebugInputPrinter(ControllerState state)
 
     public void OnReport(ProReport report, ReadOnlyMemory<byte> raw)
     {
-        state.Update(report);
-
         // Anything that changes outside the sticks, even bits the parser doesn't know.
         // Simple (0x3F): bytes 0-3 and the tail 12-31. Full (0x30): only 2-5 (battery + buttons);
         // byte 1 is a timer and 12+ is motion data, both change on every report.

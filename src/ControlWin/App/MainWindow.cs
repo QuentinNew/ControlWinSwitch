@@ -17,6 +17,9 @@ internal sealed unsafe class MainWindow : NativeWindow
     private readonly HidControllerReader _reader;
     private nint _deviceNotification;
 
+    /// <summary>Receives WM_TIMER; set right after construction (the controller needs this window's handle).</summary>
+    public AppController? Controller { get; set; }
+
     public MainWindow(HidControllerReader reader)
     {
         _reader = reader;
@@ -45,6 +48,10 @@ internal sealed unsafe class MainWindow : NativeWindow
             case WM_DEVICECHANGE:
                 OnDeviceChange(wParam, lParam);
                 return 1; // TRUE: grant the request
+
+            case WM_TIMER:
+                Controller?.OnTimer(wParam);
+                return 0;
 
             case WM_CLOSE:
                 DestroyWindow(Handle);

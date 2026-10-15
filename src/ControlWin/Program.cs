@@ -25,9 +25,13 @@ internal static unsafe class Program
             using var reader = new HidControllerReader();
             var state = new ControllerState();
             var window = new MainWindow(reader);
+            var controller = new AppController(state, window);
+            window.Controller = controller;
             Log.Info($"Started (elevated={IsElevated()}, hwnd=0x{window.Handle:X})");
 
-            reader.ControllerRemoved += state.Reset;
+            // The controller updates the shared state before any later subscriber (the debug printer) reads it.
+            reader.Report += controller.OnReport;
+            reader.ControllerRemoved += controller.OnControllerRemoved;
 
             if (debugInput)
             {

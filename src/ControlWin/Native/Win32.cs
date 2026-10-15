@@ -175,6 +175,9 @@ internal static unsafe partial class Win32
         WM_DEVICECHANGE = 0x0219, WM_NULL = 0x0000, WM_DPICHANGED = 0x02E0,
         WM_LBUTTONUP = 0x0202, WM_RBUTTONUP = 0x0205, WM_CONTEXTMENU = 0x007B, WM_APP = 0x8000;
 
+    public const uint WM_MOUSEACTIVATE = 0x0021;
+    public const nint MA_NOACTIVATE = 3;
+
     public const uint WS_POPUP = 0x80000000;
     public const uint WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80,
         WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
@@ -199,6 +202,8 @@ internal static unsafe partial class Win32
     public const int NULL_PEN = 8;
     public const int FW_NORMAL = 400, FW_SEMIBOLD = 600;
     public const uint ANTIALIASED_QUALITY = 4, CLEARTYPE_QUALITY = 5;
+    public const uint DEFAULT_CHARSET = 1;
+    public const int DEFAULT_GUI_FONT = 17;
 
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
 
