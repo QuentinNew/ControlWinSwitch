@@ -1,3 +1,4 @@
+using ControlWin.Actions;
 using ControlWin.App;
 using ControlWin.Config;
 using ControlWin.Native;
@@ -40,7 +41,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         (RadialNodeTypes.Quit, "Quit ControlWin"), (RadialNodeTypes.Close, "Close menu"),
     ];
 
-    private enum Field { None, Name, ImagePath, Hex, Target, Args, WorkDir }
+    private enum Field { None, Name, ImagePath, Hex, Target, Args }
 
     private sealed class Hit
     {
@@ -74,6 +75,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private bool _selectAll;      // the whole value is selected: the next key replaces it
     private nint _sceneDc;        // device context of the paint in progress (text measuring)
 
+    private bool _steamOpen;      // the recently played Steam games list is open
+    private List<SteamGame> _steamGames = [];
     private bool _pipetting;     // the eyedropper button is held
     private int _addSlot = -1;    // empty slot whose "add" list is open
     private string? _error;
@@ -268,6 +271,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         if (c == 27) // Esc
         {
             if (_field != Field.None) { _field = Field.None; Redraw(); }
+            else if (_steamOpen) { _steamOpen = false; Redraw(); }
             else if (_addSlot >= 0) { _addSlot = -1; Redraw(); }
             return;
         }
@@ -371,9 +375,6 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                     break;
                 case Field.Args:
                     node.Args = value.Length == 0 ? null : value;
-                    break;
-                case Field.WorkDir:
-                    node.WorkingDir = value.Length == 0 ? null : value;
                     break;
             }
         }
@@ -637,6 +638,11 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             DrawAddPopup();
             FlushTexts(dc);
         }
+        if (_steamOpen)
+        {
+            DrawSteamPopup();
+            FlushTexts(dc);
+        }
     }
 
     private void DrawRing()
@@ -877,7 +883,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             by += Px(62);
             TextField(Field.Args, "Arguments", bx, by, bx + bw, node.Args ?? "");
             by += Px(62);
-            TextField(Field.WorkDir, "Start in", bx, by, bx + bw, node.WorkingDir ?? "");
+            Text(Gdi.GetFonts(_dpi).Footer, Gdi.Dim, "Steam", bx, by, bx + bw, by + Px(18), DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+            Button(bx, by + Px(20), bx + bw, by + Px(56), "Find a recently played Steam game", OpenSteamPicker);
             by += Px(66);
             bool admin = node.RunAsAdmin == true;
             Button(bx, by, bx + bw, by + Px(36), admin ? "Run as administrator: On" : "Run as administrator: Off",
@@ -1002,6 +1009,65 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
 
         if (_error is not null)
             Text(fonts.Detail, Warn, _error, Px(214), top, right - Px(246), bottom, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+    }
+
+    private void OpenSteamPicker()
+    {
+        CommitField();
+        _steamGames = SteamLibrary.Recent(10);
+        _steamOpen = true;
+    }
+
+    /// <summary>Points the selected shortcut at a Steam game: its link, its name (if still unnamed) and its cover.</summary>
+    internal void ApplySteamGame(SteamGame game)
+    {
+        if (_model.Selected is not { } node) return;
+
+        node.Target = game.LaunchTarget;
+        if (string.IsNullOrWhiteSpace(node.Name) || node.Name == "New shortcut") node.Name = game.Name;
+        if (game.CoverPath is not null) node.Icon = new RadialIconConfig { Kind = "image", Path = game.CoverPath };
+    }
+
+    private void DrawSteamPopup()
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+
+        AddHit(0, 0, _w, _h, (_, _) =>
+        {
+            _steamOpen = false;
+            Redraw();
+        }, hand: false);
+
+        int rows = Math.Max(1, _steamGames.Count);
+        int rowH = Px(36), width = Px(420), height = rowH * rows + Px(52);
+        var center = RingCenter;
+        int l = center.X - width / 2, t = Math.Max(Px(HeaderDip + 8), center.Y - height / 2);
+
+        RoundRect(l - Px(2), t - Px(2), l + width + Px(2), t + height + Px(2), Px(14), Rim);
+        RoundRect(l, t, l + width, t + height, Px(12), Panel);
+        Text(fonts.Detail, Gdi.Dim, "Recently played on Steam", l, t + Px(6), l + width, t + Px(40), DT_CENTER | oneLine);
+        AddHit(l, t, l + width, t + height, null, hand: false);
+
+        if (_steamGames.Count == 0)
+        {
+            Text(fonts.Detail, Gdi.Dim, "No recently played Steam games found", l, t + Px(44), l + width, t + Px(44) + rowH, DT_CENTER | oneLine);
+            return;
+        }
+
+        for (int i = 0; i < _steamGames.Count; i++)
+        {
+            var game = _steamGames[i];
+            int rt = t + Px(46) + i * rowH;
+            RoundRect(l + Px(8), rt, l + width - Px(8), rt + rowH - Px(4), Px(8), PanelLight);
+            Text(fonts.Detail, Gdi.TextColor, game.Name, l + Px(20), rt, l + width - Px(20), rt + rowH - Px(4), DT_LEFT | oneLine | DT_END_ELLIPSIS);
+            AddHit(l + Px(8), rt, l + width - Px(8), rt + rowH - Px(4), (_, _) =>
+            {
+                _steamOpen = false;
+                ApplySteamGame(game);
+                Redraw();
+            });
+        }
     }
 
     private void DrawAddPopup()
