@@ -197,7 +197,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mode = Mode.Menu;
         if (_radialShown)
         {
-            _radial.Reset(root);
+            _radial.Reset(RadialTree.ToPage("ControlWin", Config.RadialMenu ?? [], PadDetail, HeadsetDetail));
             _radialStick.ReleaseMs = Config.RadialReleaseMs;
             _radialStick.Reset(); // a stick already tilted must come back to the center first
             _heldDirection = Dir.None;
@@ -592,6 +592,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 LaunchShortcut(command.Arg);
                 break;
 
+            case CommandKind.Launch:
+                if (entry.Launch is { } launch) LaunchTarget(launch);
+                break;
+
+            case CommandKind.CloseMenu:
+                break; // the menu is already closed
+
             case CommandKind.ToggleVirtualPad:
                 TogglePad(entry.Glyph);
                 break;
@@ -649,7 +656,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         var list = Config.Shortcuts;
         if (index < 0 || index >= list.Count) return;
 
-        var shortcut = list[index];
+        LaunchTarget(list[index]);
+    }
+
+    private void LaunchTarget(ShortcutConfig shortcut)
+    {
         _toast.Show(MenuPages.Play, $"Launching {shortcut.Name}");
         var error = UnelevatedLauncher.Launch(shortcut.Target, shortcut.Args, shortcut.WorkingDir);
         if (error is not null)

@@ -168,6 +168,8 @@ internal sealed class RadialModel
     {
         var entries = page.Entries;
         bool hasBack = parentAngle.HasValue;
+        if (page.Slotted) return BuildSlotted(page, parentAngle);
+
         int capacity = MaxNodes - (hasBack ? 1 : 0);
         int remaining = Math.Max(0, entries.Count - start);
         bool more = remaining > capacity;
@@ -210,6 +212,37 @@ internal sealed class RadialModel
                 NextStart = start + shown,
             });
 
+        return new RadialRing(page, nodes, parentAngle);
+    }
+
+    /// <summary>
+    /// Fixed positions: the root has 8 slots from the top, clockwise; a folder has a back node opposite the node it
+    /// came from and 7 slots going clockwise right after it. Empty slots stay empty.
+    /// </summary>
+    private static RadialRing BuildSlotted(MenuPage page, float? parentAngle)
+    {
+        bool hasBack = parentAngle.HasValue;
+        float slice = MathF.Tau / MaxNodes;
+        float first = hasBack ? Normalize(parentAngle!.Value + MathF.PI) : 0f;
+
+        var nodes = new List<RadialNode>(MaxNodes);
+        if (hasBack)
+            nodes.Add(new RadialNode { Kind = RadialNodeKind.Back, Label = "Back", Glyph = BackGlyph, Angle = first });
+
+        foreach (var entry in page.Entries.Where(e => e.Slot >= 0).OrderBy(e => e.Slot))
+        {
+            int position = hasBack ? entry.Slot + 1 : entry.Slot;
+            if (position >= MaxNodes) continue;
+            nodes.Add(new RadialNode
+            {
+                Kind = RadialNodeKind.Entry,
+                Label = entry.Label,
+                Glyph = entry.Glyph,
+                Enabled = entry.Enabled,
+                Angle = Normalize(first + position * slice),
+                Entry = entry,
+            });
+        }
         return new RadialRing(page, nodes, parentAngle);
     }
 

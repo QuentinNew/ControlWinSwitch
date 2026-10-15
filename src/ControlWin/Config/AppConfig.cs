@@ -32,6 +32,54 @@ internal sealed class ShortcutConfig
     public string? WorkingDir { get; set; }
 }
 
+/// <summary>Values of <see cref="RadialNodeConfig.Type"/>.</summary>
+internal static class RadialNodeTypes
+{
+    public const string Close = "close", Quit = "quit", Sleep = "sleep", Restart = "restart", Shutdown = "shutdown",
+        Settings = "settings", Headset = "headset", MouseMode = "mouseMode", VirtualPad = "virtualPad",
+        Folder = "folder", Shortcut = "shortcut";
+
+    public static readonly string[] All =
+        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, Folder, Shortcut];
+}
+
+/// <summary>Icon of a radial node. Only "glyph" is drawn for now; "auto" and "image" are kept as written.</summary>
+internal sealed class RadialIconConfig
+{
+    public string Kind { get; set; } = "glyph";
+
+    /// <summary>"glyph": Segoe Fluent Icons code point in hex (for example "E7E8").</summary>
+    public string? Glyph { get; set; }
+
+    /// <summary>"image": path of a .png / .ico file.</summary>
+    public string? Path { get; set; }
+}
+
+/// <summary>One node of the radial menu tree: a built-in action, a folder or an app shortcut.</summary>
+internal sealed class RadialNodeConfig
+{
+    public string Type { get; set; } = "";
+
+    /// <summary>Position on the ring: 0-7 on the root, 0-6 in a folder (clockwise after the Back node).</summary>
+    public int Slot { get; set; } = -1;
+
+    /// <summary>Overrides the default label.</summary>
+    public string? Name { get; set; }
+
+    /// <summary>"#RRGGBB".</summary>
+    public string? Color { get; set; }
+
+    public RadialIconConfig? Icon { get; set; }
+
+    // Shortcuts.
+    public string? Target { get; set; }
+    public string? Args { get; set; }
+    public string? WorkingDir { get; set; }
+
+    /// <summary>Folders only; folders do not nest.</summary>
+    public List<RadialNodeConfig>? Children { get; set; }
+}
+
 /// <summary>Values of <see cref="AppConfig.MenuLayout"/>.</summary>
 internal static class MenuLayouts
 {
@@ -50,6 +98,15 @@ internal sealed class AppConfig
 
     public VirtualPadConfig VirtualPad { get; set; } = new();
     public MouseConfig Mouse { get; set; } = new();
+    /// <summary>
+    /// The radial menu tree (root nodes). Missing in the file = seeded from the defaults and <see cref="Shortcuts"/>.
+    /// </summary>
+    public List<RadialNodeConfig>? RadialMenu { get; set; }
+
+    /// <summary>What <see cref="Sanitize"/> had to repair in <see cref="RadialMenu"/> (logged by the store).</summary>
+    [JsonIgnore]
+    public List<string> RepairNotes { get; } = [];
+
     public List<ShortcutConfig> Shortcuts { get; set; } =
     [
         new() { Name = "Steam Big Picture", Target = "steam://open/bigpicture" },
@@ -73,6 +130,9 @@ internal sealed class AppConfig
         Shortcuts.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Target));
         foreach (var s in Shortcuts)
             if (string.IsNullOrWhiteSpace(s.Name)) s.Name = s.Target;
+
+        RepairNotes.Clear();
+        RadialMenu = RadialMenuRepair.Run(RadialMenu, Shortcuts, RepairNotes);
 
         Mouse.Speed = Clamp(Mouse.Speed, 50f, 10000f, 800f);
         Mouse.FastMultiplier = Clamp(Mouse.FastMultiplier, 1f, 10f, 2.5f);
@@ -132,6 +192,7 @@ internal sealed class ConfigStore
             var parsed = Parse(File.ReadAllText(Path));
             _stamp = stamp;
             Current = parsed;
+            foreach (var note in parsed.RepairNotes) Log.Info("Radial menu repaired: " + note);
             return null;
         }
         catch (Exception ex)

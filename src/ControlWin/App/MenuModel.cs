@@ -1,3 +1,5 @@
+using ControlWin.Config;
+
 namespace ControlWin.App;
 
 internal enum CommandKind
@@ -13,6 +15,8 @@ internal enum CommandKind
     Quit,
     OpenBluetoothSettings,
     OpenSettings,
+    CloseMenu,
+    Launch,
 }
 
 internal readonly record struct MenuCommand(CommandKind Kind, int Arg = 0);
@@ -36,12 +40,21 @@ internal sealed class MenuEntry
     public string? ConfirmPrompt { get; init; }
 
     public bool Enabled { get; init; } = true;
+
+    /// <summary>Radial menu only: slot on the ring (0-7 on the root, 0-6 in a folder), -1 when not placed.</summary>
+    public int Slot { get; init; } = -1;
+
+    /// <summary>App shortcut entries (<see cref="CommandKind.Launch"/>): what to start.</summary>
+    public ShortcutConfig? Launch { get; init; }
 }
 
-internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries)
+internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries, bool slotted = false)
 {
     public string Title { get; } = title;
     public IReadOnlyList<MenuEntry> Entries { get; } = entries;
+
+    /// <summary>The radial menu places entries by <see cref="MenuEntry.Slot"/> instead of spreading them evenly.</summary>
+    public bool Slotted { get; } = slotted;
 }
 
 /// <summary>
@@ -160,7 +173,8 @@ internal sealed class MenuModel
 internal static class MenuPages
 {
     // Segoe Fluent Icons code points.
-    internal const char Gear = '', Mouse = '', Play = '', Game = '', Headphone = '',
+    internal const char Folder = '', Close = '';
+    internal const char Gear ='', Mouse = '', Play = '', Game = '', Headphone = '',
         Power = '', Sleep = '', Restart = '', Quit = '';
 
     public static MenuPage Root(Func<string?>? virtualPadDetail = null, Func<string?>? headsetDetail = null,
