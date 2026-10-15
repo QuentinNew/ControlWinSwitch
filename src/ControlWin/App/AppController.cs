@@ -24,9 +24,14 @@ internal sealed class AppController : IDisposable
     private readonly Toast _toast = new();
     private readonly VirtualPad _pad = new();
 
+    // Hardcoded until the config file (F4) provides it.
+    private const string HeadsetName = "WH-CH700N";
+
     private bool _padEnabled = VirtualPadDefaults.Enabled;
     private bool _padFailed;
     private bool _shutDown;
+    private HeadsetState _headsetState;
+    private bool _headsetBusy;
     private Buttons _ignoreMask; // buttons still held from the menu: hidden from the game until released
     private bool _ignoreSticks;  // sticks used in the menu: hidden until back near center
 
@@ -93,12 +98,13 @@ internal sealed class AppController : IDisposable
 
     private void OpenMenu()
     {
-        _menu.Reset(MenuPages.Root(PadDetail));
+        _menu.Reset(MenuPages.Root(PadDetail, HeadsetDetail));
         _pad.Submit(default); // neutral pad while the menu owns the input
         _heldDirection = ReadDirection(); // a stick already tilted must be released first, not scroll on open
         _mode = Mode.Menu;
         _overlay.Show(_menu);
         Log.Info("Menu opened");
+        StartHeadsetWork(toggle: false); // refresh the status shown in the menu
     }
 
     private void CloseMenu()
@@ -183,8 +189,14 @@ internal sealed class AppController : IDisposable
                 TogglePad(entry.Glyph);
                 break;
 
+            case CommandKind.ToggleHeadset:
+                if (_headsetBusy) break;
+                _toast.Show(entry.Glyph, _headsetState == HeadsetState.Connected ? "Disconnecting headset..." : "Connecting headset...");
+                StartHeadsetWork(toggle: true);
+                break;
+
             default:
-                // Implemented by F3-F7.
+                // Implemented by F3-F6.
                 _toast.Show(entry.Glyph, $"{entry.Label}: not implemented yet");
                 break;
         }
@@ -234,6 +246,55 @@ internal sealed class AppController : IDisposable
         _toast.Hide();
         _pad.Dispose(); // unplugs the pad: it disappears from the games
         _window.RemoveTray();
+    }
+
+    private string? HeadsetDetail() => _headsetBusy ? "..." : _headsetState switch
+    {
+        HeadsetState.Connected => "Connected",
+        HeadsetState.Disconnected => "Disconnected",
+        HeadsetState.NotFound => "Not paired",
+        HeadsetState.Failed => "Error",
+        HeadsetState.Connecting => "Connecting...",
+        _ => null,
+    };
+
+    /// <summary>Runs the (blocking) headset query or toggle on a worker thread and posts the outcome back.</summary>
+    private void StartHeadsetWork(bool toggle)
+    {
+        if (_headsetBusy || _shutDown) return;
+        _headsetBusy = true;
+        nint hwnd = _window.Handle;
+        new Thread(() =>
+        {
+            var state = toggle ? BluetoothHeadset.Toggle(HeadsetName) : BluetoothHeadset.GetState(HeadsetName);
+            PostMessageW(hwnd, AppMessages.HeadsetDone, (nuint)(int)state, toggle ? 1 : 0);
+        }) { IsBackground = true, Name = "headset" }.Start();
+    }
+
+    /// <summary>AppMessages.HeadsetDone, on the UI thread.</summary>
+    public void OnHeadsetDone(HeadsetState state, bool wasToggle)
+    {
+        _headsetBusy = false;
+        if (_shutDown) return;
+        _headsetState = state;
+        Log.Info($"Headset: {state}");
+
+        if (wasToggle)
+        {
+            const char glyph = ''; // Headphone
+            switch (state)
+            {
+                case HeadsetState.Connected: _toast.Show(glyph, "Headset connected"); break;
+                case HeadsetState.Disconnected: _toast.Show(glyph, "Headset disconnected"); break;
+                case HeadsetState.Connecting: break; // no toast: the menu row shows it
+                case HeadsetState.NotFound: _toast.Show(glyph, "Headset not paired"); break;
+                default:
+                    _toast.Show(glyph, "Headset failed - opening Bluetooth settings");
+                    BluetoothHeadset.OpenBluetoothSettings();
+                    break;
+            }
+        }
+        if (_mode == Mode.Menu) _overlay.Refresh();
     }
 
     private string? PadDetail() => !_padEnabled ? "Off" : _padFailed ? "Unavailable" : "On";

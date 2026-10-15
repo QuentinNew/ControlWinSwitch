@@ -373,6 +373,9 @@ internal static unsafe partial class Win32
     public static partial int AdjustTokenPrivileges(nint token, int disableAll, TOKEN_PRIVILEGES* state, uint length, nint previous, nint returnLength);
     [LibraryImport("advapi32.dll")] public static partial int GetTokenInformation(nint token, int infoClass, void* info, uint length, uint* returnLength);
 
+    /// <summary>info: 560-byte BLUETOOTH_DEVICE_INFO (dwSize@0, Address@8, fConnected@20). Returns 0 on success.</summary>
+    [LibraryImport("bthprops.cpl")] public static partial uint BluetoothGetDeviceInfo(nint radio, byte* info);
+
     // ---- misc -----------------------------------------------------------------------------
     [LibraryImport("powrprof.dll")] public static partial byte SetSuspendState(byte hibernate, byte force, byte wakeupEventsDisabled);
     [LibraryImport("user32.dll", SetLastError = true)] public static partial int ExitWindowsEx(uint flags, uint reason);

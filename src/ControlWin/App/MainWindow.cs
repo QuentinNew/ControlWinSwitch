@@ -1,3 +1,4 @@
+using ControlWin.Actions;
 using ControlWin.Input;
 using ControlWin.Native;
 using ControlWin.UI;
@@ -121,6 +122,10 @@ internal sealed unsafe class MainWindow : NativeWindow
 
             case WM_TIMER:
                 Controller?.OnTimer(wParam);
+                return 0;
+
+            case AppMessages.HeadsetDone:
+                Controller?.OnHeadsetDone((HeadsetState)(int)wParam, lParam != 0);
                 return 0;
 
             case WM_CLOSE:

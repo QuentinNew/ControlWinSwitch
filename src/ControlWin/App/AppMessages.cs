@@ -9,6 +9,9 @@ internal static class AppMessages
     public static readonly uint Quit = RegisterWindowMessageW("ControlWin.Quit");
     public static readonly uint TaskbarCreated = RegisterWindowMessageW("TaskbarCreated");
 
+    /// <summary>Posted by the headset worker thread: wParam = <c>HeadsetState</c>, lParam = 1 when it was a connect/disconnect.</summary>
+    public const uint HeadsetDone = WM_APP + 2;
+
     /// <summary>Posts <paramref name="message"/> to the running instance. False when none is running.</summary>
     public static bool PostToRunningInstance(uint message)
     {

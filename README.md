@@ -17,7 +17,7 @@ It is written in C# / .NET 10, compiled with **NativeAOT** to a single small exe
 | Mouse mode (sticks = mouse, A/B = clicks, right stick = scroll) | Planned |
 | Config file + launching shortcuts without admin rights | Planned |
 | Power: sleep, restart, shut down | Planned |
-| Bluetooth headset connect/disconnect | Planned |
+| Bluetooth headset connect/disconnect (name hardcoded to `WH-CH700N` until the config file) | **Done** |
 | Installer (scheduled task at logon, Start menu shortcut) | Planned |
 | Factory stick calibration | Planned (phase 2) |
 
