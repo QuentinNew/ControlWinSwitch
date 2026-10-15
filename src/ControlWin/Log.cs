@@ -14,6 +14,19 @@ internal static class Log
     /// <summary>Also echo every line to <see cref="Console"/> (--debug-input).</summary>
     public static bool ConsoleEnabled { get; set; }
 
+    /// <summary>Full path of log.txt, or null when the folder is unavailable.</summary>
+    public static string? FilePath
+    {
+        get
+        {
+            lock (s_lock)
+            {
+                if (!s_initialized) Initialize();
+                return s_path;
+            }
+        }
+    }
+
     public static void Info(string message) => Write("INFO ", message);
 
     public static void Error(string message, Exception? ex = null) =>

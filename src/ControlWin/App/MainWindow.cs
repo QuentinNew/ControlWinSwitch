@@ -1,5 +1,6 @@
 using ControlWin.Input;
 using ControlWin.Native;
+using ControlWin.UI;
 using static ControlWin.Native.Win32;
 
 namespace ControlWin.App;
@@ -15,6 +16,7 @@ internal sealed unsafe class MainWindow : NativeWindow
     private static readonly Guid HidInterface = new("4D1E55B2-F16F-11CF-88CB-001111000030");
 
     private readonly HidControllerReader _reader;
+    private readonly TrayIcon _tray;
     private nint _deviceNotification;
 
     /// <summary>Receives WM_TIMER; set right after construction (the controller needs this window's handle).</summary>
@@ -25,6 +27,42 @@ internal sealed unsafe class MainWindow : NativeWindow
         _reader = reader;
         Create(ClassName, WS_POPUP, 0);
         RegisterHidNotifications();
+
+        // The app runs elevated; the second instance, --quit and explorer's TaskbarCreated broadcast may not.
+        ChangeWindowMessageFilterEx(Handle, AppMessages.ShowMenu, MSGFLT_ALLOW, 0);
+        ChangeWindowMessageFilterEx(Handle, AppMessages.Quit, MSGFLT_ALLOW, 0);
+        ChangeWindowMessageFilterEx(Handle, AppMessages.TaskbarCreated, MSGFLT_ALLOW, 0);
+
+        _tray = new TrayIcon(Handle);
+        _tray.Add(TrayIcon.Tooltip(_reader.IsOpen));
+    }
+
+    /// <summary>Call after the controller (dis)connected.</summary>
+    public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_reader.IsOpen));
+
+    /// <summary>Removes the tray icon right away (shutdown).</summary>
+    public void RemoveTray() => _tray.Dispose();
+
+    private void OnTrayCallback(nint lParam)
+    {
+        switch ((uint)LoWord(lParam) & 0xFFFF)
+        {
+            case WM_LBUTTONUP:
+            case NIN_KEYSELECT:
+                Controller?.ToggleMenu();
+                break;
+
+            case WM_CONTEXTMENU:
+            case WM_RBUTTONUP:
+                switch (_tray.ShowMenu(Controller?.PadEnabled ?? false))
+                {
+                    case TrayIcon.CmdOpenMenu: Controller?.ShowMenu(); break;
+                    case TrayIcon.CmdTogglePad: Controller?.TogglePad(''); break;
+                    case TrayIcon.CmdOpenLog: TrayIcon.OpenLog(); break;
+                    case TrayIcon.CmdQuit: PostMessageW(Handle, WM_CLOSE, 0, 0); break;
+                }
+                break;
+        }
     }
 
     /// <summary>Tells us when the controller (dis)connects, so nothing has to poll.</summary>
@@ -43,8 +81,40 @@ internal sealed unsafe class MainWindow : NativeWindow
 
     protected override nint WndProc(uint msg, nuint wParam, nint lParam)
     {
+        if (msg == AppMessages.ShowMenu)
+        {
+            Controller?.ShowMenu();
+            return 0;
+        }
+        if (msg == AppMessages.Quit)
+        {
+            PostMessageW(Handle, WM_CLOSE, 0, 0);
+            return 0;
+        }
+        if (msg == AppMessages.TaskbarCreated)
+        {
+            _tray.Add(TrayIcon.Tooltip(_reader.IsOpen)); // explorer restarted
+            return 0;
+        }
+
         switch (msg)
         {
+            case TrayIcon.CallbackMessage:
+                OnTrayCallback(lParam);
+                return 0;
+
+            case WM_QUERYENDSESSION:
+                return 1;
+
+            case WM_ENDSESSION:
+                if (wParam != 0)
+                {
+                    Controller?.Shutdown();
+                    Controller?.Dispose();
+                    _tray.Dispose();
+                }
+                return 0;
+
             case WM_DEVICECHANGE:
                 OnDeviceChange(wParam, lParam);
                 return 1; // TRUE: grant the request
@@ -54,10 +124,12 @@ internal sealed unsafe class MainWindow : NativeWindow
                 return 0;
 
             case WM_CLOSE:
+                Controller?.Shutdown(); // pad removed, menu closed, tray icon deleted
                 DestroyWindow(Handle);
                 return 0;
 
             case WM_DESTROY:
+                _tray.Dispose();
                 if (_deviceNotification != 0) UnregisterDeviceNotification(_deviceNotification);
                 _deviceNotification = 0;
                 PostQuitMessage(0);
@@ -83,5 +155,6 @@ internal sealed unsafe class MainWindow : NativeWindow
             var path = new string(&header->dbcc_name);
             _reader.OnInterfaceRemoved(path);
         }
+        UpdateTray();
     }
 }

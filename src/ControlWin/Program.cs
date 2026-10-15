@@ -10,6 +10,19 @@ internal static unsafe class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Contains("--quit", StringComparer.OrdinalIgnoreCase))
+            return AppMessages.QuitRunningInstance();
+
+        // Single instance: the mutex is held until the process exits. A second launch opens the menu of the first.
+        // ACCESS_DENIED means the first instance is elevated and this one is not.
+        nint mutex = CreateMutexW(0, 1, "Local\\ControlWin.SingleInstance");
+        int mutexError = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+        if (mutex == 0 || mutexError == ERROR_ALREADY_EXISTS || mutexError == ERROR_ACCESS_DENIED)
+        {
+            AppMessages.PostToRunningInstance(AppMessages.ShowMenu);
+            return 0;
+        }
+
         bool debugInput = args.Contains("--debug-input", StringComparer.OrdinalIgnoreCase);
 
         if (debugInput)
@@ -42,8 +55,10 @@ internal static unsafe class Program
 
             reader.TryOpen();
             if (!reader.IsOpen) Log.Info("Pro Controller not connected yet (waiting for it)");
+            window.UpdateTray();
 
             RunMessageLoop(reader);
+            controller.Shutdown(); // no-op when WM_CLOSE already did it
             controller.Dispose();
             return 0;
         }

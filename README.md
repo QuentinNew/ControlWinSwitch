@@ -4,26 +4,28 @@ A tiny background app that lets you control a Windows PC from a **Nintendo Switc
 
 It is written in C# / .NET 10, compiled with **NativeAOT** to a single small exe (about 1 MB), and uses plain Win32 and GDI with no WinForms or WPF. Goal: a few MB of RAM and no CPU use while idle.
 
-> **Status: work in progress.** The controller input layer and the menu overlay are finished (see [Status](#status)). Everything under [Planned features](#planned-features) is not built yet.
+> **Status: work in progress.** Controller input, the menu overlay, the virtual pad and the tray icon are built. Mouse mode, config, power, headset and the installer are not (see [Status](#status)).
 
 ## Status
 
 | Feature | State |
 |---|---|
 | Controller reading (Bluetooth and USB) + `--debug-input` | **Done** |
-| Menu overlay, Capture toggle, navigation (actions are stubs, only Quit works) | **Done** |
+| Menu overlay, Capture toggle, navigation (only Virtual pad and Quit are wired, other entries are stubs) | **Done** |
+| Virtual Xbox 360 pad via ViGEmBus (needs ViGEmBus; stop BetterJoy first) | **Done** (needs real-pad validation) |
+| Tray icon, single instance, `--quit`, full close | **Done** (tray look and explorer restart not yet checked by hand) |
 | Mouse mode (sticks = mouse, A/B = clicks, right stick = scroll) | Planned |
 | Config file + launching shortcuts without admin rights | Planned |
-| Virtual Xbox 360 pad via ViGEmBus (needs ViGEmBus; stop BetterJoy first) | **Done** (needs real-pad validation) |
 | Power: sleep, restart, shut down | Planned |
 | Bluetooth headset connect/disconnect | Planned |
-| Tray icon, single instance, installer, start at logon | Planned |
-| Virtual Xbox 360 pad (a BetterJoy replacement) + factory stick calibration | Planned (phase 2) |
+| Installer (scheduled task at logon, Start menu shortcut) | Planned |
+| Factory stick calibration | Planned (phase 2) |
 
 ## Requirements
 
 - Windows 10/11, x64
 - A Switch Pro Controller (VID `057E`, PID `2009`) paired over Bluetooth, or plugged in over USB
+- [ViGEmBus](https://github.com/nefarius/ViGEmBus) for the virtual pad (the rest works without it)
 - To build: .NET SDK 10 and the **C++ build tools** (NativeAOT links with the MSVC linker)
 
 ## Quick start
@@ -36,23 +38,86 @@ $env:PATH += ";C:\Program Files (x86)\Microsoft Visual Studio\Installer"
 dotnet publish src/ControlWin -c Release -o dist
 ```
 
-The result is `dist\ControlWin.exe`.
+The result is `dist\ControlWin.exe`. Stop any running instance first (`dist\ControlWin.exe --quit`), or the exe is locked.
 
-### Try it: `--debug-input`
+### Run
+
+Start `dist\ControlWin.exe`. The app runs invisibly apart from its [tray icon](#tray-icon). Press **Capture** to open the [menu](#menu-capture-button).
+
+## Command line
+
+| Argument | What it does |
+|---|---|
+| *(none)* | Starts the app. If it is already running, opens the running instance's menu and exits. |
+| `--quit` | Asks the running instance to exit and waits up to 5 s for it to go. Works from a normal (non-elevated) prompt even when the app runs elevated. Exit code 0 when nothing is running or it exited, 1 on timeout. |
+| `--debug-input` | Opens a console that prints the decoded controller state (see below). |
+
+### `--debug-input`
 
 ```powershell
 dist\ControlWin.exe --debug-input
 ```
 
-A console opens and prints the decoded state **only when it changes**:
+The console prints the decoded state **only when it changes**:
 
 ```
 [Full  ] Capture | raw L(2048,2047) R(2048,2048) | norm L(+0.00,+0.00) R(+0.00,+0.00) | 30-D2-40-00-20-00-00-F8-7F-00-08-80
 ```
 
-That is: report format, held buttons, raw stick values, normalized sticks (-1..1, +Y = down) and the first bytes of the report. Lines tagged `[raw changed]` or `[unknown report]` show input the decoder does not understand, which is useful for unusual pads. Everything is also written to `%APPDATA%\ControlWin\log.txt`.
+That is: report format, held buttons, raw stick values, normalized sticks (-1..1, +Y = down) and the first bytes of the report. Lines tagged `[raw changed]` or `[unknown report]` show input the decoder does not understand, which is useful for unusual pads. Everything is also written to `%APPDATA%\ControlWin\log.txt`. Press Ctrl+C to quit.
 
-Without `--debug-input` the app runs invisibly. Press **Capture** to open the menu (see [Menu](#menu-capture-button)); until the tray icon exists, quit from the menu (**Quit ControlWin**) or Task Manager.
+## Menu (Capture button)
+
+Capture opens or closes an overlay that you navigate with the D-pad or left stick up/down (hold to repeat); **A** selects, **B** goes back or closes. Sleep / Restart / Shut down / Quit ask for a confirmation first. The overlay is topmost, never takes focus, ignores the mouse, and appears on the monitor under the cursor.
+
+| Entry | State |
+|---|---|
+| Mouse mode | stub (toast "not implemented yet") |
+| Shortcuts | stub (empty submenu) |
+| Virtual pad (shows On / Off / Unavailable) | **works** |
+| Headset | stub |
+| Power ▸ Sleep / Restart / Shut down | stub (confirmation works, no action yet) |
+| Quit ControlWin | **works** (same full close as the tray) |
+
+While the menu is open the game receives a neutral pad, and **Capture is never forwarded** to the game.
+
+## Tray icon
+
+A controller glyph appears in the taskbar notification area while ControlWin runs. Windows 11 puts new tray icons in the overflow (the `^` menu): drag it onto the taskbar to keep it visible.
+
+- **Tooltip:** "ControlWin - controller connected" or "controller not found", kept up to date as the pad connects and disconnects.
+- **Left click:** opens the menu, or closes it if it is already open.
+- **Right click:** *Open menu*, *Virtual pad* (checked when on), *Open log* (in Notepad), *Quit ControlWin*.
+- The icon is re-added automatically if explorer restarts.
+
+### Opening and closing the app
+
+- **Single instance.** Launching the exe a second time does not start a second copy: it opens the menu of the running one. This also works when the running copy is elevated and the new one is not.
+- **Quit** (tray, menu, `--quit`, or Windows logoff / shutdown) is a full exit: the menu and toast are closed, the **virtual pad is unplugged** (it disappears from games), the controller handle is closed, the tray icon is deleted and the process ends. Quitting does not disable autostart (not built yet): the app comes back at the next logon.
+
+## Virtual Xbox 360 pad
+
+ControlWin plugs a virtual **Xbox 360 controller** into ViGEmBus, so XInput games see a standard pad with no BetterJoy running. It is plugged in when the first report arrives and unplugged when the controller disconnects, when you switch it off, or when the app quits. If the process is killed, Windows removes the pad on its own (closing the bus handle unplugs it).
+
+**Mapping** (by label, not by position: Switch **A** = Xbox A, B = B, X = X, Y = Y):
+
+| Pro Controller | Xbox 360 |
+|---|---|
+| A / B / X / Y | A / B / X / Y (by label) |
+| D-pad | D-pad |
+| L / R | LB / RB |
+| ZL / ZR | LT / RT (digital: 0 or 255) |
+| Left / right stick (+ click) | Left / right stick (+ LS / RS) |
+| Plus / Minus | Start / Back |
+| Home | Guide |
+| Capture | never forwarded (opens the menu) |
+
+**Behaviour**
+
+- A button still held (or a stick still tilted) when you close the menu stays hidden from the game until you release it, so closing the menu with B does not press B in the game.
+- Switch it on or off from the menu or the tray. If ViGEmBus is missing the menu shows "Unavailable" and a toast tells you; the rest of the app keeps working.
+- **Do not run BetterJoy at the same time**: games would see two pads. Stop it by hand.
+- Implementation note: no `ViGEmClient.dll` is shipped. The app talks to the bus driver directly with IOCTLs.
 
 ## How it reads the controller
 
@@ -69,24 +134,17 @@ If you use HidHide (for example with BetterJoy), the cloak hides the controller 
 - built from source: `<repo>\dist\ControlWin.exe`
 - once installed: `C:\Program Files\ControlWin\ControlWin.exe`
 
-Without it, the log says *"Pro Controller found but access denied (error 5)"*. HidHide matches on the exe path, so re-add it if you move the exe.
+Without it, the log says *"Pro Controller found but access denied (error 5)"*. HidHide matches on the exe path, so re-add it if you move the exe, and always run the build from that exact path.
+
+## Log
+
+`%APPDATA%\ControlWin\log.txt` (also reachable from the tray). Truncated when it grows past 256 KB. First place to look when "nothing happens": it says whether the controller was opened, whether the menu opened, and why the virtual pad failed.
 
 ## Planned features
 
-### Menu (Capture button)
-
-Capture opens or closes an overlay that you navigate with the D-pad or left stick (hold to repeat); **A** selects, **B** goes back, and Sleep / Restart / Shut down / Quit ask for a confirmation first. The overlay is topmost, never takes focus, and appears on the monitor under the cursor. **Implemented now:** the overlay, navigation, confirmations and Quit; the other entries show a "not implemented yet" toast until their feature lands.
-
-- Mouse mode
-- Shortcuts (from the config file: Steam Big Picture, games, any exe, URI or shortcut)
-- Virtual pad on/off
-- Bluetooth headset connect/disconnect
-- Power: Sleep / Restart / Shut down (each with a confirmation)
-- Quit
-
 ### Mouse mode
 
-Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A** = left click (hold to drag), **B** = right click, **X** = on-screen keyboard, **Capture** = back to the menu.
+Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A** = left click (hold to drag), **B** = right click, **X** = on-screen keyboard, **Capture** = back to the menu. The virtual pad gets a neutral report while it is active.
 
 ### Configuration
 
@@ -95,6 +153,7 @@ Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A*
 ```jsonc
 {
   "headsetName": "WH-CH700N",
+  "virtualPad": { "enabled": true, "swapAB": true, "swapXY": true },
   "mouse": { "speed": 1400, "fastMultiplier": 2.5, "slowMultiplier": 0.3, "deadzone": 0.15, "scrollSpeed": 12 },
   "shortcuts": [
     { "name": "Steam Big Picture", "target": "steam://open/bigpicture" },
@@ -103,42 +162,47 @@ Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A*
 }
 ```
 
+Until then the virtual pad settings are constants in the code (`enabled`, label-based face buttons).
+
 ### Install
 
-`ControlWin.exe --install` copies the exe to `C:\Program Files\ControlWin\` and registers a scheduled task that starts it at logon with administrator rights (so it can control elevated windows), no UAC prompt. `--uninstall` removes it and keeps your config.
+`ControlWin.exe --install` copies the exe to `C:\Program Files\ControlWin\` and registers a scheduled task that starts it at logon with administrator rights (so it can control elevated windows), no UAC prompt, plus a Start menu shortcut (pinnable to the taskbar) that starts it without a UAC prompt. `--uninstall` removes both and keeps your config.
 
-### Phase 2: replace BetterJoy
-
-ControlWin would expose a virtual Xbox 360 controller through [ViGEmBus](https://github.com/nefarius/ViGEmBus), so games see a standard pad with no extra tool running. While the menu or mouse mode is active, the game would receive a neutral pad, which removes the "inputs still reach the game" limitation below. Rumble, LEDs, battery display, HidHide automation and gyro are deliberately out of scope.
+Rumble, LEDs, battery display, HidHide automation and gyro are deliberately out of scope.
 
 ## Known limitations
 
-- While the menu or mouse mode is active, the controller's inputs **still reach the game or BetterJoy's virtual pad** until the phase 2 virtual pad exists.
+- While the menu is open the virtual pad is neutral, so XInput games see nothing. Games that read the physical controller directly (HID / DirectInput) can still see it unless HidHide hides it.
 - UAC prompts and the Ctrl+Alt+Del screen (secure desktop) cannot be controlled.
 - Games in exclusive fullscreen can hide the overlay (borderless is fine).
-- If BetterJoy or Steam maps Capture to a screenshot, set it to "none" there.
+- If Steam (Steam Input) or BetterJoy maps Capture to a screenshot, set it to "none" there.
 - Over USB, the controller needs a handshake that ControlWin does not send: it only works if BetterJoy or Steam is running.
 - Some pads do not expose their extra buttons to the PC at all (for example the 8BitDo star / L4 / R4 in Switch mode). Remap them to a standard button in the pad's own software.
 - In full mode the controller streams about 100 reports per second, so CPU use is very small but not exactly zero while the controller is connected.
+- The virtual pad needs ViGEmBus (retired by its author, but working).
 
 ## Project layout
 
 ```
 src/ControlWin/
-  Program.cs                 arguments and the message loop
+  Program.cs                 arguments, single-instance mutex, message loop
   Log.cs                     %APPDATA%\ControlWin\log.txt
-  App/MainWindow.cs          hidden top-level window, device notifications
+  App/MainWindow.cs          hidden top-level window: device notifications, tray, app messages, session end
+  App/AppMessages.cs         registered messages (ShowMenu, Quit, TaskbarCreated), --quit
+  App/AppController.cs       Idle / Menu modes: consumes or forwards input, owns the virtual pad, Shutdown()
+  App/MenuModel.cs           menu tree and state machine (pure, tested)
   Native/Win32.cs            all P/Invoke (hand-written, AOT friendly)
   Native/NativeWindow.cs     window base class
   Input/HidControllerReader.cs   direct HID read, full-mode request, hot-plug
   Input/ProReportParser.cs   report decoding (pure, tested)
   Input/ControllerState.cs   edges, deadzone, calibration (pure, tested)
   Input/ProCommands.cs       output reports (pure, tested)
+  Input/XInputMapper.cs      Pro Controller state -> Xbox 360 report (pure, tested)
   Input/DebugInputPrinter.cs --debug-input output
-  App/AppController.cs       Idle / Menu modes: consumes or forwards controller input
-  App/MenuModel.cs           menu tree and state machine (pure, tested)
+  Actions/VirtualPad.cs      ViGEmBus client (direct IOCTLs)
   UI/MenuOverlay.cs          the menu window (GDI, double buffered)
   UI/Toast.cs                short messages
+  UI/TrayIcon.cs             tray icon, tooltip, context menu
   UI/Gdi.cs                  palette, fonts per DPI, paint buffer
 tests/ControlWin.Tests/      xUnit
 ```
@@ -147,7 +211,7 @@ Run the tests with `dotnet test ControlWin.slnx`.
 
 ## Credits
 
-- [BetterJoy](https://github.com/Davidobot/BetterJoy) (MIT), the reference for what this app wants to replace.
+- [BetterJoy](https://github.com/Davidobot/BetterJoy) (MIT), the reference for what this app replaces.
 - [dekuNukem's Nintendo Switch reverse engineering notes](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) for the HID report formats.
 - [HidHide](https://github.com/nefarius/HidHide) and [ViGEmBus](https://github.com/nefarius/ViGEmBus) by Nefarius.
 

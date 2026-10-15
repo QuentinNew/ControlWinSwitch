@@ -26,6 +26,7 @@ internal sealed class AppController : IDisposable
 
     private bool _padEnabled = VirtualPadDefaults.Enabled;
     private bool _padFailed;
+    private bool _shutDown;
     private Buttons _ignoreMask; // buttons still held from the menu: hidden from the game until released
     private bool _ignoreSticks;  // sticks used in the menu: hidden until back near center
 
@@ -43,6 +44,7 @@ internal sealed class AppController : IDisposable
     public void OnReport(ProReport report, ReadOnlyMemory<byte> raw)
     {
         _state.Update(report);
+        if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
 
         // Capture is reserved for the menu toggle and is never forwarded.
         if (_state.Pressed(Buttons.Capture))
@@ -66,6 +68,8 @@ internal sealed class AppController : IDisposable
     public void OnControllerRemoved()
     {
         _state.Reset();
+        _window.UpdateTray();
+        if (_shutDown) return;
         _pad.Detach(); // re-plugged on the next report
         if (_mode == Mode.Menu) CloseMenu();
         _ignoreMask = Buttons.None;
@@ -176,12 +180,7 @@ internal sealed class AppController : IDisposable
                 break;
 
             case CommandKind.ToggleVirtualPad:
-                _padEnabled = !_padEnabled;
-                _padFailed = false;
-                if (!_padEnabled) _pad.Detach();
-                else if (!_pad.Attach()) _padFailed = true;
-                _toast.Show(entry.Glyph, _padFailed ? "Virtual pad unavailable (ViGEmBus?)"
-                    : _padEnabled ? "Virtual pad: on" : "Virtual pad: off");
+                TogglePad(entry.Glyph);
                 break;
 
             default:
@@ -189,6 +188,52 @@ internal sealed class AppController : IDisposable
                 _toast.Show(entry.Glyph, $"{entry.Label}: not implemented yet");
                 break;
         }
+    }
+
+    public bool PadEnabled => _padEnabled;
+
+    public void TogglePad(char glyph)
+    {
+        if (_shutDown) return;
+        _padEnabled = !_padEnabled;
+        _padFailed = false;
+        if (!_padEnabled) _pad.Detach();
+        else if (!_pad.Attach()) _padFailed = true;
+        _toast.Show(glyph, _padFailed ? "Virtual pad unavailable (ViGEmBus?)"
+            : _padEnabled ? "Virtual pad: on" : "Virtual pad: off");
+        if (_mode == Mode.Menu) _overlay.Refresh(); // the pad row shows its state
+    }
+
+    /// <summary>Opens the menu (tray, second launch); no-op when it is already open.</summary>
+    public void ShowMenu()
+    {
+        if (_shutDown || _mode == Mode.Menu) return;
+        OpenMenu();
+    }
+
+    /// <summary>Tray left click.</summary>
+    public void ToggleMenu()
+    {
+        if (_shutDown) return;
+        if (_mode == Mode.Menu) CloseMenu();
+        else OpenMenu();
+    }
+
+    /// <summary>
+    /// Releases everything the app holds towards the system: menu and toast hidden, virtual pad unplugged,
+    /// tray icon deleted. Idempotent; the reader is closed by the caller once the loop ends.
+    /// </summary>
+    public void Shutdown()
+    {
+        if (_shutDown) return;
+        _shutDown = true;
+        Log.Info("Shutting down");
+
+        StopRepeat();
+        if (_mode == Mode.Menu) CloseMenu();
+        _toast.Hide();
+        _pad.Dispose(); // unplugs the pad: it disappears from the games
+        _window.RemoveTray();
     }
 
     private string? PadDetail() => !_padEnabled ? "Off" : _padFailed ? "Unavailable" : "On";

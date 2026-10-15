@@ -94,8 +94,11 @@ internal static unsafe class Gdi
         SelectObject(dc, oldBrush);
     }
 
-    private static nint Create(int pixelHeight, int weight, string face) =>
-        CreateFontW(-pixelHeight, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, face);
+    private static nint Create(int pixelHeight, int weight, string face, uint quality = CLEARTYPE_QUALITY) =>
+        CreateFontW(-pixelHeight, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, quality, 0, face);
+
+    /// <summary>Icon-font face at an exact pixel height, grayscale-antialiased (for bitmaps whose alpha comes from coverage). Caller deletes it.</summary>
+    public static nint CreateIconFont(int pixelHeight) => Create(pixelHeight, FW_NORMAL, IconFace(), ANTIALIASED_QUALITY);
 
     /// <summary>"Segoe Fluent Icons" ships with Windows 11; Windows 10 only has "Segoe MDL2 Assets" (same code points).</summary>
     private static string IconFace()
