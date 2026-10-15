@@ -72,8 +72,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     // Text editing.
     private Field _field;
     private string _buffer = "";
-    private bool _selectAll;      // the whole value is selected: the next key replaces it
-    private nint _sceneDc;        // device context of the paint in progress (text measuring)
+    private int _caret;           // insertion point in _buffer
 
     private bool _steamOpen;      // the recently played Steam games list is open
     private List<SteamGame> _steamGames = [];
@@ -182,12 +181,12 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         DeleteDC(dc);
     }
 
-    /// <summary>A left click (down and up) in the middle of the hit tagged <paramref name="tag"/>.</summary>
-    internal bool DebugClick(string tag)
+    /// <summary>A left click (down and up) at a fraction of the width of the hit tagged <paramref name="tag"/>.</summary>
+    internal bool DebugClick(string tag, double fraction = 0.5)
     {
         var hit = _hits.FindLast(h => h.Tag == tag);
         if (hit is null) return false;
-        int x = (hit.R.Left + hit.R.Right) / 2, y = (hit.R.Top + hit.R.Bottom) / 2;
+        int x = hit.R.Left + (int)((hit.R.Right - hit.R.Left) * fraction), y = (hit.R.Top + hit.R.Bottom) / 2;
         OnDown(x, y);
         var active = _active;
         _active = null;
@@ -196,6 +195,10 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     }
 
     internal void DebugChar(char c) => OnChar(c);
+
+    internal bool DebugKey(int virtualKey) => OnKey(virtualKey);
+
+    internal int DebugCaret => _caret;
 
     // ---- messages ----------------------------------------------------------------------------
 
@@ -233,6 +236,9 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             case WM_CHAR:
                 OnChar((char)wParam);
                 return 0;
+            case 0x0100: // WM_KEYDOWN
+                if (OnKey((int)wParam)) return 0;
+                break;
             case WM_KILLFOCUS:
                 CommitField();
                 return 0;
@@ -258,7 +264,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         var hit = HitAt(x, y);
 
         // A click that is not on the field being edited ends the edit (the edit keeps what was typed).
-        if (_field != Field.None && !(hit is not null && hit.Down is not null && ReferenceEquals(hit, _fieldHit))) CommitField();
+        if (_field != Field.None && !(hit?.Tag is { } tag && tag == _field.ToString())) CommitField();
 
         if (hit is null) return;
         _active = hit;
@@ -283,26 +289,76 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                 CommitField();
                 return;
             case '\b':
-                if (_selectAll) _buffer = "";
-                else if (_buffer.Length > 0) _buffer = _buffer[..^1];
-                _selectAll = false;
-                break;
-            case (char)0x01: // Ctrl+A
-                _selectAll = true;
+                if (_caret > 0)
+                {
+                    _buffer = _buffer.Remove(_caret - 1, 1);
+                    _caret--;
+                }
                 break;
             case (char)0x16: // Ctrl+V
-                if (_selectAll) _buffer = "";
-                _selectAll = false;
-                _buffer = (_buffer + ClipboardText()).Replace("\r", "").Replace("\n", "");
-                if (_buffer.Length > 260) _buffer = _buffer[..260];
+                Insert(ClipboardText().Replace("\r", "").Replace("\n", ""));
                 break;
             default:
-                if (c < ' ') break;
-                if (_selectAll) _buffer = "";
-                _selectAll = false;
-                if (_buffer.Length < 260) _buffer += c;
+                if (c >= ' ') Insert(c.ToString());
                 break;
         }
+        Redraw();
+    }
+
+    private void Insert(string text)
+    {
+        if (_buffer.Length + text.Length > 260) text = text[..Math.Max(0, 260 - _buffer.Length)];
+        _buffer = _buffer.Insert(_caret, text);
+        _caret += text.Length;
+    }
+
+    /// <summary>Arrow keys, Home, End and Delete while a field is being edited. Returns true when handled.</summary>
+    private bool OnKey(int key)
+    {
+        if (_field == Field.None) return false;
+
+        switch (key)
+        {
+            case 0x25: _caret = Math.Max(0, _caret - 1); break;                    // Left
+            case 0x27: _caret = Math.Min(_buffer.Length, _caret + 1); break;        // Right
+            case 0x24: _caret = 0; break;                                           // Home
+            case 0x23: _caret = _buffer.Length; break;                              // End
+            case 0x2E:                                                              // Delete
+                if (_caret < _buffer.Length) _buffer = _buffer.Remove(_caret, 1);
+                break;
+            default:
+                return false;
+        }
+        Redraw();
+        return true;
+    }
+
+    /// <summary>First character of the value shown in a field of the given width: scrolls so the caret stays visible.</summary>
+    private int ViewStart(nint font, int maxWidth)
+    {
+        int start = 0;
+        while (start < _caret && MeasureNow((start > 0 ? "…" : "") + _buffer[start.._caret] + "|", font) > maxWidth) start++;
+        return start;
+    }
+
+    private void SetCaretFromClick(int x, int textLeft, nint font, int maxWidth)
+    {
+        int start = ViewStart(font, maxWidth);
+        string head = start > 0 ? "…" : "";
+        int relative = x - textLeft;
+        int best = start, bestDelta = int.MaxValue;
+        for (int i = start; i <= _buffer.Length; i++)
+        {
+            int width = MeasureNow(head + _buffer[start..i], font);
+            int delta = Math.Abs(width - relative);
+            if (delta < bestDelta)
+            {
+                bestDelta = delta;
+                best = i;
+            }
+            if (width > relative + Px(40)) break;
+        }
+        _caret = best;
         Redraw();
     }
 
@@ -332,14 +388,11 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
 
     // ---- editing actions ---------------------------------------------------------------------
 
-    private Hit? _fieldHit;
-
-    private void BeginEdit(Field field, string current, Hit hit)
+    private void BeginEdit(Field field, string current)
     {
         _field = field;
         _buffer = current;
-        _selectAll = current.Length > 0; // typing replaces the value; a click can't place a caret
-        _fieldHit = hit;
+        _caret = current.Length; // typing continues the value; a click inside moves the caret
         Redraw();
     }
 
@@ -348,7 +401,6 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         if (_field == Field.None) return;
         var field = _field;
         _field = Field.None;
-        _fieldHit = null;
 
         var node = _model.Selected;
         string value = _buffer.Trim();
@@ -512,26 +564,16 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         EndPaint(Handle, &ps);
     }
 
-    private int MeasureNow(string text, nint font)
+    private static int MeasureNow(string text, nint font)
     {
-        if (_sceneDc == 0 || text.Length == 0) return 0;
-        var old = SelectObject(_sceneDc, font);
+        if (text.Length == 0) return 0;
+        var dc = CreateCompatibleDC(0);
+        var old = SelectObject(dc, font);
         var size = new SIZE();
-        GetTextExtentPoint32W(_sceneDc, text, text.Length, &size);
-        SelectObject(_sceneDc, old);
+        GetTextExtentPoint32W(dc, text, text.Length, &size);
+        SelectObject(dc, old);
+        DeleteDC(dc);
         return size.cx;
-    }
-
-    /// <summary>The end of <paramref name="text"/> that fits <paramref name="maxWidth"/>, with a leading ellipsis when cut.</summary>
-    private string FitTail(string text, nint font, int maxWidth)
-    {
-        if (MeasureNow(text, font) <= maxWidth) return text;
-        for (int start = 1; start < text.Length; start++)
-        {
-            string candidate = "…" + text[start..];
-            if (MeasureNow(candidate, font) <= maxWidth) return candidate;
-        }
-        return text[^1..];
     }
 
     private void Text(nint font, uint color, string text, int l, int t, int r, int b, uint format) =>
@@ -590,11 +632,9 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         bool empty = !editing && value.Length == 0;
         if (editing)
         {
-            // The end of the value is what is being typed: keep it visible, cut the front instead.
-            string shown = FitTail(_selectAll ? _buffer : _buffer + "|", fonts.Detail, textR - textL);
-            if (_selectAll)
-                RoundRect(textL - Px(2), top + Px(6), textL + Math.Min(MeasureNow(shown, fonts.Detail), textR - textL) + Px(2), bottom - Px(6),
-                    Px(4), Gdi.Selection);
+            // The value scrolls so that the caret stays visible; text past the right edge is clipped.
+            int start = ViewStart(fonts.Detail, textR - textL);
+            string shown = (start > 0 ? "…" : "") + _buffer[start.._caret] + "|" + _buffer[_caret..];
             Text(fonts.Detail, Gdi.TextColor, shown, textL, top, textR, bottom, DT_LEFT | oneLine);
         }
         else
@@ -603,8 +643,12 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                 DT_LEFT | oneLine | DT_END_ELLIPSIS);
         }
 
-        Hit? hit = null;
-        hit = AddHit(l, top, r, bottom, (_, _) => BeginEdit(field, value, hit!));
+        var detailFont = fonts.Detail;
+        var hit = AddHit(l, top, r, bottom, (x, _) =>
+        {
+            if (_field == field) SetCaretFromClick(x, textL, detailFont, textR - textL);
+            else BeginEdit(field, value);
+        });
         hit.Hand = false;
         hit.Tag = field.ToString();
         return hit;
@@ -614,7 +658,6 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     {
         _hits.Clear();
         _texts.Clear();
-        _sceneDc = dc;
         var fonts = Gdi.GetFonts(_dpi);
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
         int w = _w, h = _h;

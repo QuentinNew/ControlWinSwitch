@@ -4,53 +4,6 @@ using ControlWin.UI;
 namespace ControlWin.Tests;
 
 [Collection("native windows")]
-public class RadialEditorWindowTests
-{
-    private static RadialEditorWindow Open(RadialNodeConfig shortcut)
-    {
-        var folder = new RadialNodeConfig { Type = "folder", Slot = 0, Name = "Apps", Children = [shortcut] };
-        var settings = new RadialNodeConfig { Type = "settings", Slot = 1 };
-        var window = new RadialEditorWindow();
-        window.DebugInit([folder, settings], []);
-        var model = window.DebugModel;
-        model.Enter(model.Root[0]);
-        model.Select(model.Nodes[0]);
-        window.DebugRender();
-        return window;
-    }
-
-    [Fact]
-    public void A_shortcut_target_that_is_already_set_can_be_edited()
-    {
-        var window = Open(new RadialNodeConfig { Type = "shortcut", Slot = 0, Target = "notepad.exe" });
-
-        Assert.True(window.DebugClick("Target"));
-        Assert.True(window.DebugEditing);
-        Assert.Equal("notepad.exe", window.DebugBuffer);
-
-        window.DebugChar('c'); // the value is selected: typing replaces it
-        window.DebugChar('m');
-        window.DebugChar('d');
-        window.DebugChar('\r');
-
-        Assert.Equal("cmd", window.DebugModel.Nodes[0].Target);
-    }
-
-    [Fact]
-    public void A_target_can_be_replaced_after_clearing_it()
-    {
-        var window = Open(new RadialNodeConfig { Type = "shortcut", Slot = 0, Target = "steam://open/main" });
-
-        window.DebugClick("Target");
-        for (int i = 0; i < 40; i++) window.DebugChar('\b');
-        foreach (char c in "calc.exe") window.DebugChar(c);
-        window.DebugChar('\r');
-
-        Assert.Equal("calc.exe", window.DebugModel.Nodes[0].Target);
-    }
-}
-
-[Collection("native windows")]
 public class RadialEditorTextEditingTests
 {
     private static RadialEditorWindow Open(string target)
@@ -67,43 +20,127 @@ public class RadialEditorTextEditingTests
         return window;
     }
 
-    [Fact]
-    public void Typing_after_the_first_key_appends()
+    private static void Type(RadialEditorWindow window, string text)
     {
-        var window = Open("a");
-        window.DebugClick("Target");
+        foreach (char c in text) window.DebugChar(c);
+    }
 
-        foreach (char c in "bcd") window.DebugChar(c);
-        window.DebugChar('\b');
-        window.DebugChar('\r');
+    private static string Target(RadialEditorWindow window) => window.DebugModel.Nodes[0].Target!;
 
-        Assert.Equal("bc", window.DebugModel.Nodes[0].Target);
+    [Fact]
+    public void Clicking_a_field_keeps_its_content_and_puts_the_caret_at_the_end()
+    {
+        var window = Open("notepad.exe");
+
+        Assert.True(window.DebugClick("Target"));
+
+        Assert.True(window.DebugEditing);
+        Assert.Equal("notepad.exe", window.DebugBuffer);
+        Assert.Equal(11, window.DebugCaret);
     }
 
     [Fact]
-    public void Ctrl_A_selects_everything_again()
+    public void Typing_adds_to_the_existing_content()
     {
-        var window = Open("");
+        var window = Open("notepad.exe");
         window.DebugClick("Target");
-        foreach (char c in "abc") window.DebugChar(c);
 
-        window.DebugChar((char)1);
-        window.DebugChar('z');
+        Type(window, " -x");
         window.DebugChar('\r');
 
-        Assert.Equal("z", window.DebugModel.Nodes[0].Target);
+        Assert.Equal("notepad.exe -x", Target(window));
+    }
+
+    [Fact]
+    public void Backspace_removes_one_character()
+    {
+        var window = Open("abc");
+        window.DebugClick("Target");
+
+        window.DebugChar('\b');
+        window.DebugChar('\r');
+
+        Assert.Equal("ab", Target(window));
+    }
+
+    [Fact]
+    public void A_click_inside_the_text_moves_the_caret_there()
+    {
+        var window = Open("notepad.exe");
+        window.DebugClick("Target");
+
+        window.DebugClick("Target", 0.0); // left edge: before the first character
+        Assert.Equal(0, window.DebugCaret);
+
+        Type(window, "my-");
+        window.DebugChar('\r');
+
+        Assert.Equal("my-notepad.exe", Target(window));
+    }
+
+    [Fact]
+    public void Arrow_keys_home_end_and_delete_edit_in_the_middle()
+    {
+        var window = Open("abcd");
+        window.DebugClick("Target");
+
+        Assert.True(window.DebugKey(0x25)); // left
+        Assert.True(window.DebugKey(0x25)); // left: caret between b and c
+        Type(window, "X");
+        Assert.True(window.DebugKey(0x2E)); // delete: removes c
+        Assert.True(window.DebugKey(0x24)); // home
+        Type(window, "<");
+        Assert.True(window.DebugKey(0x23)); // end
+        Type(window, ">");
+        window.DebugChar('\r');
+
+        Assert.Equal("<abXd>", Target(window));
+    }
+
+    [Fact]
+    public void Keys_are_ignored_when_no_field_is_edited()
+    {
+        var window = Open("abc");
+
+        Assert.False(window.DebugKey(0x25));
+    }
+
+    [Fact]
+    public void Esc_throws_the_changes_away()
+    {
+        var window = Open("abc");
+        window.DebugClick("Target");
+        Type(window, "zzz");
+
+        window.DebugChar((char)27);
+
+        Assert.False(window.DebugEditing);
+        Assert.Equal("abc", Target(window));
     }
 
     [Fact]
     public void A_very_long_value_can_still_be_edited()
     {
-        var window = Open("steam://rungameid/" + new string('1', 200));
+        string target = "steam://rungameid/" + new string('1', 200);
+        var window = Open(target);
         window.DebugClick("Target");
 
-        window.DebugChar('x');
-        window.DebugChar('y');
+        Type(window, "xy");
         window.DebugChar('\r');
 
-        Assert.Equal("xy", window.DebugModel.Nodes[0].Target);
+        Assert.Equal(target + "xy", Target(window));
+    }
+
+    [Fact]
+    public void A_target_can_be_cleared_and_replaced()
+    {
+        var window = Open("steam://open/main");
+        window.DebugClick("Target");
+
+        for (int i = 0; i < 40; i++) window.DebugChar('\b');
+        Type(window, "calc.exe");
+        window.DebugChar('\r');
+
+        Assert.Equal("calc.exe", Target(window));
     }
 }
