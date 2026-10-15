@@ -241,10 +241,12 @@ internal sealed unsafe class RadialOverlay : NativeWindow
 
         // Name of the highlighted node, in a pill right under it.
         string? text = null;
+        uint pillColor = Gdi.TextColor;
         int pillL = 0, pillT = 0, pillR = 0, pillB = 0;
         if (model.CurrentNode is { } selectedNode && model.Selected >= 0)
         {
             text = model.IsConfirming ? $"Confirm: {selectedNode.Label}?" : selectedNode.Label;
+            if (model.IsConfirming) pillColor = Blend(Style(selectedNode.Entry).Lit, Rgb(255, 255, 255), 0.35f); // the node's color, lightened to stay readable
             if (!model.IsConfirming && selectedNode.Entry?.Detail?.Invoke() is { Length: > 0 } detail) text += " - " + detail;
 
             var (nx, ny) = positions[model.Selected];
@@ -348,7 +350,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         }
 
         if (text is not null)
-            Gdi.Text(dc, fonts.Detail, model.IsConfirming ? Blend(Style(selectedNode.Entry).Lit, Rgb(255, 255, 255), 0.35f) : Gdi.TextColor, text,
+            Gdi.Text(dc, fonts.Detail, pillColor, text,
                 pillL - l + Px(8), pillT - t, pillR - l - Px(8), pillB - t, DT_CENTER | oneLine | DT_END_ELLIPSIS);
 
         GdiFlush();
