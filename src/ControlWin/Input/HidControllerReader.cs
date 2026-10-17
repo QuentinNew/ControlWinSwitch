@@ -46,7 +46,11 @@ internal sealed unsafe class HidControllerReader : IDisposable
     private string? _mac, _fallbackId;
     private int _infoAttempts;
     private long _lastInfoAttempt;
+    private bool _lightsAcked;
+    private int _lightAttempts;
+    private long _lastLightAttempt;
     private const int MaxModeAttempts = 5;
+    private const int MaxLightAttempts = 8;
     private const long ModeRetryMs = 1000;
 
     public HidControllerReader(int slot = 0)
@@ -148,6 +152,9 @@ internal sealed unsafe class HidControllerReader : IDisposable
         _mac = null;
         _infoAttempts = 0;
         _lastInfoAttempt = 0;
+        _lightsAcked = false;
+        _lightAttempts = 0;
+        _lastLightAttempt = 0;
         var instance = HidHide.InstanceId(path);
         _fallbackId = instance is null ? null : "dev:" + instance;
         Log.Info($"Pro Controller opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
@@ -178,6 +185,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
             if (_managed.Length < transferred) _managed = new byte[transferred];
             new ReadOnlySpan<byte>(_buffer, (int)transferred).CopyTo(_managed);
             var bytes = new ReadOnlyMemory<byte>(_managed, 0, (int)transferred);
+            if (IsPlayerLightsAck(bytes.Span)) _lightsAcked = true;
             if (ProCommands.TryParseDeviceInfo(bytes.Span, out var mac))
             {
                 if (_mac != mac) Log.Info($"Pro Controller {_slot + 1} identified ({mac})");
@@ -189,6 +197,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
             {
                 if (_mac is null) RequestDeviceInfo(); // rate limited; the reply may have been lost
                 RetryCalibration();
+                SetPlayerLights();
                 // Still in simple mode (e.g. the first reports after connecting, or the mode got reset): ask again.
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
                 Report?.Invoke(report, bytes);
@@ -332,13 +341,25 @@ internal sealed unsafe class HidControllerReader : IDisposable
         return Write(ProCommands.RumbleMotors(_packetCounter++, large, small, percent, (int)_outputLength));
     }
 
-    /// <summary>Lights the LED of the player number (slot 1 = LED 1, ...), so each controller shows which pad it drives.</summary>
+    /// <summary>
+    /// Lights the LED of the player number (slot 1 = LED 1, ...), so each controller shows which pad it drives.
+    /// Official pads handle one subcommand at a time and drop the ones sent right behind another, so this repeats
+    /// (rate limited, capped) from the read loop until the controller acknowledges it.
+    /// </summary>
     private void SetPlayerLights()
     {
-        if (_file == 0 || !_canWrite) return;
+        if (_file == 0 || !_canWrite || _lightsAcked || _lightAttempts >= MaxLightAttempts) return;
+        long now = Environment.TickCount64;
+        if (_lightAttempts > 0 && now - _lastLightAttempt < ModeRetryMs) return;
+        _lastLightAttempt = now;
+        _lightAttempts++;
         if (Write(ProCommands.SetPlayerLights(_packetCounter++, ProCommands.PlayerLightMask(_slot), (int)_outputLength)))
-            Log.Info($"Player light {_slot + 1} set");
+            Log.Info($"Player light {_slot + 1} set (attempt {_lightAttempts})");
     }
+
+    /// <summary>A subcommand reply (input report 0x21): ack with bit 7 set at byte 13, subcommand id at byte 14.</summary>
+    private static bool IsPlayerLightsAck(ReadOnlySpan<byte> r) =>
+        r.Length > 14 && r[0] == 0x21 && (r[13] & 0x80) != 0 && r[14] == ProCommands.SubcommandSetPlayerLights;
 
     /// <summary>Synchronous (bounded) overlapped write on the device handle.</summary>
     private bool Write(byte[] report)
