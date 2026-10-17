@@ -16,6 +16,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     // Layout in DIPs.
     private const int WidthDip = 520, HeaderDip = 64, RowDip = 60, FooterDip = 48, MaxRows = 7, ConfirmRows = 2;
+    private const int CornerDip = 8; // matches the Windows 11 rounded window corners
     private const int CloseDip = 48, ControllersDip = 44, ControllerPicDip = 28;
     private const int SideDip = 12, GlyphXDip = 24, GlyphWidthDip = 32, LabelXDip = 72, DetailWidthDip = 150;
 
@@ -34,10 +35,9 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     public MenuOverlay()
     {
-        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-
-        int round = DWMWCP_ROUND;
-        DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(int)); // Windows 11 only, harmless otherwise
+        // Layered: position, size and pixels change together in one UpdateLayeredWindow, so a page change
+        // never shows the previous page moved or cut to the new size (a plain window repaints after the move).
+        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED);
     }
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
@@ -51,16 +51,17 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         _topPage = null;
         RadialIcons.Clear(); // pictures are read again each time the menu opens
         Gdi.GetMonitorUnderCursor(out _work, out _dpi);
-        Place();
-        InvalidateRect(Handle, null, 0);
+        Render();
+        ShowWindow(Handle, SW_SHOWNOACTIVATE);
+        // Re-assert topmost: at logon the shell can push a window created early below the others.
+        SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     /// <summary>Call after the model changed.</summary>
     public void Refresh()
     {
         if (_model is null) return;
-        Place();
-        InvalidateRect(Handle, null, 0);
+        Render();
     }
 
     public void Hide()
@@ -73,9 +74,6 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     {
         switch (msg)
         {
-            case WM_PAINT:
-                Paint();
-                return 0;
             case WM_ERASEBKGND:
                 return 1;
             case WM_MOUSEACTIVATE:
@@ -125,11 +123,14 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     private void OnMouseMove(int x, int y)
     {
-        // The menu appearing under a resting cursor sends a mouse move: only react to real movement.
+        // The menu appearing, or resizing to another page, under a resting cursor sends a mouse move:
+        // only react to real movement, compared in screen coordinates since the window itself moves.
+        POINT screen;
+        GetCursorPos(&screen);
         bool first = _lastMouseX < 0;
-        bool moved = x != _lastMouseX || y != _lastMouseY;
-        _lastMouseX = x;
-        _lastMouseY = y;
+        bool moved = screen.X != _lastMouseX || screen.Y != _lastMouseY;
+        _lastMouseX = screen.X;
+        _lastMouseY = screen.Y;
         if (first || !moved) return;
 
         int index = RowAt(y);
@@ -166,23 +167,76 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     /// <summary>Height of the controller strip between the rows and the footer (0 = none): main page only.</summary>
     private int StripHeight() => _controllers.Count > 0 && _model is { IsConfirming: false, Depth: 1 } ? Px(ControllersDip) : 0;
 
-    private void Place()
+    /// <summary>Draws the current page off-screen, then moves, resizes and repaints the window in one step.</summary>
+    private void Render()
     {
         int width = Px(WidthDip);
         int height = Px(HeaderDip + VisibleRows() * RowDip + FooterDip) + StripHeight();
-        int x = _work.Left + (_work.Width - width) / 2;
-        int y = _work.Top + (_work.Height - height) / 2;
-        SetWindowPos(Handle, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        var info = new BITMAPINFOHEADER
+        {
+            biSize = (uint)sizeof(BITMAPINFOHEADER), biWidth = width, biHeight = -height, biPlanes = 1, biBitCount = 32,
+        };
+        void* bits;
+        var dc = CreateCompatibleDC(0);
+        var dib = CreateDIBSection(dc, &info, 0, &bits, 0, 0);
+        if (dib == 0)
+        {
+            DeleteDC(dc);
+            return;
+        }
+        var oldBitmap = SelectObject(dc, dib);
+        SetBkMode(dc, TRANSPARENT);
+
+        Paint(dc, width, height);
+        GdiFlush();
+        RoundCorners((uint*)bits, width, height, Px(CornerDip));
+
+        var dst = new POINT { X = _work.Left + (_work.Width - width) / 2, Y = _work.Top + (_work.Height - height) / 2 };
+        var size = new SIZE { cx = width, cy = height };
+        var src = new POINT();
+        var blend = new BLENDFUNCTION { BlendOp = 0, SourceConstantAlpha = 255, AlphaFormat = 1 }; // AC_SRC_OVER, AC_SRC_ALPHA
+        UpdateLayeredWindow(Handle, 0, &dst, &size, dc, &src, 0, &blend, ULW_ALPHA);
+
+        SelectObject(dc, oldBitmap);
+        DeleteObject(dib);
+        DeleteDC(dc);
     }
 
-    private void Paint()
+    /// <summary>
+    /// The menu is opaque (GDI leaves the alpha byte unset): makes every pixel opaque, except outside the
+    /// antialiased rounded corners, which fade out (premultiplied, as UpdateLayeredWindow expects).
+    /// </summary>
+    private static void RoundCorners(uint* pixels, int width, int height, int radius)
     {
-        using var paint = new BufferedPaint(Handle);
-        var dc = paint.Dc;
-        int width = paint.Width;
+        for (int i = 0, n = width * height; i < n; i++) pixels[i] |= 0xFF000000;
+
+        for (int y = 0; y < radius; y++)
+            for (int x = 0; x < radius; x++)
+            {
+                // Coverage of this corner pixel by the quarter circle centered at (radius, radius).
+                double dx = radius - (x + 0.5), dy = radius - (y + 0.5);
+                double coverage = Math.Clamp(radius - Math.Sqrt(dx * dx + dy * dy) + 0.5, 0, 1);
+                if (coverage >= 1) continue;
+                Fade(ref pixels[y * width + x], coverage);
+                Fade(ref pixels[y * width + width - 1 - x], coverage);
+                Fade(ref pixels[(height - 1 - y) * width + x], coverage);
+                Fade(ref pixels[(height - 1 - y) * width + width - 1 - x], coverage);
+            }
+
+        static void Fade(ref uint pixel, double coverage)
+        {
+            uint a = (uint)Math.Round(coverage * 255);
+            uint b = (pixel & 0xFF) * a / 255, g = ((pixel >> 8) & 0xFF) * a / 255, r = ((pixel >> 16) & 0xFF) * a / 255;
+            pixel = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+
+    private void Paint(nint dc, int width, int height)
+    {
         var fonts = Gdi.GetFonts(_dpi);
 
-        Gdi.Fill(dc, Gdi.BackgroundBrush, 0, 0, width, paint.Height);
+        Gdi.Fill(dc, Gdi.BackgroundBrush, 0, 0, width, height);
         if (_model is not { } model) return;
 
         int headerH = Px(HeaderDip), rowH = Px(RowDip), footerH = Px(FooterDip);
