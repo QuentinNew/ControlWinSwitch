@@ -67,7 +67,7 @@ internal static class RadialTree
                 return new MenuEntry
                 {
                     Label = Label("Headset"), Glyph = Glyph(MenuPages.Headphone), Slot = node.Slot, Color = color, Icon = icon,
-                    Detail = headsetDetail, Command = new(CommandKind.ToggleHeadset),
+                    Detail = headsetDetail, Active = () => headsetDetail?.Invoke() == "Connected", Command = new(CommandKind.ToggleHeadset),
                 };
             case RadialNodeTypes.MouseMode:
                 return new MenuEntry
@@ -79,7 +79,7 @@ internal static class RadialTree
                 return new MenuEntry
                 {
                     Label = Label("Virtual pad"), Glyph = Glyph(MenuPages.Game), Slot = node.Slot, Color = color, Icon = icon,
-                    Detail = padDetail, Command = new(CommandKind.ToggleVirtualPad),
+                    Detail = padDetail, Active = () => padDetail?.Invoke() == "On", Command = new(CommandKind.ToggleVirtualPad),
                 };
             case RadialNodeTypes.Shortcut:
                 return new MenuEntry

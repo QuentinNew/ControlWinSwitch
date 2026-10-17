@@ -31,6 +31,9 @@ internal sealed class MenuEntry
     /// <summary>Right-aligned status text (evaluated on every paint), or null.</summary>
     public Func<string?>? Detail { get; init; }
 
+    /// <summary>Radial menu only: when it returns true, a small green dot is drawn on the node (evaluated on every paint).</summary>
+    public Func<bool>? Active { get; init; }
+
     public MenuCommand Command { get; init; }
 
     /// <summary>Builds the child page each time the entry is opened, so it can reflect the current config.</summary>

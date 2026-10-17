@@ -323,6 +323,14 @@ internal sealed unsafe class RadialOverlay : NativeWindow
                 canvas.Circle(x, y, radius + Px(2), rim);
                 canvas.Circle(x, y, radius, fill);
                 if (!armed) pictured[i] = DrawPicture(canvas, entry, x, y, radius);
+
+                // Status dot at the node's bottom right.
+                if (!armed && entry?.Active?.Invoke() == true)
+                {
+                    int off = (int)(radius * 0.72);
+                    canvas.Circle(x + off, y + off, Px(9), Rgb(0x1B, 0x1B, 0x1F));
+                    canvas.Circle(x + off, y + off, Px(7), Rgb(0x2E, 0xCC, 0x40));
+                }
             }
 
             if (text is not null)
