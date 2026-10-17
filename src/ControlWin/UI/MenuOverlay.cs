@@ -21,7 +21,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     private const int SideDip = 12, GlyphXDip = 24, GlyphWidthDip = 32, LabelXDip = 72, DetailWidthDip = 150;
 
     private MenuModel? _model;
-    private int _lastMouseX = -1, _lastMouseY = -1;
+    private int _lastMouseX = int.MinValue, _lastMouseY = int.MinValue; // screen coordinates: negative on monitors left of / above the primary
 
     /// <summary>Mouse: row index hovered / clicked, "back" (right click), confirmation answered, wheel step (-1 / +1).</summary>
     public event Action<int>? RowHovered, RowClicked, Scrolled;
@@ -38,6 +38,8 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         // Layered: position, size and pixels change together in one UpdateLayeredWindow, so a page change
         // never shows the previous page moved or cut to the new size (a plain window repaints after the move).
         Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED);
+        int noFade = 1; // no fade in / out: going from a menu to the settings must not dip in between
+        DwmSetWindowAttribute(Handle, DWMWA_TRANSITIONS_FORCEDISABLED, &noFade, sizeof(int));
     }
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
@@ -46,7 +48,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     {
         _model = model;
         _controllers = controllers ?? [];
-        _lastMouseX = _lastMouseY = -1;
+        _lastMouseX = _lastMouseY = int.MinValue;
         _top = 0;
         _topPage = null;
         RadialIcons.Clear(); // pictures are read again each time the menu opens
@@ -127,7 +129,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         // only react to real movement, compared in screen coordinates since the window itself moves.
         POINT screen;
         GetCursorPos(&screen);
-        bool first = _lastMouseX < 0;
+        bool first = _lastMouseX == int.MinValue;
         bool moved = screen.X != _lastMouseX || screen.Y != _lastMouseY;
         _lastMouseX = screen.X;
         _lastMouseY = screen.Y;
