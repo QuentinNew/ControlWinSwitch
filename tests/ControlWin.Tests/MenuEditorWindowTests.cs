@@ -27,23 +27,40 @@ public class RadialEditorTextEditingTests
 
     private static string Target(MenuEditorWindow window) => window.DebugModel.Nodes[0].Target!;
 
+    /// <summary>Starts editing the target with the caret at the end.</summary>
+    private static void Edit(MenuEditorWindow window)
+    {
+        window.DebugClick("Target");
+        window.DebugKey(0x23); // end
+    }
+
     [Fact]
-    public void Clicking_a_field_keeps_its_content_and_puts_the_caret_at_the_end()
+    public void Clicking_a_field_keeps_its_content_and_puts_the_caret_where_clicked()
+    {
+        var window = Open("abc");
+
+        Assert.True(window.DebugClick("Target", 0.99)); // right of the text
+
+        Assert.True(window.DebugEditing);
+        Assert.Equal("abc", window.DebugBuffer);
+        Assert.Equal(3, window.DebugCaret);
+    }
+
+    [Fact]
+    public void The_first_click_can_put_the_caret_before_the_first_character()
     {
         var window = Open("notepad.exe");
 
-        Assert.True(window.DebugClick("Target"));
+        window.DebugClick("Target", 0.0);
 
-        Assert.True(window.DebugEditing);
-        Assert.Equal("notepad.exe", window.DebugBuffer);
-        Assert.Equal(11, window.DebugCaret);
+        Assert.Equal(0, window.DebugCaret);
     }
 
     [Fact]
     public void Typing_adds_to_the_existing_content()
     {
         var window = Open("notepad.exe");
-        window.DebugClick("Target");
+        Edit(window);
 
         Type(window, " -x");
         window.DebugChar('\r');
@@ -55,7 +72,7 @@ public class RadialEditorTextEditingTests
     public void Backspace_removes_one_character()
     {
         var window = Open("abc");
-        window.DebugClick("Target");
+        Edit(window);
 
         window.DebugChar('\b');
         window.DebugChar('\r');
@@ -67,7 +84,7 @@ public class RadialEditorTextEditingTests
     public void A_click_inside_the_text_moves_the_caret_there()
     {
         var window = Open("notepad.exe");
-        window.DebugClick("Target");
+        Edit(window);
 
         window.DebugClick("Target", 0.0); // left edge: before the first character
         Assert.Equal(0, window.DebugCaret);
@@ -82,7 +99,7 @@ public class RadialEditorTextEditingTests
     public void Arrow_keys_home_end_and_delete_edit_in_the_middle()
     {
         var window = Open("abcd");
-        window.DebugClick("Target");
+        Edit(window);
 
         Assert.True(window.DebugKey(0x25)); // left
         Assert.True(window.DebugKey(0x25)); // left: caret between b and c
@@ -98,6 +115,75 @@ public class RadialEditorTextEditingTests
     }
 
     [Fact]
+    public void Shift_arrows_select_and_typing_replaces_the_selection()
+    {
+        var window = Open("notepad.exe");
+        Edit(window);
+
+        for (int i = 0; i < 4; i++) window.DebugKey(0x25, ctrl: false, shift: true);
+        Assert.Equal(".exe", window.DebugSelection);
+        Type(window, ".bat");
+        window.DebugChar('\r');
+
+        Assert.Equal("notepad.bat", Target(window));
+    }
+
+    [Fact]
+    public void Ctrl_a_selects_everything()
+    {
+        var window = Open("notepad.exe");
+        Edit(window);
+
+        window.DebugChar((char)0x01);
+        Type(window, "calc");
+        window.DebugChar('\r');
+
+        Assert.Equal("calc", Target(window));
+    }
+
+    [Fact]
+    public void Ctrl_arrows_and_ctrl_backspace_work_on_words()
+    {
+        var window = Open("C:\\Games\\Steam");
+        Edit(window);
+
+        Assert.True(window.DebugKey(0x25, ctrl: true, shift: false));
+        Assert.Equal(9, window.DebugCaret);
+        window.DebugChar((char)0x7F);
+        window.DebugChar('\r');
+
+        Assert.Equal("C:\\Steam", Target(window));
+    }
+
+    [Fact]
+    public void Ctrl_z_undoes_the_typed_word_and_ctrl_y_redoes_it()
+    {
+        var window = Open("abc");
+        Edit(window);
+
+        Type(window, "def");
+        window.DebugChar((char)0x1A);
+        Assert.Equal("abc", window.DebugBuffer);
+        window.DebugChar((char)0x19);
+
+        Assert.Equal("abcdef", window.DebugBuffer);
+    }
+
+    [Fact]
+    public void Left_collapses_a_selection_to_its_start()
+    {
+        var window = Open("abcd");
+        Edit(window);
+
+        window.DebugKey(0x25, ctrl: false, shift: true);
+        window.DebugKey(0x25, ctrl: false, shift: true);
+        window.DebugKey(0x25, ctrl: false, shift: false);
+
+        Assert.Equal(2, window.DebugCaret);
+        Assert.Equal("", window.DebugSelection);
+    }
+
+    [Fact]
     public void Keys_are_ignored_when_no_field_is_edited()
     {
         var window = Open("abc");
@@ -109,7 +195,7 @@ public class RadialEditorTextEditingTests
     public void Esc_throws_the_changes_away()
     {
         var window = Open("abc");
-        window.DebugClick("Target");
+        Edit(window);
         Type(window, "zzz");
 
         window.DebugChar((char)27);
@@ -123,7 +209,7 @@ public class RadialEditorTextEditingTests
     {
         string target = "steam://rungameid/" + new string('1', 200);
         var window = Open(target);
-        window.DebugClick("Target");
+        Edit(window);
 
         Type(window, "xy");
         window.DebugChar('\r');
@@ -135,7 +221,7 @@ public class RadialEditorTextEditingTests
     public void A_target_can_be_cleared_and_replaced()
     {
         var window = Open("steam://open/main");
-        window.DebugClick("Target");
+        Edit(window);
 
         for (int i = 0; i < 40; i++) window.DebugChar('\b');
         Type(window, "calc.exe");

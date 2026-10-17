@@ -43,7 +43,9 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     private uint _dpi = 96;
     private int _lastMouseX = -1, _lastMouseY = -1;
     private bool _editing;
-    private string _buffer = "";
+    private readonly TextEditor _edit = new(260);
+    private int _boxLeft = -1, _boxTop, _boxRight, _boxBottom; // the text box being edited, as last painted
+    private bool _selecting;                                   // the button went down in the text box
     private Action<string>? _commit;
     private nint _previousForeground;
 
@@ -115,7 +117,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     public void BeginEdit(string current, Action<string> commit)
     {
         if (_editing) return;
-        _buffer = current ?? "";
+        _edit.Begin(current ?? "");
+        _boxLeft = -1;
         _commit = commit;
         _editing = true;
         _previousForeground = GetForegroundWindow();
@@ -135,6 +138,11 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     {
         if (!_editing) return;
         _editing = false;
+        if (_selecting)
+        {
+            _selecting = false;
+            ReleaseCapture();
+        }
 
         nint style = GetWindowLongPtrW(Handle, GWL_EXSTYLE);
         SetWindowLongPtrW(Handle, GWL_EXSTYLE, style | (nint)WS_EX_NOACTIVATE);
@@ -143,7 +151,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
         var action = commit ? _commit : null;
         _commit = null;
-        action?.Invoke(_buffer);
+        action?.Invoke(_edit.Text);
         Refresh();
     }
 
@@ -167,11 +175,19 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             case WM_CHAR when _editing:
                 OnChar((char)wParam);
                 return 0;
+            case 0x0100 when _editing: // WM_KEYDOWN
+                if (!_edit.OnKey((int)wParam)) break;
+                Refresh();
+                return 0;
+            case WM_LBUTTONUP when _selecting:
+                _selecting = false;
+                ReleaseCapture();
+                return 0;
             case WM_KILLFOCUS when _editing:
                 EndEdit(commit: false);
                 return 0;
             case WM_SETCURSOR when (lParam & 0xFFFF) == HTCLIENT:
-                SetCursor(LoadCursorW(0, IsClickableAtCursor() ? IDC_HAND : IDC_ARROW));
+                SetCursor(LoadCursorW(0, IsInTextBoxAtCursor() ? IDC_IBEAM : IsClickableAtCursor() ? IDC_HAND : IDC_ARROW));
                 return 1;
             case WM_MOUSEMOVE:
                 OnMouseMove(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
@@ -254,6 +270,17 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         return rel < strip ? 0 : 1 + (rel - strip) / Px(RowDip);
     }
 
+    private bool InTextBox(int x, int y) =>
+        _editing && _boxLeft >= 0 && x >= _boxLeft - Px(12) && x < _boxRight + Px(8) && y >= _boxTop && y < _boxBottom;
+
+    private bool IsInTextBoxAtCursor()
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(Handle, &pt);
+        return InTextBox(pt.X, pt.Y);
+    }
+
     private bool IsClickableAtCursor()
     {
         if (_model is null) return false;
@@ -262,7 +289,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         ScreenToClient(Handle, &pt);
         int x = pt.X, y = pt.Y;
 
-        if (_editing) return true; // a click confirms
+        if (_editing) return true; // a click outside the text box confirms
         if (y < TabsTop) return x >= Px(WidthDip) - Px(CloseDip); // close button
         if (y < StripTop) return true;                            // tabs
         if (y < RowsTop) return HitAt(x, y, out var part) >= 0 && part != StripPart.None;
@@ -283,22 +310,20 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             case (char)27:
                 EndEdit(commit: false);
                 break;
-            case '\b':
-                if (_buffer.Length > 0) _buffer = _buffer[..^1];
-                Refresh();
-                break;
             default:
-                if (c >= ' ' && _buffer.Length < 60)
-                {
-                    _buffer += c;
-                    Refresh();
-                }
+                if (_edit.OnChar(c)) Refresh();
                 break;
         }
     }
 
     private void OnMouseMove(int x, int y)
     {
+        if (_selecting)
+        {
+            _edit.MouseDrag(x, _boxLeft, Gdi.GetFonts(_dpi).Label);
+            Refresh();
+            return;
+        }
         if (_model is null || _editing) return;
         if (!_trackingLeave)
         {
@@ -341,7 +366,14 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (_model is null) return;
         if (_editing)
         {
-            EndEdit(commit: true);
+            if (InTextBox(x, y))
+            {
+                _edit.MouseDown(x, _boxLeft, Gdi.GetFonts(_dpi).Label, Px(4));
+                _selecting = true;
+                SetCapture(Handle);
+                Refresh();
+            }
+            else EndEdit(commit: true);
             return;
         }
         int width = Px(WidthDip);
@@ -670,7 +702,17 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 {
                     int bl = valueLeft - Px(40), br = valueRight + Px(8), bh = Px(38), bt = y + (rowH - bh) / 2;
                     Gdi.RoundedFill(dc, Gdi.BackgroundBrush, bl, bt, br, bt + bh, Px(12));
-                    Gdi.Text(dc, fonts.Label, Gdi.TextColor, _buffer + "|", bl + Px(12), bt, br - Px(8), bt + bh, DT_LEFT | oneLine);
+                    // The value scrolls so that the caret stays visible; text past the right edge is clipped.
+                    int textL = bl + Px(12), textR = br - Px(8);
+                    _edit.ScrollToCaret(fonts.Label, textR - textL - Px(2));
+                    (_boxLeft, _boxTop, _boxRight, _boxBottom) = (textL, bt, textR, bt + bh);
+                    int lineT = bt + Px(8), lineB = bt + bh - Px(8);
+                    if (_edit.HasSelection)
+                        Gdi.Fill(dc, Gdi.SelectionBrush, _edit.XAt(_edit.SelStart, textL, textR, fonts.Label), lineT,
+                            _edit.XAt(_edit.SelEnd, textL, textR, fonts.Label), lineB);
+                    int caretX = _edit.XAt(_edit.Caret, textL, textR, fonts.Label);
+                    Gdi.Fill(dc, Gdi.TextBrush, caretX, lineT, caretX + Math.Max(1, Px(1)), lineB);
+                    Gdi.Text(dc, fonts.Label, Gdi.TextColor, _edit.Shown, textL, bt, textR, bt + bh, DT_LEFT | oneLine);
                     break;
                 }
 
@@ -693,7 +735,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         int width = Px(WidthDip);
         if (_editing)
         {
-            Gdi.Text(dc, fonts.Footer, Gdi.Dim, "Type the name     Enter / A  OK     Esc / B  Cancel",
+            Gdi.Text(dc, fonts.Footer, Gdi.Dim, "Type     Enter / A  OK     Esc / B  Cancel",
                 0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);
             return;
         }

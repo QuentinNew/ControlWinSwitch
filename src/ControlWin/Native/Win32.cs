@@ -343,7 +343,7 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int SetForegroundWindow(nint hwnd);
     [LibraryImport("user32.dll")] public static partial nint GetForegroundWindow();
     [LibraryImport("user32.dll")] public static partial nint LoadCursorW(nint instance, nint name);
-    public const nint IDC_ARROW = 32512, IDC_HAND = 32649;
+    public const nint IDC_ARROW = 32512, IDC_HAND = 32649, IDC_IBEAM = 32513;
     public const uint WM_SETCURSOR = 0x0020;
     public const int HTCLIENT = 1;
     [LibraryImport("user32.dll")] public static partial nint SetCursor(nint cursor);
@@ -361,7 +361,15 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int OpenClipboard(nint owner);
     [LibraryImport("user32.dll")] public static partial int CloseClipboard();
     [LibraryImport("user32.dll")] public static partial nint GetClipboardData(uint format);
+    [LibraryImport("user32.dll")] public static partial int EmptyClipboard();
+    [LibraryImport("user32.dll")] public static partial nint SetClipboardData(uint format, nint handle);
     public const uint CF_UNICODETEXT = 13;
+    [LibraryImport("user32.dll")] public static partial short GetKeyState(int virtualKey);
+    [LibraryImport("user32.dll")] public static partial uint GetDoubleClickTime();
+    public const int VK_SHIFT = 0x10, VK_CONTROL = 0x11;
+    [LibraryImport("kernel32.dll")] public static partial nint GlobalAlloc(uint flags, nuint bytes);
+    [LibraryImport("kernel32.dll")] public static partial nint GlobalFree(nint handle);
+    public const uint GMEM_MOVEABLE = 0x0002;
     [LibraryImport("kernel32.dll")] public static partial void* GlobalLock(nint handle);
     [LibraryImport("kernel32.dll")] public static partial int GlobalUnlock(nint handle);
     [LibraryImport("comdlg32.dll", EntryPoint = "GetOpenFileNameW")] public static partial int GetOpenFileNameW(OPENFILENAMEW* ofn);

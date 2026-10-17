@@ -40,6 +40,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         public RECT R;
         public Action<int, int>? Down, Drag, Up;
         public bool Hand = true;
+        public bool IBeam;
         public string? Tag;
     }
 
@@ -66,8 +67,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     // Text editing.
     private Field _field;
-    private string _buffer = "";
-    private int _caret;           // insertion point in _buffer
+    private readonly TextEditor _edit = new(260);
 
     private bool _steamOpen;      // the recently played Steam games list is open
     private List<SteamGame> _steamGames = [];
@@ -152,7 +152,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     internal MenuEditorModel DebugModel => _model;
 
-    internal string DebugBuffer => _buffer;
+    internal string DebugBuffer => _edit.Text;
 
     internal bool DebugEditing => _field != Field.None;
 
@@ -202,7 +202,12 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     internal bool DebugKey(int virtualKey) => OnKey(virtualKey);
 
-    internal int DebugCaret => _caret;
+    internal int DebugCaret => _edit.Caret;
+
+    internal string DebugSelection => _edit.Selected;
+
+    /// <summary>A key press with Ctrl and/or Shift held, as <see cref="GetKeyState"/> would report them.</summary>
+    internal bool DebugKey(int virtualKey, bool ctrl, bool shift) => OnKey(virtualKey, ctrl, shift);
 
     // ---- messages ----------------------------------------------------------------------------
 
@@ -220,7 +225,8 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
                 POINT pt;
                 GetCursorPos(&pt);
                 ScreenToClient(Handle, &pt);
-                SetCursor(LoadCursorW(0, HitAt(pt.X, pt.Y)?.Hand == true ? IDC_HAND : IDC_ARROW));
+                var over = HitAt(pt.X, pt.Y);
+                SetCursor(LoadCursorW(0, over?.IBeam == true ? IDC_IBEAM : over?.Hand == true ? IDC_HAND : IDC_ARROW));
                 return 1;
             }
             case WM_LBUTTONDOWN:
@@ -292,107 +298,18 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         }
         if (_field == Field.None) return;
 
-        switch (c)
-        {
-            case '\r':
-                CommitField();
-                return;
-            case '\b':
-                if (_caret > 0)
-                {
-                    _buffer = _buffer.Remove(_caret - 1, 1);
-                    _caret--;
-                }
-                break;
-            case (char)0x16: // Ctrl+V
-                Insert(ClipboardText().Replace("\r", "").Replace("\n", ""));
-                break;
-            default:
-                if (c >= ' ') Insert(c.ToString());
-                break;
-        }
-        Redraw();
+        if (c == '\r') CommitField();
+        else if (_edit.OnChar(c)) Redraw();
     }
 
-    private void Insert(string text)
-    {
-        if (_buffer.Length + text.Length > 260) text = text[..Math.Max(0, 260 - _buffer.Length)];
-        _buffer = _buffer.Insert(_caret, text);
-        _caret += text.Length;
-    }
+    /// <summary>Arrow keys, Home, End, Delete and Insert while a field is being edited. Returns true when handled.</summary>
+    private bool OnKey(int key) => OnKey(key, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0);
 
-    /// <summary>Arrow keys, Home, End and Delete while a field is being edited. Returns true when handled.</summary>
-    private bool OnKey(int key)
+    private bool OnKey(int key, bool ctrl, bool shift)
     {
-        if (_field == Field.None) return false;
-
-        switch (key)
-        {
-            case 0x25: _caret = Math.Max(0, _caret - 1); break;                    // Left
-            case 0x27: _caret = Math.Min(_buffer.Length, _caret + 1); break;        // Right
-            case 0x24: _caret = 0; break;                                           // Home
-            case 0x23: _caret = _buffer.Length; break;                              // End
-            case 0x2E:                                                              // Delete
-                if (_caret < _buffer.Length) _buffer = _buffer.Remove(_caret, 1);
-                break;
-            default:
-                return false;
-        }
+        if (_field == Field.None || !_edit.OnKey(key, ctrl, shift)) return false;
         Redraw();
         return true;
-    }
-
-    /// <summary>First character of the value shown in a field of the given width: scrolls so the caret stays visible.</summary>
-    private int ViewStart(nint font, int maxWidth)
-    {
-        int start = 0;
-        while (start < _caret && MeasureNow((start > 0 ? "…" : "") + _buffer[start.._caret] + "|", font) > maxWidth) start++;
-        return start;
-    }
-
-    private void SetCaretFromClick(int x, int textLeft, nint font, int maxWidth)
-    {
-        int start = ViewStart(font, maxWidth);
-        string head = start > 0 ? "…" : "";
-        int relative = x - textLeft;
-        int best = start, bestDelta = int.MaxValue;
-        for (int i = start; i <= _buffer.Length; i++)
-        {
-            int width = MeasureNow(head + _buffer[start..i], font);
-            int delta = Math.Abs(width - relative);
-            if (delta < bestDelta)
-            {
-                bestDelta = delta;
-                best = i;
-            }
-            if (width > relative + Px(40)) break;
-        }
-        _caret = best;
-        Redraw();
-    }
-
-    private static string ClipboardText()
-    {
-        string text = "";
-        if (OpenClipboard(0) == 0) return text;
-        try
-        {
-            var handle = GetClipboardData(CF_UNICODETEXT);
-            if (handle != 0)
-            {
-                var ptr = (char*)GlobalLock(handle);
-                if (ptr != null)
-                {
-                    text = new string(ptr);
-                    GlobalUnlock(handle);
-                }
-            }
-        }
-        finally
-        {
-            CloseClipboard();
-        }
-        return text;
     }
 
     // ---- editing actions ---------------------------------------------------------------------
@@ -400,8 +317,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
     private void BeginEdit(Field field, string current)
     {
         _field = field;
-        _buffer = current;
-        _caret = current.Length; // typing continues the value; a click inside moves the caret
+        _edit.Begin(current); // typing continues the value; a click inside moves the caret
         Redraw();
     }
 
@@ -412,7 +328,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         _field = Field.None;
 
         var node = _model.Selected;
-        string value = _buffer.Trim();
+        string value = _edit.Text.Trim();
         if (node is not null)
         {
             switch (field)
@@ -555,17 +471,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         EndPaint(Handle, &ps);
     }
 
-    private static int MeasureNow(string text, nint font)
-    {
-        if (text.Length == 0) return 0;
-        var dc = CreateCompatibleDC(0);
-        var old = SelectObject(dc, font);
-        var size = new SIZE();
-        GetTextExtentPoint32W(dc, text, text.Length, &size);
-        SelectObject(dc, old);
-        DeleteDC(dc);
-        return size.cx;
-    }
+    private static int MeasureNow(string text, nint font) => TextEditor.Measure(text, font);
 
     private void Text(nint font, uint color, string text, int l, int t, int r, int b, uint format) =>
         _texts.Add(new TextOp(font, color, text, new RECT(l, t, r, b), format));
@@ -624,9 +530,13 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         if (editing)
         {
             // The value scrolls so that the caret stays visible; text past the right edge is clipped.
-            int start = ViewStart(fonts.Detail, textR - textL);
-            string shown = (start > 0 ? "…" : "") + _buffer[start.._caret] + "|" + _buffer[_caret..];
-            Text(fonts.Detail, Gdi.TextColor, shown, textL, top, textR, bottom, DT_LEFT | oneLine);
+            _edit.ScrollToCaret(fonts.Detail, textR - textL - Px(2));
+            int lineT = top + Px(8), lineB = bottom - Px(8);
+            if (_edit.HasSelection)
+                _canvas!.Rect(_edit.XAt(_edit.SelStart, textL, textR, fonts.Detail), lineT, _edit.XAt(_edit.SelEnd, textL, textR, fonts.Detail), lineB, Gdi.Selection);
+            int caretX = _edit.XAt(_edit.Caret, textL, textR, fonts.Detail);
+            _canvas!.Rect(caretX, lineT, caretX + Math.Max(1, Px(1)), lineB, Gdi.TextColor);
+            Text(fonts.Detail, Gdi.TextColor, _edit.Shown, textL, top, textR, bottom, DT_LEFT | oneLine);
         }
         else
         {
@@ -637,10 +547,18 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         var detailFont = fonts.Detail;
         var hit = AddHit(l, top, r, bottom, (x, _) =>
         {
-            if (_field == field) SetCaretFromClick(x, textL, detailFont, textR - textL);
-            else BeginEdit(field, value);
+            if (_field != field) BeginEdit(field, value);
+            _edit.MouseDown(x, textL, detailFont, Px(4));
+            Redraw();
         });
+        hit.Drag = (x, _) =>
+        {
+            if (_field != field) return;
+            _edit.MouseDrag(x, textL, detailFont);
+            Redraw();
+        };
         hit.Hand = false;
+        hit.IBeam = true;
         hit.Tag = field.ToString();
         return hit;
     }
