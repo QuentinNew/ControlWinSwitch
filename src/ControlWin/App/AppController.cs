@@ -13,7 +13,8 @@ namespace ControlWin.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1, WatchTimerId = 4;
+    private const nuint RepeatTimerId = 1, WatchTimerId = 4, HideMenuTimerId = 5;
+    private const uint HideMenuDelayMs = 10; // the menu stays under the settings window this long, so no frame shows neither
     // One timer per controller slot: the settings rumble test (10..13) and the game rumble refresh (20..23).
     private const nuint RumbleTimerBase = 10, GameRumbleTimerBase = 20;
     private const uint RumbleMs = 400, GameRumbleRefreshMs = 80;
@@ -240,6 +241,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (id == WatchTimerId)
         {
             CheckProcesses();
+            return;
+        }
+        if (id == HideMenuTimerId)
+        {
+            KillTimer(_window.Handle, id);
+            if (_mode == Mode.Settings) HideMenu();
             return;
         }
         if (id >= GameRumbleTimerBase && id < GameRumbleTimerBase + (nuint)_slots.Length)
@@ -503,7 +510,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
         _settingsWindow.Show(_settings);
-        if (fromMenu) HideMenu(); // hidden only once the settings window is up
+        if (fromMenu) SetTimer(_window.Handle, HideMenuTimerId, HideMenuDelayMs, 0); // hidden shortly after the settings window is up
         Log.Info("Settings opened");
         StartHeadsetWork(toggle: false); // refresh the status shown on the Headset tab
     }

@@ -52,6 +52,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
         int round = DWMWCP_ROUND;
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(int));
+        int noFade = 1; // no fade in / out: going from the menu to the settings must not dip in between
+        DwmSetWindowAttribute(Handle, DWMWA_TRANSITIONS_FORCEDISABLED, &noFade, sizeof(int));
     }
 
     /// <summary>The user closed the window with the mouse (close button or right click).</summary>

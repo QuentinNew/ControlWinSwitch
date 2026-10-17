@@ -296,7 +296,7 @@ internal static unsafe partial class Win32
     public const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x2, TIMER_ALL_ACCESS = 0x1F0003;
     public const int ERROR_ALREADY_EXISTS = 183, ERROR_ACCESS_DENIED = 5;
 
-    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2;
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2, DWMWA_TRANSITIONS_FORCEDISABLED = 3;
     public const int MDT_EFFECTIVE_DPI = 0;
 
     public static uint Rgb(byte r, byte g, byte b) => (uint)(r | (g << 8) | (b << 16));
