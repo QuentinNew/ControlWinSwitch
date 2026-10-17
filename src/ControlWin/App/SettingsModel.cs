@@ -28,17 +28,6 @@ internal sealed class SettingItem
 
     public bool Enabled { get; init; } = true;
 
-    /// <summary>
-    /// Action rows: a cross at the right end clears the value while <see cref="CanClear"/> says so. On the pad, right
-    /// moves the focus onto the cross (<see cref="ClearFocused"/>, drawn as a square), "A" then clears, left goes back.
-    /// </summary>
-    public Action? Clear { get; init; }
-    public Func<bool>? CanClear { get; init; }
-    public bool ShowsClear => Clear is not null && CanClear?.Invoke() == true;
-
-    /// <summary>The focus is on the cross rather than on the row (reset when the selection leaves the row).</summary>
-    public bool ClearFocused { get; set; }
-    public bool ClearActive => ShowsClear && ClearFocused;
 
     public bool Selectable => Enabled && Kind != SettingKind.Info;
 
@@ -80,32 +69,13 @@ internal sealed class SettingItem
         };
     }
 
-    public static SettingItem Action(string label, Action run, Func<string>? value = null, Action? clear = null, Func<bool>? canClear = null)
+    public static SettingItem Action(string label, Action run, Func<string>? value = null) => new()
     {
-        SettingItem? self = null;
-        return self = new()
-        {
-            Label = label,
-            Kind = SettingKind.Action,
-            Value = value ?? (() => ""),
-            Clear = clear,
-            CanClear = canClear,
-            Activate = () =>
-            {
-                if (self!.ClearActive)
-                {
-                    clear!();
-                    self.ClearFocused = false;
-                }
-                else run();
-            },
-            Adjust = clear is null ? null : d =>
-            {
-                if (d > 0) self!.ClearFocused = self.ShowsClear;
-                else if (d < 0) self!.ClearFocused = false;
-            },
-        };
-    }
+        Label = label,
+        Kind = SettingKind.Action,
+        Value = value ?? (() => ""),
+        Activate = run,
+    };
 
     /// <summary>A text value; "A" / click opens the inline editor through <paramref name="edit"/>.</summary>
     public static SettingItem Text(string label, Func<string> value, Action edit) => new()
@@ -199,7 +169,6 @@ internal sealed class SettingsModel
 
     private void SetSelected(int index)
     {
-        if (CurrentItem is { } leaving) leaving.ClearFocused = false;
         if (_sub is not null) _subSelected = index;
         else _selected[TabIndex] = index;
     }
@@ -305,8 +274,6 @@ internal interface ISettingsHost
     /// <summary>The name the user gave the controller (empty = none).</summary>
     string ControllerName(int slot);
     void SetControllerName(int slot, string name);
-    /// <summary>File name of the picture the user chose for the controller, empty when it has none.</summary>
-    string ControllerPictureName(int slot);
     /// <summary>Asks for a picture file (Windows dialog) and sets it as the controller's picture.</summary>
     void ChooseControllerPicture(int slot);
     void RemoveControllerPicture(int slot);
@@ -316,7 +283,8 @@ internal static class SettingsPages
 {
     /// <summary>
     /// The page of a connected controller: the controller strip on top (left / right switch to another connected
-    /// controller, a ring marks the one being edited), then its settings. <paramref name="strip"/> is the strip row:
+    /// controller, a ring marks the one being edited), then its settings. The picture is edited on the strip itself
+    /// (hover a tile: a pencil changes it, a cross removes it). <paramref name="strip"/> is the strip row:
     /// its <see cref="SettingItem.Slot"/> is the controller being edited.
     /// </summary>
     public static SettingsTab ControllerPage(ISettingsHost host, int slot, out SettingItem strip)
@@ -330,10 +298,6 @@ internal static class SettingsPages
             SettingItem.Text("Name",
                 () => host.ControllerName(tiles.Slot) is { Length: > 0 } name ? name : "(default)",
                 () => host.EditText(host.ControllerName(tiles.Slot), v => host.SetControllerName(tiles.Slot, v))),
-            SettingItem.Action("Choose picture...", () => host.ChooseControllerPicture(tiles.Slot),
-                () => host.ControllerPictureName(tiles.Slot) is { Length: > 0 } file ? file : "None",
-                clear: () => host.RemoveControllerPicture(tiles.Slot),
-                canClear: () => host.ControllerPictureName(tiles.Slot).Length > 0),
             SettingItem.Action("Test rumble", () => host.RumbleController(tiles.Slot)),
             SettingItem.Action("Back", host.CloseControllerPage),
         ], controllerStrip: true, titleOf: () => $"Controller {tiles.Slot + 1}");

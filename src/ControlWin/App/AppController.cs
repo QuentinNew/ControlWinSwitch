@@ -108,6 +108,16 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _radialOverlay.NodeClicked += OnRadialNodeClicked;
         _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
         _settingsWindow.Tile = TileOf;
+        _settingsWindow.PictureEditRequested += slot =>
+        {
+            ((ISettingsHost)this).ChooseControllerPicture(slot);
+            _settingsWindow.Refresh();
+        };
+        _settingsWindow.PictureRemoveRequested += slot =>
+        {
+            ((ISettingsHost)this).RemoveControllerPicture(slot);
+            _settingsWindow.Refresh();
+        };
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
         _radialEditor.Saved += OnRadialEditorSaved;
         _radialEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseRadialEditor(); };
@@ -1040,7 +1050,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Forgets a profile that holds nothing.</summary>
     private void PruneProfile(string key)
     {
-        if (Config.Controllers.TryGetValue(key, out var profile) && profile.Name.Length == 0 && profile.Picture.Length == 0)
+        if (Config.Controllers.TryGetValue(key, out var profile) && profile.Name.Length == 0)
             Config.Controllers.Remove(key);
     }
 
@@ -1057,33 +1067,18 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _store.Save();
     }
 
-    string ISettingsHost.ControllerPictureName(int slot) =>
-        ControllerKey(slot) is { } key && ControllerPictures.Has(key) && Config.Controllers.TryGetValue(key, out var profile)
-            ? (profile.Picture.Length > 0 ? profile.Picture : "Custom")
-            : "";
-
     void ISettingsHost.ChooseControllerPicture(int slot)
     {
         if (ControllerKey(slot) is not { } key) return;
         var file = FilePicker.Pick(_settingsWindow.Handle, "Choose a picture for this controller", FilePicker.PictureFilter);
         if (file is null) return;
         var error = ControllerPictures.Import(file, key);
-        if (error is not null)
-        {
-            _toast.Show(MenuPages.Gear, error);
-            return;
-        }
-        ProfileOf(key).Picture = Path.GetFileName(file);
-        _store.Save();
+        if (error is not null) _toast.Show(MenuPages.Gear, error);
     }
 
     void ISettingsHost.RemoveControllerPicture(int slot)
     {
-        if (ControllerKey(slot) is not { } key) return;
-        ControllerPictures.Remove(key);
-        if (Config.Controllers.TryGetValue(key, out var profile)) profile.Picture = "";
-        PruneProfile(key);
-        _store.Save();
+        if (ControllerKey(slot) is { } key) ControllerPictures.Remove(key);
     }
 
     void ISettingsHost.OpenControllerPage(int slot)

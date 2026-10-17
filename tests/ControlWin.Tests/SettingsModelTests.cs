@@ -36,10 +36,9 @@ public class SettingsModelTests
         public string ControllerName(int slot) => Name;
         public int NamedSlot = -1;
         public void SetControllerName(int slot, string name) { Name = name; NamedSlot = slot; }
-        public string Picture = "";
-        public string ControllerPictureName(int slot) => Picture;
-        public void ChooseControllerPicture(int slot) => Picture = "me.png";
-        public void RemoveControllerPicture(int slot) => Picture = "";
+        public int Chosen, Removed;
+        public void ChooseControllerPicture(int slot) => Chosen++;
+        public void RemoveControllerPicture(int slot) => Removed++;
         public bool StartOnLogon { get; private set; }
         public void SetStartOnLogon(bool enabled) => StartOnLogon = enabled;
         public Action<string>? Commit;
@@ -87,7 +86,7 @@ public class SettingsModelTests
     }
 
     [Fact]
-    public void Controller_page_edits_name_and_picture_and_goes_back()
+    public void Controller_page_edits_the_name_tests_rumble_and_goes_back()
     {
         var (m, _, host) = Create();
         m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
@@ -100,23 +99,8 @@ public class SettingsModelTests
         host.Commit!("Quentin");
         Assert.Equal("Quentin", host.Name);
 
-        var picture = items.Single(i => i.Label == "Choose picture...");
-        Assert.False(picture.ShowsClear);
-        Assert.Equal("None", picture.Value());
-        picture.Activate!();
-        Assert.Equal("me.png", host.Picture);
-        Assert.Equal("me.png", picture.Value());
-        Assert.True(picture.ShowsClear);
-        picture.Adjust!(1); // right moves the focus onto the cross: nothing is removed yet
-        Assert.True(picture.ClearFocused);
-        Assert.Equal("me.png", host.Picture);
-        picture.Adjust!(-1); // left goes back to the row
-        Assert.False(picture.ClearFocused);
-        picture.Adjust!(1);
-        picture.Activate!(); // A on the cross removes the picture
-        Assert.Equal("", host.Picture);
-        Assert.False(picture.ShowsClear);
-        Assert.False(picture.ClearFocused);
+        Assert.DoesNotContain(items, i => i.Label.StartsWith("Choose picture")); // the picture is edited on the tiles
+        Assert.Equal(0, host.Chosen + host.Removed);
 
         items.Single(i => i.Label == "Test rumble").Activate!();
         Assert.Equal([0], host.Rumbled);
@@ -180,37 +164,6 @@ public class SettingsModelTests
 
         Assert.Equal(3, host.NamedSlot);
         Assert.Equal([3], host.Rumbled);
-    }
-
-    [Fact]
-    public void A_on_the_row_still_chooses_and_leaving_the_row_drops_the_cross_focus()
-    {
-        var (m, _, host) = Create();
-        host.Picture = "me.png";
-        m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
-        var picture = m.Tab.Items.Single(i => i.Label == "Choose picture...");
-        while (m.CurrentItem != picture) m.Move(1);
-
-        m.Activate(); // not on the cross: asks for another picture
-        Assert.Equal("me.png", host.Picture);
-        Assert.False(picture.ClearActive);
-
-        m.Adjust(1);
-        Assert.True(picture.ClearActive);
-        m.Move(1); // down to the next row
-        Assert.False(picture.ClearFocused);
-    }
-
-    [Fact]
-    public void The_cross_cannot_be_focused_when_there_is_no_picture()
-    {
-        var (m, _, host) = Create();
-        m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
-        var picture = m.Tab.Items.Single(i => i.Label == "Choose picture...");
-
-        picture.Adjust!(1);
-
-        Assert.False(picture.ClearFocused);
     }
 
     [Fact]

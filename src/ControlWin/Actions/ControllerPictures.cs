@@ -114,6 +114,31 @@ internal static unsafe class ControllerPictures
         if (s_images.Remove(id, out var image) && image != 0) GdipDisposeImage(image);
     }
 
+    /// <summary>A translucent dark rounded square over a tile (the hover state of a picture).</summary>
+    public static void DrawDim(nint dc, int x, int y, int size, int diameter)
+    {
+        nint graphics, path = 0, brush = 0;
+        if (GdipCreateFromHDC(dc, &graphics) != 0) return;
+        try
+        {
+            GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
+            if (GdipCreatePath(0, &path) != 0 || GdipCreateSolidFill(0x99000000, &brush) != 0) return;
+            int d = Math.Clamp(diameter, 2, size);
+            GdipAddPathArcI(path, x, y, d, d, 180f, 90f);
+            GdipAddPathArcI(path, x + size - d, y, d, d, 270f, 90f);
+            GdipAddPathArcI(path, x + size - d, y + size - d, d, d, 0f, 90f);
+            GdipAddPathArcI(path, x, y + size - d, d, d, 90f, 90f);
+            GdipClosePathFigure(path);
+            GdipFillPath(graphics, brush, path);
+        }
+        finally
+        {
+            if (brush != 0) GdipDeleteBrush(brush);
+            if (path != 0) GdipDeletePath(path);
+            GdipDeleteGraphics(graphics);
+        }
+    }
+
     /// <summary>
     /// Draws the whole picture, centered and as large as fits the <paramref name="size"/> square (proportions kept),
     /// with rounded corners of <paramref name="diameter"/>.

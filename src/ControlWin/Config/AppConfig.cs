@@ -25,9 +25,6 @@ internal sealed class ControllerProfile
 {
     /// <summary>Shown under the controller's tile; empty = the default "Controller N".</summary>
     public string Name { get; set; } = "";
-
-    /// <summary>File name of the picture the user chose (shown in the settings); the picture itself is stored by controller id.</summary>
-    public string Picture { get; set; } = "";
 }
 
 internal sealed class MouseConfig
@@ -175,11 +172,7 @@ internal sealed class AppConfig
         Mouse ??= new();
         Controllers ??= [];
         foreach (var key in Controllers.Where(c => c.Value is null).Select(c => c.Key).ToList()) Controllers.Remove(key);
-        foreach (var profile in Controllers.Values)
-        {
-            profile.Name = (profile.Name ?? "").Trim();
-            profile.Picture ??= "";
-        }
+        foreach (var profile in Controllers.Values) profile.Name = (profile.Name ?? "").Trim();
         Shortcuts ??= [];
         Shortcuts.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Target));
         foreach (var s in Shortcuts)

@@ -155,6 +155,14 @@ internal unsafe struct NOTIFYICONDATAW
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct TRACKMOUSEEVENT
+{
+    public uint cbSize, dwFlags;
+    public nint hwndTrack;
+    public uint dwHoverTime;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal unsafe struct OPENFILENAMEW
 {
     public uint lStructSize;
@@ -421,6 +429,9 @@ internal static unsafe partial class Win32
     [LibraryImport("gdiplus.dll")] public static partial int GdipSetPixelOffsetMode(nint graphics, int mode);
     [LibraryImport("gdiplus.dll")] public static partial int GdipAddPathArcI(nint path, int x, int y, int w, int h, float startAngle, float sweepAngle);
     [LibraryImport("gdiplus.dll")] public static partial int GdipClosePathFigure(nint path);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipFillPath(nint graphics, nint brush, nint path);
+    [LibraryImport("user32.dll")] public static partial int TrackMouseEvent(TRACKMOUSEEVENT* e);
+    public const uint WM_MOUSELEAVE = 0x02A3, TME_LEAVE = 0x2;
     public const int PixelFormat32bppARGB = 0x0026200A, UnitPixel = 2, PixelOffsetModeHalf = 4;
     [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial nuint SHGetFileInfoW(string path, uint attributes, SHFILEINFOW* info, uint size, uint flags);

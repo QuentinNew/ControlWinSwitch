@@ -30,9 +30,10 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
     // Layout in DIPs.
     private const int WidthDip = 760, HeaderDip = 60, TabsDip = 52, RowDip = 56, Rows = 6, FooterDip = 44;
-    private const int SideDip = 16, ValueWidthDip = 300, ArrowDip = 40, CloseDip = 48, CrossDip = 44;
+    private const int SideDip = 16, ValueWidthDip = 300, ArrowDip = 40, CloseDip = 48, CrossBadgeDip = 24;
     // Connected-controller strip (Controller tab): tiles with the controller's name under each.
     private const int StripDip = RowDip * 2, TileDip = 64, TileGapDip = 40, NameHeightDip = 28;
+    private static readonly string PencilGlyph = ((char)0xE70F).ToString(); // Segoe icon "Edit"
     private const string GamepadGlyph = "", NoneGlyph = "";
 
     private const string ChevronLeft = "", ChevronRight = "", Close = "";
@@ -64,6 +65,16 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     public Func<int, SlotTile>? Tile { get; set; }
 
     private bool Connected(int slot) => Tile?.Invoke(slot).Connected == true;
+
+    /// <summary>The user clicked the pencil on a controller's picture / the cross that removes it.</summary>
+    public event Action<int>? PictureEditRequested;
+    public event Action<int>? PictureRemoveRequested;
+
+    private enum StripPart { None, Picture, Cross, Name }
+
+    private int _hoverSlot = -1;     // the controller whose picture the mouse is over (pencil / cross shown)
+    private bool _hoverCross;
+    private bool _trackingLeave;
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
 
@@ -164,6 +175,15 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             case WM_MOUSEMOVE:
                 OnMouseMove(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
+            case WM_MOUSELEAVE:
+                _trackingLeave = false;
+                if (_hoverSlot >= 0)
+                {
+                    _hoverSlot = -1;
+                    _hoverCross = false;
+                    Refresh();
+                }
+                return 0;
             case WM_LBUTTONDOWN:
                 OnClick(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
@@ -197,17 +217,31 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     /// <summary>Left edge of a row of <paramref name="count"/> tiles centered in the window.</summary>
     private int TilesLeftFor(int count) => (Px(WidthDip) - (count * Px(TileDip) + (count - 1) * Px(TileGapDip))) / 2;
 
-    /// <summary>Connected slot whose tile or name is at the point, or -1.</summary>
-    private int SlotAt(int x, int y)
+    /// <summary>The cross badge sits on the top right corner of a tile, poking out a little.</summary>
+    private (int X, int Y, int Size) CrossBadge(int tileLeft, int tileTop) =>
+        (tileLeft + Px(TileDip) - Px(CrossBadgeDip) + Px(8), tileTop - Px(8), Px(CrossBadgeDip));
+
+    /// <summary>The connected slot whose tile is at the point (and which part of it), or -1.</summary>
+    private int HitAt(int x, int y, out StripPart part)
     {
+        part = StripPart.None;
         if (_model?.Tab.ControllerStrip != true || y < StripTop || y >= RowsTop) return -1;
         var slots = ConnectedSlots();
-        if (slots.Length == 0) return -1;
-        int tile = Px(TileDip), pitch = tile + Px(TileGapDip);
-        int rel = x - TilesLeftFor(slots.Length);
-        if (rel < 0) return -1;
-        int index = rel / pitch;
-        return index < slots.Length && rel % pitch < tile ? slots[index] : -1;
+        int tile = Px(TileDip), pitch = tile + Px(TileGapDip), top = StripTop + Px(8), left = TilesLeftFor(slots.Length);
+        int nameTop = top + tile + Px(6), nameBottom = nameTop + Px(NameHeightDip), reach = Px(TileGapDip) / 2 - 1;
+        for (int j = 0; j < slots.Length; j++)
+        {
+            int l = left + j * pitch;
+            var badge = CrossBadge(l, top);
+            if (Tile?.Invoke(slots[j]).Image != 0 && x >= badge.X && x < badge.X + badge.Size && y >= badge.Y && y < badge.Y + badge.Size)
+                part = StripPart.Cross;
+            else if (x >= l && x < l + tile && y >= top && y < top + tile)
+                part = StripPart.Picture;
+            else if (x >= l - reach && x < l + tile + reach && y >= nameTop && y < nameBottom)
+                part = StripPart.Name;
+            if (part != StripPart.None) return slots[j];
+        }
+        return -1;
     }
 
     private int RowAt(int y)
@@ -230,7 +264,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (_editing) return true; // a click confirms
         if (y < TabsTop) return x >= Px(WidthDip) - Px(CloseDip); // close button
         if (y < StripTop) return true;                            // tabs
-        if (y < RowsTop) return SlotAt(x, y) is var slot and >= 0 && Connected(slot);
+        if (y < RowsTop) return HitAt(x, y, out var part) >= 0 && part != StripPart.None;
 
         int row = RowAt(y);
         return row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Selectable;
@@ -263,6 +297,12 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     private void OnMouseMove(int x, int y)
     {
         if (_model is null || _editing) return;
+        if (!_trackingLeave)
+        {
+            var track = new TRACKMOUSEEVENT { cbSize = (uint)sizeof(TRACKMOUSEEVENT), dwFlags = TME_LEAVE, hwndTrack = Handle };
+            _trackingLeave = TrackMouseEvent(&track) != 0;
+        }
+        UpdateHover(x, y);
         // The window appearing under a resting cursor sends a mouse move: only react to real movement.
         bool first = _lastMouseX < 0;
         bool moved = x != _lastMouseX || y != _lastMouseY;
@@ -272,15 +312,25 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
         int row = RowAt(y);
         if (row >= 0 && _model.Select(row)) Refresh();
-        if (row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row] is { ShowsClear: true } item)
-        {
-            bool overCross = x >= Px(WidthDip) - Px(SideDip) - Px(CrossDip);
-            if (item.ClearFocused != overCross)
-            {
-                item.ClearFocused = overCross;
-                Refresh();
-            }
-        }
+    }
+
+    /// <summary>The controller being edited: the strip's focused one.</summary>
+    private int SelectedSlot => _model?.Tab.ControllerStrip == true ? _model.Tab.Items[0].Slot : -1;
+
+    /// <summary>
+    /// The pencil and the cross only appear on a controller's page, on the controller being edited, when the mouse is
+    /// over its picture. The Controller tab never edits pictures.
+    /// </summary>
+    private void UpdateHover(int x, int y)
+    {
+        int hit = HitAt(x, y, out var over);
+        bool onPicture = _model?.InSubPage == true && over is StripPart.Picture or StripPart.Cross && hit == SelectedSlot;
+        int hover = onPicture ? hit : -1;
+        bool cross = onPicture && over == StripPart.Cross;
+        if (hover == _hoverSlot && cross == _hoverCross) return;
+        _hoverSlot = hover;
+        _hoverCross = cross;
+        Refresh();
     }
 
     private void OnClick(int x, int y)
@@ -301,11 +351,29 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
         if (y >= StripTop && y < RowsTop)
         {
-            int slot = SlotAt(x, y);
-            if (slot < 0) return;
-            if (!_model.InSubPage || Connected(slot)) _model.Tab.Items[0].Slot = slot; // a page only edits connected controllers
-            if (!_model.InSubPage) _model.Select(0);
-            if (Connected(slot)) _model.Tab.Items[0].Activate?.Invoke(); // on the Controller tab: opens the controller's page
+            int slot = HitAt(x, y, out var part);
+            if (slot < 0 || part == StripPart.None) return;
+            var strip = _model.Tab.Items[0];
+            if (!_model.InSubPage)
+            {
+                // The Controller tab: a tile only opens that controller's page.
+                strip.Slot = slot;
+                _model.Select(0);
+                strip.Activate?.Invoke();
+            }
+            else if (slot != strip.Slot || part == StripPart.Name)
+            {
+                strip.Slot = slot; // another controller: edit it instead
+                UpdateHover(x, y);
+            }
+            else if (part == StripPart.Cross)
+            {
+                PictureRemoveRequested?.Invoke(slot);
+            }
+            else
+            {
+                PictureEditRequested?.Invoke(slot);
+            }
             Refresh();
             return;
         }
@@ -329,9 +397,6 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             case SettingKind.Toggle:
                 item.Activate?.Invoke();
                 break;
-            case SettingKind.Action when item.ShowsClear && x >= width - Px(SideDip) - Px(CrossDip):
-                item.Clear!();
-                break;
             case SettingKind.Action:
             case SettingKind.Text:
                 item.Activate?.Invoke();
@@ -348,7 +413,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     }
 
     /// <summary>One controller tile: picture or gamepad icon, battery badge, name underneath.</summary>
-    private void PaintTile(nint dc, FontSet fonts, SlotTile info, int l, int t, bool focused)
+    private void PaintTile(nint dc, FontSet fonts, SlotTile info, int l, int t, bool focused, bool hovered = false, bool crossHot = false)
     {
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
         bool on = info.Connected;
@@ -360,14 +425,43 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             ControllerPictures.DrawRounded(dc, info.Image, l, t, tile, Px(14));
         else
             Gdi.Text(dc, fonts.Glyph, on ? Gdi.TextColor : Gdi.Dim, on ? GamepadGlyph : NoneGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+        if (on && hovered)
+        {
+            // Hovering the picture: a pencil changes it, and (when there is one) a cross on the top right removes it.
+            ControllerPictures.DrawDim(dc, l, t, tile, Px(14));
+            Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, PencilGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+        }
         if (!on) return;
         PaintBattery(dc, info, l + tile, t + tile);
+        if (hovered && info.Image != 0)
+        {
+            var badge = CrossBadge(l, t);
+            s_redBrush = s_redBrush != 0 ? s_redBrush : CreateSolidBrush(Rgb(0xD6, 0x3B, 0x3B));
+            s_redHotBrush = s_redHotBrush != 0 ? s_redHotBrush : CreateSolidBrush(Rgb(0xF2, 0x5C, 0x5C));
+            Gdi.RoundedFill(dc, crossHot ? s_redHotBrush : s_redBrush, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, badge.Size);
+            Gdi.Text(dc, BadgeFont(), Gdi.TextColor, Close, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, DT_CENTER | oneLine);
+        }
         int reach = Px(TileGapDip) / 2 - 1; // the name gets the tile's whole pitch, never more
         Gdi.Text(dc, fonts.Detail, Gdi.TextColor, info.Name, l - reach, t + tile + Px(6),
             l + tile + reach, t + tile + Px(6) + nameH, DT_CENTER | oneLine | DT_END_ELLIPSIS);
     }
 
-    private static nint s_redBrush, s_amberBrush;
+    private static nint s_redBrush, s_redHotBrush, s_amberBrush;
+
+    private nint _badgeFont;
+    private uint _badgeFontDpi;
+
+    /// <summary>A small icon font for the cross inside the red badge (rebuilt when the DPI changes).</summary>
+    private nint BadgeFont()
+    {
+        if (_badgeFont == 0 || _badgeFontDpi != _dpi)
+        {
+            if (_badgeFont != 0) DeleteObject(_badgeFont);
+            _badgeFont = Gdi.CreateIconFont(Px(10));
+            _badgeFontDpi = _dpi;
+        }
+        return _badgeFont;
+    }
 
     /// <summary>A small battery badge on the bottom-right corner of a tile: four bars, a plus while charging.</summary>
     private void PaintBattery(nint dc, SlotTile info, int right, int bottom)
@@ -439,7 +533,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             int tile = Px(TileDip), pitch = tile + Px(TileGapDip), left = TilesLeftFor(slots.Length);
             for (int j = 0; j < slots.Length; j++)
                 PaintTile(dc, fonts, Tile?.Invoke(slots[j]) ?? default, left + j * pitch, rowsTop + Px(8),
-                    (stripSelected || model.InSubPage) && slots[j] == strip0.Slot);
+                    (stripSelected || model.InSubPage) && slots[j] == strip0.Slot, hovered: model.InSubPage && slots[j] == _hoverSlot && slots[j] == strip0.Slot, crossHot: slots[j] == _hoverSlot && _hoverCross);
             if (slots.Length == 0)
                 Gdi.Text(dc, fonts.Label, Gdi.Dim, "No controller connected", 0, rowsTop, width, rowsTop + Px(StripDip), DT_CENTER | oneLine);
             rowsTop += Px(StripDip);
@@ -497,23 +591,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                     break;
 
                 default:
-                {
-                    int right = valueRight + Px(8);
-                    if (item.ShowsClear)
-                    {
-                        // The cross at the end of the row clears the value; a square marks it when it has the focus.
-                        int cl = right - Px(CrossDip), box = Px(38), bx = cl + (Px(CrossDip) - box) / 2, by = y + (rowH - box) / 2;
-                        if (item.ClearFocused)
-                        {
-                            Gdi.RoundedFill(dc, Gdi.TextBrush, bx, by, bx + box, by + box, Px(12));
-                            Gdi.RoundedFill(dc, Gdi.BackgroundBrush, bx + Px(2), by + Px(2), bx + box - Px(2), by + box - Px(2), Px(10));
-                        }
-                        Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, Close, cl, y, right, y + rowH, DT_CENTER | oneLine);
-                        right = cl - Px(8);
-                    }
-                    Gdi.Text(dc, fonts.Detail, selected ? Gdi.DimOnSelection : Gdi.Dim, value, valueLeft, y, right, y + rowH, DT_RIGHT | oneLine | DT_END_ELLIPSIS);
+                    Gdi.Text(dc, fonts.Detail, selected ? Gdi.DimOnSelection : Gdi.Dim, value, valueLeft, y, valueRight + Px(8), y + rowH, DT_RIGHT | oneLine | DT_END_ELLIPSIS);
                     break;
-                }
             }
         }
 
@@ -526,7 +605,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             return;
         }
         string hint = model.InSubPage
-            ? "Up / Down  Select     Left / Right  Reach the cross     A  OK     B  Back"
+            ? "Up / Down  Select     Left / Right  Controller     A  OK     B  Back"
             : "L / R  Tab     Up / Down  Select     Left / Right  Change     A  Toggle     B  Close";
         Gdi.Text(dc, fonts.Footer, Gdi.Dim, hint,
             0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);
