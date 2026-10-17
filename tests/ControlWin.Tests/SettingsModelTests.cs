@@ -17,6 +17,8 @@ public class SettingsModelTests
         public void WatchListChanged() => WatchChanges++;
         public string ConfigPath => "x";
         public string HeadsetStatus => "Connected";
+        public List<string> Devices = [];
+        public IReadOnlyList<string> HeadsetDevices => Devices;
         public void ConfigChanged() => Changes++;
         public void EditConfig() => Edits++;
         public void ReloadConfig() { }
@@ -478,13 +480,14 @@ public class SettingsModelTests
     public void Text_row_opens_the_editor_and_commit_updates_the_config()
     {
         var (m, store, host) = Create();
-        m.SetTab(4); // Headset
-        Assert.Equal(0, m.Selected); // device name is the first selectable row
+        m.SetTab(m.Tabs.ToList().FindIndex(t => t.Items.Any(i => i.Label == "Pad off while running")));
+        int row = m.Tab.Items.ToList().FindIndex(i => i.Label == "Pad off while running");
+        while (m.Selected != row) m.Move(1);
         m.Activate();
-        Assert.Equal("", host.Editing);
+        Assert.Equal("steam.exe", host.Editing);
 
-        host.Commit!("  My Headset ");
-        Assert.Equal("My Headset", store.Current.HeadsetName);
+        host.Commit!("  game.exe ");
+        Assert.Equal(["game.exe"], store.Current.VirtualPad.DisableWhileRunning);
         Assert.Equal(1, host.Changes);
     }
 
@@ -582,5 +585,22 @@ public class SettingsModelTests
         m.Tab.Items.Single(i => i.Label == "Calibrate deadzone").Activate!();
 
         Assert.Equal(1, host.CalibrationOpened);
+    }
+
+    [Fact]
+    public void Headset_device_row_cycles_known_devices_and_keeps_a_missing_saved_one()
+    {
+        var (m, store, host) = Create();
+        host.Devices = ["WH-1000XM4", "Buds"];
+        store.Current.HeadsetName = "Old";
+        var row = m.Tabs.Single(t => t.Title == "Headset").Items[0];
+
+        Assert.Equal("Old (not found)", row.Value());
+        row.Adjust!(1); // wraps to (none)
+        Assert.Equal("(none)", row.Value());
+        Assert.Equal("", store.Current.HeadsetName);
+        row.Adjust!(1);
+        Assert.Equal("WH-1000XM4", row.Value());
+        Assert.Equal("WH-1000XM4", store.Current.HeadsetName);
     }
 }

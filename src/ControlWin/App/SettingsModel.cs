@@ -69,6 +69,24 @@ internal sealed class SettingItem
         };
     }
 
+    /// <summary>Like <see cref="Choice"/>, for a list that changes while the window is open: <paramref name="options"/> is read on every use.</summary>
+    public static SettingItem DynamicChoice(string label, Func<IReadOnlyList<string>> options, Func<int> get, Action<int> set)
+    {
+        void Cycle(int delta)
+        {
+            int n = options().Count;
+            set(((get() + Math.Sign(delta)) % n + n) % n);
+        }
+        return new()
+        {
+            Label = label,
+            Kind = SettingKind.Choice,
+            Value = () => { var list = options(); return list[Math.Clamp(get(), 0, list.Count - 1)]; },
+            Adjust = Cycle,
+            Activate = () => Cycle(1),
+        };
+    }
+
     public static SettingItem Action(string label, Action run, Func<string>? value = null) => new()
     {
         Label = label,
@@ -261,6 +279,8 @@ internal interface ISettingsHost
 {
     string ConfigPath { get; }
     string HeadsetStatus { get; }
+    /// <summary>Names of the Bluetooth audio devices Windows knows (refreshed when the settings open).</summary>
+    IReadOnlyList<string> HeadsetDevices { get; }
     /// <summary>Config values changed: save, then apply (virtual pad, ...).</summary>
     void ConfigChanged();
     void EditConfig();
@@ -403,10 +423,35 @@ internal static class SettingsPages
             SettingItem.Number("D-pad glide speed", () => cfg().Mouse.DpadSpeed, v => { cfg().Mouse.DpadSpeed = v; Changed(); }, 30, 400, 10, "0", " px/s"),
         ]);
 
+        // "(none)", the known devices, then the saved name when Windows no longer lists it.
+        const string NotFound = " (not found)";
+        IReadOnlyList<string> HeadsetChoices()
+        {
+            var list = new List<string> { "(none)" };
+            list.AddRange(host.HeadsetDevices);
+            string saved = cfg().HeadsetName;
+            if (saved.Length > 0 && !host.HeadsetDevices.Contains(saved, StringComparer.OrdinalIgnoreCase)) list.Add(saved + NotFound);
+            return list;
+        }
+        int HeadsetChoiceIndex()
+        {
+            string saved = cfg().HeadsetName;
+            if (saved.Length == 0) return 0;
+            var devices = host.HeadsetDevices;
+            for (int i = 0; i < devices.Count; i++)
+                if (string.Equals(devices[i], saved, StringComparison.OrdinalIgnoreCase)) return i + 1;
+            return devices.Count + 1;
+        }
+
         var headset = new SettingsTab("Headset",
         [
-            SettingItem.Text("Device name", () => string.IsNullOrEmpty(cfg().HeadsetName) ? "(not set)" : cfg().HeadsetName,
-                () => host.EditText(cfg().HeadsetName, v => { cfg().HeadsetName = v.Trim(); Changed(); })),
+            SettingItem.DynamicChoice("Device", HeadsetChoices, HeadsetChoiceIndex, i =>
+            {
+                var choices = HeadsetChoices();
+                string choice = i > 0 && i < choices.Count ? choices[i] : "";
+                cfg().HeadsetName = choice.EndsWith(NotFound) ? choice[..^NotFound.Length] : choice;
+                Changed();
+            }),
             SettingItem.Info("Status", () => host.HeadsetStatus),
             SettingItem.Action("Connect / disconnect", host.ToggleHeadset),
             SettingItem.Action("Bluetooth settings", host.OpenBluetoothSettings),

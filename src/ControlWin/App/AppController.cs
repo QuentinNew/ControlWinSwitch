@@ -72,6 +72,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private bool _shutDown;
     private HeadsetState _headsetState;
     private bool _headsetBusy;
+    private volatile IReadOnlyList<string> _headsetDevices = [];
 
     private Mode _mode;
     private Dir _heldDirection;
@@ -1026,7 +1027,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
     // ISettingsHost
     string ISettingsHost.ConfigPath => _store.Path;
 
-    string ISettingsHost.HeadsetStatus => _headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
+    IReadOnlyList<string> ISettingsHost.HeadsetDevices => _headsetDevices;
+
+    string ISettingsHost.HeadsetStatus =>_headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
 
     bool ISettingsHost.ControllerConnected(int slot) => _window.ControllerConnected(slot);
 
@@ -1369,6 +1372,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         string name = Config.HeadsetName;
         new Thread(() =>
         {
+            if (!toggle) _headsetDevices = BluetoothHeadset.ListDevices();
             var state = toggle ? BluetoothHeadset.Toggle(name) : BluetoothHeadset.GetState(name);
             PostMessageW(hwnd, AppMessages.HeadsetDone, (nuint)(int)state, toggle ? 1 : 0);
         }) { IsBackground = true, Name = "headset" }.Start();

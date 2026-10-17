@@ -29,6 +29,15 @@ internal static unsafe class BluetoothHeadset
     private const ushort VtLpwstr = 31;
 
     private static ulong _address; // Bluetooth address of the headset, learned from its device path
+    private static string? _addressFor; // the name _address was learned for
+
+    private const uint ServiceDisable = 0, ServiceEnable = 1;
+    private static readonly Guid[] AudioServices =
+    [
+        new("0000110B-0000-1000-8000-00805F9B34FB"), // A2DP sink (stereo)
+        new("0000111E-0000-1000-8000-00805F9B34FB"), // Hands-Free
+        new("00001108-0000-1000-8000-00805F9B34FB"), // Headset profile
+    ];
 
     /// <summary>Current state of the headset whose endpoint name contains <paramref name="name"/>.</summary>
     public static HeadsetState GetState(string name)
@@ -65,7 +74,10 @@ internal static unsafe class BluetoothHeadset
             if (found == 0) return HeadsetState.NotFound;
 
             bool connect = !wasActive;
-            if (!Send(name, connect ? ReconnectProperty : DisconnectProperty)) return HeadsetState.Failed;
+            bool sent = Send(name, connect ? ReconnectProperty : DisconnectProperty);
+            // The per-endpoint command can leave the Hands-Free link up: drop the whole device's audio services.
+            if (!connect && DisconnectServices(_address)) sent = true;
+            if (!sent) return HeadsetState.Failed;
 
             // The endpoint changes state asynchronously: poll briefly.
             for (int i = 0; i < 30; i++) // the link can take several seconds to come up
@@ -126,6 +138,7 @@ internal static unsafe class BluetoothHeadset
     {
         found = 0;
         anyActive = false;
+        if (!string.Equals(_addressFor, name, StringComparison.OrdinalIgnoreCase)) { _address = 0; _addressFor = name; }
         void* enumerator = null;
         void* collection = null;
         try
@@ -209,28 +222,127 @@ internal static unsafe class BluetoothHeadset
 
     private static bool NameMatches(void* device, string name)
     {
+        return GetStringProperty(device, PkeyFriendlyNameFmtid, PkeyFriendlyNamePid)?.Contains(name, StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    /// <summary>A string property of the endpoint (null when absent or not a string).</summary>
+    private static string? GetStringProperty(void* device, Guid fmtid, uint pid)
+    {
         void* store = null;
         // IMMDevice::OpenPropertyStore(STGM_READ = 0, out store)
-        if (((delegate* unmanaged<void*, uint, void**, int>)Slot(device, 4))(device, 0, &store) < 0) return false;
+        if (((delegate* unmanaged<void*, uint, void**, int>)Slot(device, 4))(device, 0, &store) < 0) return null;
         try
         {
             var key = stackalloc byte[20];
-            *(Guid*)key = PkeyFriendlyNameFmtid;
-            *(uint*)(key + 16) = PkeyFriendlyNamePid;
+            *(Guid*)key = fmtid;
+            *(uint*)(key + 16) = pid;
 
             var variant = stackalloc byte[24]; // PROPVARIANT: vt @0, pointer @8 (x64)
             new Span<byte>(variant, 24).Clear();
             // IPropertyStore::GetValue(key, out value)
-            if (((delegate* unmanaged<void*, void*, void*, int>)Slot(store, 5))(store, key, variant) < 0) return false;
+            if (((delegate* unmanaged<void*, void*, void*, int>)Slot(store, 5))(store, key, variant) < 0) return null;
             try
             {
-                if (*(ushort*)variant != VtLpwstr) return false;
-                var text = new string(*(char**)(variant + 8));
-                return text.Contains(name, StringComparison.OrdinalIgnoreCase);
+                return *(ushort*)variant == VtLpwstr ? new string(*(char**)(variant + 8)) : null;
             }
             finally { PropVariantClear(variant); }
         }
         finally { Release(store); }
+    }
+
+    /// <summary>
+    /// Names of the Bluetooth audio devices Windows knows about, connected or not, one per device
+    /// ("Headphones (WH-1000XM4)" and "Headset (WH-1000XM4 Hands-Free)" both give "WH-1000XM4").
+    /// </summary>
+    public static List<string> ListDevices()
+    {
+        var names = new List<string>();
+        if (!Initialize(out bool uninit)) return names;
+        void* enumerator = null;
+        void* collection = null;
+        try
+        {
+            var clsid = ClsidEnumerator;
+            var iid = IidEnumerator;
+            if (CoCreateInstance(&clsid, 0, ClsctxAll, &iid, &enumerator) < 0) return names;
+            if (((delegate* unmanaged<void*, int, uint, void**, int>)Slot(enumerator, 3))(enumerator, 0, StateMaskAll, &collection) < 0)
+                return names;
+
+            uint count;
+            ((delegate* unmanaged<void*, uint*, int>)Slot(collection, 3))(collection, &count);
+            for (uint i = 0; i < count; i++)
+            {
+                void* device = null;
+                if (((delegate* unmanaged<void*, uint, void**, int>)Slot(collection, 4))(collection, i, &device) < 0) continue;
+                try
+                {
+                    if (!IsBluetooth(device)) continue;
+                    string name = DeviceName(GetStringProperty(device, PkeyFriendlyNameFmtid, PkeyFriendlyNamePid));
+                    if (name.Length > 0 && !names.Contains(name, StringComparer.OrdinalIgnoreCase)) names.Add(name);
+                }
+                finally { Release(device); }
+            }
+        }
+        catch (Exception ex) { Log.Error("Headset list failed", ex); }
+        finally
+        {
+            Release(collection);
+            Release(enumerator);
+            if (uninit) CoUninitialize();
+        }
+        names.Sort(StringComparer.OrdinalIgnoreCase);
+        return names;
+    }
+
+    /// <summary>The device part of an endpoint name: the text in the last brackets, minus the profile suffix.</summary>
+    private static string DeviceName(string? friendly)
+    {
+        if (string.IsNullOrWhiteSpace(friendly)) return "";
+        string name = friendly;
+        int open = name.LastIndexOf('('), close = name.LastIndexOf(')');
+        if (open >= 0 && close > open) name = name[(open + 1)..close];
+        foreach (var suffix in (ReadOnlySpan<string>)[" Hands-Free", " Hands Free", " Stereo"])
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) { name = name[..^suffix.Length]; break; }
+        return name.Trim();
+    }
+
+    private static bool IsBluetooth(void* device)
+    {
+        if (ParseAddress(PeerId(device)) != 0) return true;
+        // A disconnected endpoint may have no topology to read: its parent device's enumerator says it is Bluetooth.
+        string? enumerator = GetStringProperty(device, PkeyFriendlyNameFmtid, 24);
+        return enumerator != null && enumerator.StartsWith("BTH", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Disables then re-enables the audio services of the device: Windows drops every audio link (stereo and
+    /// Hands-Free) and leaves the device free to reconnect. True when at least one service was switched.
+    /// </summary>
+    private static bool DisconnectServices(ulong address)
+    {
+        if (address == 0) return false;
+        var info = stackalloc byte[560];
+        new Span<byte>(info, 560).Clear();
+        *(uint*)info = 560;
+        *(ulong*)(info + 8) = address;
+        if (BluetoothGetDeviceInfo(0, info) != 0) return false;
+
+        bool any = false;
+        foreach (var service in AudioServices)
+        {
+            var guid = service;
+            uint rc = BluetoothSetServiceState(0, info, &guid, ServiceDisable);
+            Log.Info($"Headset: service {service} disable -> {rc}");
+            if (rc == 0) any = true;
+        }
+        if (!any) return false;
+        Thread.Sleep(500);
+        foreach (var service in AudioServices)
+        {
+            var guid = service;
+            BluetoothSetServiceState(0, info, &guid, ServiceEnable);
+        }
+        return true;
     }
 
     /// <summary>Sends the BtAudio property to the Bluetooth device behind every matching endpoint, once each.</summary>
