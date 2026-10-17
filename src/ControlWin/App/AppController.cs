@@ -201,6 +201,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _window.UpdateTray();
         if (_shutDown) return;
         gone.Pad.Detach(); // re-plugged on the next report
+        SyncHiding();
         if (slot == _owner)
         {
             if (_mode == Mode.Menu) CloseMenu();
@@ -863,6 +864,36 @@ internal sealed class AppController : IDisposable, ISettingsHost
             if (!enabled) _slots[i].Pad.Detach();
             else if (_set.Readers[i].IsOpen && !_slots[i].Pad.Attach()) _padFailed = true;
         }
+        SyncHiding();
+    }
+
+    // ---- hiding the physical controllers (HidHide) -----------------------------------------
+
+    private string _hiddenKey = "";   // the set of paths last applied (to skip identical requests)
+    private bool _hideFailed;
+
+    /// <summary>Hides the controllers that currently drive a virtual pad, and shows every other one again.</summary>
+    private void SyncHiding()
+    {
+        var wanted = new List<string>();
+        if (_padEnabled && !_padFailed && !_shutDown && Config.VirtualPad.HidePhysical)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+                if (_set.Readers[i].Path is { } path && _slots[i].Pad.IsAttached) wanted.Add(path);
+        }
+        wanted.Sort(StringComparer.OrdinalIgnoreCase);
+        string key = string.Join('|', wanted);
+        if (key == _hiddenKey && !_hideFailed) return;
+
+        var error = HidHide.Apply(wanted);
+        _hiddenKey = key;
+        bool failedBefore = _hideFailed;
+        _hideFailed = error is not null;
+        if (error is not null)
+        {
+            Log.Error($"Hiding the physical controller: {error}");
+            if (!failedBefore) _toast.Show('', error);
+        }
     }
 
     private string? PadDetail() => !_padEnabled ? (_gate.HeldOff ? $"Off ({ProcessList.DisplayName(_watchName)})" : "Off") : _padFailed ? "Unavailable" : "On";
@@ -878,6 +909,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
             return;
         }
+        if (_set.Readers[index].Path is { } path && !_hiddenKey.Contains(path, StringComparison.OrdinalIgnoreCase)) SyncHiding(); // just attached
 
         var state = slot.State;
         slot.IgnoreMask &= state.Current;
@@ -917,6 +949,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         bool enabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
         UpdateWatchTimer();
         if (enabled != _padEnabled) SetPadEnabled(enabled);
+        else SyncHiding(); // the Hide setting may have changed
         for (int i = 0; i < _slots.Length; i++) ApplyGameRumble(i, restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
     }
 
@@ -1207,6 +1240,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mode = Mode.Idle;
         _toast.Hide();
         foreach (var slot in _slots) slot.Pad.Dispose(); // unplugs the pads: they disappear from the games
+        SyncHiding(); // shutting down: shows the controllers again
         _window.RemoveTray();
     }
 

@@ -10,6 +10,9 @@ internal sealed class VirtualPadConfig
     public bool SwapAB { get; set; } = true;
     public bool SwapXY { get; set; } = true;
 
+    /// <summary>While the pad is on, hides each physical Pro Controller from other apps (needs HidHide installed).</summary>
+    public bool HidePhysical { get; set; } = true;
+
     /// <summary>Strength of the controller rumble when a game vibrates the virtual pad: 0 (none) to 100.</summary>
     public int Rumble { get; set; } = 100;
 

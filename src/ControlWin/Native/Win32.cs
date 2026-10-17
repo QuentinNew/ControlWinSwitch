@@ -471,6 +471,10 @@ internal static unsafe partial class Win32
     [LibraryImport("cfgmgr32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial uint CM_Get_Device_Interface_List_SizeW(uint* length, Guid* interfaceClass, string? deviceId, uint flags);
     [LibraryImport("cfgmgr32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial uint CM_Get_Device_Interface_PropertyW(string interfacePath, Guid* propertyKey, uint* propertyType, byte* buffer, uint* size, uint flags);
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    public static partial uint QueryDosDeviceW(string deviceName, char* target, uint max);
+    [LibraryImport("cfgmgr32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial uint CM_Get_Device_Interface_ListW(Guid* interfaceClass, string? deviceId, char* buffer, uint length, uint flags);
 
     // ---- advapi32 -------------------------------------------------------------------------

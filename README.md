@@ -133,12 +133,13 @@ ControlWin opens the controller's HID interface **directly** and reads it with a
 
 ## HidHide
 
-If you use HidHide (for example with BetterJoy), the cloak hides the controller from every app that is not allow-listed. Add ControlWin in the **HidHide Configuration Client** under **Applications**:
+While the virtual pad is on, ControlWin hides each Pro Controller that drives a pad from every other app, so games only see the Xbox pad. It drives the installed [HidHide](https://github.com/nefarius/HidHide) driver itself: the controller goes on the blacklist, ControlWin's own exe on the application allow-list, and the cloak is switched on. When the pad turns off (or a controller disconnects) it is shown again. Controllers without a virtual pad are left alone.
 
-- built from source: `<repo>\dist\ControlWin.exe`
-- once installed: `C:\Program Files\ControlWin\ControlWin.exe`
-
-Without it, the log says *"Pro Controller found but access denied (error 5)"*. HidHide matches on the exe path, so re-add it if you move the exe, and always run the build from that exact path.
+- Needs HidHide installed. Its control device is exclusive, so close the HidHide Configuration Client while the pad is on, or hiding fails (it is logged and a toast appears; it retries on the next change). Without HidHide the pad still works.
+- Switch it off with `VirtualPad.HidePhysical` in the config file.
+- ControlWin rewrites HidHide's blacklist and cloak state, so entries you added in the HidHide client (for BetterJoy for example) are replaced while it is hiding.
+- HidHide only blocks new opens: an app that already had the controller open (Steam, BetterJoy) keeps receiving it until it reconnects. Quit it first.
+- If ControlWin crashes while hiding, the controller stays hidden until you start ControlWin again (or turn the cloak off in the HidHide client).
 
 ## Log
 
@@ -172,11 +173,11 @@ Until then the virtual pad settings are constants in the code (`enabled`, label-
 
 `ControlWin.exe --install` copies the exe to `C:\Program Files\ControlWin\` and registers a scheduled task that starts it at logon with administrator rights (so it can control elevated windows), no UAC prompt, plus a Start menu shortcut (pinnable to the taskbar) that starts it without a UAC prompt. `--uninstall` removes both and keeps your config.
 
-Rumble, LEDs, battery display, HidHide automation and gyro are deliberately out of scope.
+Battery display and gyro are deliberately out of scope.
 
 ## Known limitations
 
-- While the menu is open the virtual pad is neutral, so XInput games see nothing. Games that read the physical controller directly (HID / DirectInput) can still see it unless HidHide hides it.
+- While the menu is open the virtual pad is neutral, so XInput games see nothing. The physical controller is hidden from games by HidHide (see above), so they only see the pad.
 - UAC prompts and the Ctrl+Alt+Del screen (secure desktop) cannot be controlled.
 - Games in exclusive fullscreen can hide the overlay (borderless is fine).
 - If Steam (Steam Input) or BetterJoy maps Capture to a screenshot, set it to "none" there.
