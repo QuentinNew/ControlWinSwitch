@@ -713,6 +713,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 OpenSettings();
                 break;
 
+            case CommandKind.AddController:
+                ((ISettingsHost)this).AddProController();
+                break;
+
             case CommandKind.Shortcut:
                 LaunchShortcut(command.Arg);
                 break;

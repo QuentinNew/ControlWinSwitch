@@ -36,7 +36,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private static readonly (string Type, string Label)[] AddTypes =
     [
         (RadialNodeTypes.Shortcut, "App shortcut"), (RadialNodeTypes.Folder, "Folder"), (RadialNodeTypes.Settings, "Settings"),
-        (RadialNodeTypes.MouseMode, "Mouse mode"), (RadialNodeTypes.VirtualPad, "Virtual pad"), (RadialNodeTypes.Headset, "Headset"),
+        (RadialNodeTypes.MouseMode, "Mouse mode"), (RadialNodeTypes.VirtualPad, "Virtual pad"), (RadialNodeTypes.Headset, "Headset"), (RadialNodeTypes.AddController, "Add controller"),
         (RadialNodeTypes.Sleep, "Sleep"), (RadialNodeTypes.Restart, "Restart"), (RadialNodeTypes.Shutdown, "Shut down"),
         (RadialNodeTypes.Quit, "Quit ControlWin"), (RadialNodeTypes.Close, "Close menu"),
     ];

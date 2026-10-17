@@ -63,6 +63,12 @@ internal static class RadialTree
                     Label = Label("Settings"), Glyph = Glyph(MenuPages.Gear), Slot = node.Slot, Color = color, Icon = icon,
                     Command = new(CommandKind.OpenSettings),
                 };
+            case RadialNodeTypes.AddController:
+                return new MenuEntry
+                {
+                    Label = Label("Add controller"), Glyph = Glyph(MenuPages.Add), Slot = node.Slot, Color = color, Icon = icon,
+                    Command = new(CommandKind.AddController),
+                };
             case RadialNodeTypes.Headset:
                 return new MenuEntry
                 {
@@ -118,6 +124,7 @@ internal static class RadialTree
         RadialNodeTypes.Headset => MenuPages.Headphone,
         RadialNodeTypes.MouseMode => MenuPages.Mouse,
         RadialNodeTypes.VirtualPad => MenuPages.Game,
+        RadialNodeTypes.AddController => MenuPages.Add,
         RadialNodeTypes.Folder => MenuPages.Folder,
         _ => MenuPages.Play,
     };
@@ -134,6 +141,7 @@ internal static class RadialTree
         RadialNodeTypes.Headset => "Headset",
         RadialNodeTypes.MouseMode => "Mouse mode",
         RadialNodeTypes.VirtualPad => "Virtual pad",
+        RadialNodeTypes.AddController => "Add controller",
         RadialNodeTypes.Folder => "Folder",
         _ => "App shortcut",
     };

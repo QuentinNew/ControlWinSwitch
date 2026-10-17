@@ -315,7 +315,11 @@ internal sealed class RadialStick(int releaseMs)
     /// <summary>A gap this long between two reports means the stick was resting (reports may only come on change).</summary>
     private const long GapMs = 50;
 
-    private long _pushedAt, _lastAt;
+    /// <summary>A node must stay highlighted this long to count as chosen on release; see <see cref="Track"/>.</summary>
+    private const long DwellMs = 60;
+
+    private long _pushedAt, _lastAt, _selectedAt;
+    private int _tracked = -1, _stable = -1;
     private bool _hasSample;
     private bool _needCenter = true;
 
@@ -331,6 +335,7 @@ internal sealed class RadialStick(int releaseMs)
     public void Reset()
     {
         Selected = -1;
+        _tracked = _stable = -1;
         _hasSample = false;
         _needCenter = true;
     }
@@ -358,15 +363,35 @@ internal sealed class RadialStick(int releaseMs)
         if (magnitude >= (Selected >= 0 ? Hold : Engage))
         {
             Highlight(RadialGeometry.AngleOf(stick.X, stick.Y), ring);
+            Track(nowMs);
             return -1;
         }
 
         if (magnitude >= Center) return -1; // between: keep what is highlighted
 
         int released = -1;
-        if (Selected >= 0 && nowMs - _pushedAt <= ReleaseMs) released = Selected;
+        if (Selected >= 0 && nowMs - _pushedAt <= ReleaseMs)
+        {
+            // A highlight this fresh is the spring-back sweeping past a neighbour: run the last node held steadily.
+            bool fresh = nowMs - _selectedAt < DwellMs;
+            released = fresh && _stable >= 0 && _stable < ring.Nodes.Count ? _stable : Selected;
+        }
         Selected = -1;
+        Track(nowMs);
         return released;
+    }
+
+    /// <summary>Follows how long the current highlight has lasted and remembers the last one held for <see cref="DwellMs"/>.</summary>
+    private void Track(long nowMs)
+    {
+        if (Selected != _tracked)
+        {
+            _tracked = Selected;
+            _selectedAt = nowMs;
+        }
+
+        if (Selected < 0) _stable = -1;
+        else if (nowMs - _selectedAt >= DwellMs) _stable = Selected;
     }
 
     private void Highlight(float angle, RadialRing ring)

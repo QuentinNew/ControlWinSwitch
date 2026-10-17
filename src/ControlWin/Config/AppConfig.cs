@@ -68,10 +68,10 @@ internal static class RadialNodeTypes
 {
     public const string Close = "close", Quit = "quit", Sleep = "sleep", Restart = "restart", Shutdown = "shutdown",
         Settings = "settings", Headset = "headset", MouseMode = "mouseMode", VirtualPad = "virtualPad",
-        Folder = "folder", Shortcut = "shortcut";
+        Folder = "folder", Shortcut = "shortcut", AddController = "addController";
 
     public static readonly string[] All =
-        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, Folder, Shortcut];
+        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, AddController, Folder, Shortcut];
 }
 
 /// <summary>Icon of a radial node. Only "glyph" is drawn for now; "auto" and "image" are kept as written.</summary>
