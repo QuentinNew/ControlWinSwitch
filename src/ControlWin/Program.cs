@@ -46,6 +46,7 @@ internal static unsafe class Program
             {
                 int slot = i;
                 set.Readers[slot].Report += (report, raw) => controller.OnReport(slot, report, raw);
+                set.Readers[slot].CalibrationRead += cal => controller.OnCalibration(slot, cal);
                 set.Readers[slot].ControllerRemoved += () => controller.OnControllerRemoved(slot);
             }
 

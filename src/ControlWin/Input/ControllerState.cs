@@ -23,6 +23,7 @@ internal sealed class AxisCalibrator
 {
     private readonly int _center;
     private int _neg, _pos;
+    private readonly bool _fixed;
 
     public AxisCalibrator(int center, int initialRange)
     {
@@ -30,16 +31,25 @@ internal sealed class AxisCalibrator
         _neg = _pos = initialRange;
     }
 
+    /// <summary>A range known from the controller's flash: it never widens, and the output is clamped to -1..1.</summary>
+    public AxisCalibrator(AxisRange range)
+    {
+        _center = range.Center;
+        _neg = range.Below;
+        _pos = range.Above;
+        _fixed = true;
+    }
+
     public float Normalize(int raw)
     {
         int d = raw - _center;
         if (d < 0)
         {
-            if (-d > _neg) _neg = -d;
-            return d / (float)_neg;
+            if (!_fixed && -d > _neg) _neg = -d;
+            return Math.Max(-1f, d / (float)_neg);
         }
-        if (d > _pos) _pos = d;
-        return d / (float)_pos;
+        if (!_fixed && d > _pos) _pos = d;
+        return Math.Min(1f, d / (float)_pos);
     }
 }
 
@@ -50,6 +60,21 @@ internal sealed class ControllerState
         [new(0x8000, 16000), new(0x8000, 16000), new(0x8000, 16000), new(0x8000, 16000)];
     private readonly AxisCalibrator[] _full =
         [new(2048, 1300), new(2048, 1300), new(2048, 1300), new(2048, 1300)];
+
+    /// <summary>Uses the ranges read from the controller's flash for full-mode reports (the adaptive ones stay for simple mode).</summary>
+    public void SetCalibration(StickCalibrations c)
+    {
+        _full[0] = new AxisCalibrator(c.Left[0]);
+        _full[1] = new AxisCalibrator(c.Left[1]);
+        _full[2] = new AxisCalibrator(c.Right[0]);
+        _full[3] = new AxisCalibrator(c.Right[1]);
+    }
+
+    /// <summary>Back to the adaptive ranges (the controller in this slot is gone).</summary>
+    public void ClearCalibration()
+    {
+        for (int i = 0; i < _full.Length; i++) _full[i] = new AxisCalibrator(2048, 1300);
+    }
 
     public Buttons Current { get; private set; }
     public Buttons Previous { get; private set; }

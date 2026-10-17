@@ -25,6 +25,13 @@ public class SettingsModelTests
         public bool ControllerConnected(int slot) => Connected.Contains(slot);
         public List<int> Rumbled = [];
         public void RumbleController(int slot) => Rumbled.Add(slot);
+        public float[] Deadzones = new float[2];
+        public float ControllerDeadzone(int slot, bool right) => Deadzones[right ? 1 : 0];
+        public void SetControllerDeadzone(int slot, bool right, float value) => Deadzones[right ? 1 : 0] = value;
+        public int CalibrationOpened;
+        public void OpenDeadzoneCalibration() => CalibrationOpened++;
+        public (ControlWin.Input.Stick Left, ControlWin.Input.Stick Right) Sticks;
+        public (ControlWin.Input.Stick Left, ControlWin.Input.Stick Right) ControllerSticks(int slot) => Sticks;
         public int Added;
         public void AddProController() => Added++;
         public string PairingStatus => "";
@@ -468,5 +475,101 @@ public class SettingsModelTests
         host.Commit!("  My Headset ");
         Assert.Equal("My Headset", store.Current.HeadsetName);
         Assert.Equal(1, host.Changes);
+    }
+
+    private static (DeadzoneCalibration Cal, FakeHost Host, Func<long> Clock, Action<long> Advance) Calibration()
+    {
+        var host = new FakeHost();
+        long now = 0;
+        var cal = new DeadzoneCalibration(() => 0, host, () => now);
+        return (cal, host, () => now, t => now += t);
+    }
+
+    [Fact]
+    public void Calibration_arrows_change_the_selected_stick_by_steps_and_clamp()
+    {
+        var (cal, host, _, _) = Calibration();
+
+        cal.MoveStick(1);
+        cal.Adjust(1);
+        cal.Adjust(1);
+        Assert.Equal(0.04f, host.Deadzones[1], 3);
+        Assert.Equal(0f, host.Deadzones[0]);
+
+        for (int i = 0; i < 40; i++) cal.Adjust(1);
+        Assert.Equal(0.5f, host.Deadzones[1], 3);
+        for (int i = 0; i < 40; i++) cal.Adjust(-1);
+        Assert.Equal(0f, host.Deadzones[1], 3);
+    }
+
+    [Fact]
+    public void Auto_sets_each_deadzone_just_above_how_far_the_stick_strayed_at_rest()
+    {
+        var (cal, host, _, advance) = Calibration();
+        cal.StartAuto();
+
+        host.Sticks = (new ControlWin.Input.Stick(0.06f, 0f), new ControlWin.Input.Stick(0f, 0f));
+        cal.Feed();
+        host.Sticks = (new ControlWin.Input.Stick(0.02f, 0f), new ControlWin.Input.Stick(0.03f, 0.04f)); // right: 0.05
+        advance(1000);
+        cal.Feed();
+        Assert.Equal(AutoDeadzone.Sampling, cal.Auto);
+        advance(1000);
+        cal.Feed();
+
+        Assert.Equal(AutoDeadzone.Done, cal.Auto);
+        Assert.Equal(0.08f, host.Deadzones[0], 3); // 0.06 + 0.02 margin
+        Assert.Equal(0.07f, host.Deadzones[1], 3);
+    }
+
+    [Fact]
+    public void Auto_stops_when_a_stick_is_pushed()
+    {
+        var (cal, host, _, advance) = Calibration();
+        cal.StartAuto();
+        host.Sticks = (new ControlWin.Input.Stick(0.9f, 0f), default);
+        cal.Feed();
+        advance(5000);
+        cal.Feed();
+
+        Assert.Equal(AutoDeadzone.Pushed, cal.Auto);
+        Assert.Equal(0f, host.Deadzones[0]);
+    }
+
+    [Fact]
+    public void A_perfectly_still_stick_gets_no_deadzone()
+    {
+        Assert.Equal(0f, DeadzoneCalibration.Fit(0f));
+        Assert.Equal(0.5f, DeadzoneCalibration.Fit(0.49f)); // capped
+    }
+
+    [Fact]
+    public void The_deadzone_page_replaces_rows_and_back_returns_to_the_controller_page()
+    {
+        var (m, _, host) = Create();
+        var page = SettingsPages.ControllerPage(host, 0, out var strip);
+        m.OpenSub(page);
+        m.OpenSub(SettingsPages.DeadzonePage(host, strip));
+
+        Assert.NotNull(m.Tab.Calibration);
+        Assert.True(m.Tab.ControllerStrip);
+        Assert.Equal("Controller 1  >  Deadzone", m.SubTitle);
+
+        m.Back();
+        Assert.Same(page, m.Tab);
+        Assert.True(m.InSubPage);
+        m.Back();
+        Assert.False(m.InSubPage);
+    }
+
+    [Fact]
+    public void Calibrate_deadzone_row_opens_the_screen()
+    {
+        var (m, _, host) = Create();
+        m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
+
+        m.Tab.Items.Single(i => i.Label == "Calibrate deadzone").Activate!();
+
+        Assert.Equal(1, host.CalibrationOpened);
     }
 }

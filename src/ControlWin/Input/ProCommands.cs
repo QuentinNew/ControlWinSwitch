@@ -49,6 +49,34 @@ internal static class ProCommands
         return true;
     }
 
+    public const byte SubcommandSpiRead = 0x10;
+
+    /// <summary>Output report 0x01 carrying "SPI flash read": address (4 bytes, little endian) then the length (max 0x1D).</summary>
+    public static byte[] ReadSpi(byte packetCounter, int address, int length, int reportLength)
+    {
+        var report = SetInputMode(packetCounter, 0, Math.Max(reportLength, 16));
+        report[10] = SubcommandSpiRead;
+        BitConverter.GetBytes(address).CopyTo(report, 11);
+        report[15] = (byte)length;
+        return report;
+    }
+
+    /// <summary>
+    /// Reads an SPI read reply (input report 0x21, ack 0x90 at byte 13, subcommand 0x10 at byte 14, address at 15..18,
+    /// length at 19, data from byte 20).
+    /// </summary>
+    public static bool TryParseSpiRead(ReadOnlySpan<byte> r, out int address, out byte[] data)
+    {
+        address = 0;
+        data = [];
+        if (r.Length < 20 || r[0] != 0x21 || r[13] != 0x90 || r[14] != SubcommandSpiRead) return false;
+        int length = r[19];
+        if (r.Length < 20 + length) return false;
+        address = BitConverter.ToInt32(r.Slice(15, 4));
+        data = r.Slice(20, length).ToArray();
+        return true;
+    }
+
     public const byte SubcommandEnableVibration = 0x48;
     public const byte SubcommandSetPlayerLights = 0x30;
 

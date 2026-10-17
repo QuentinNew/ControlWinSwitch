@@ -121,8 +121,12 @@ internal sealed class SettingItem
     };
 }
 
-internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items, bool controllerStrip = false, Func<string>? titleOf = null)
+internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items, bool controllerStrip = false, Func<string>? titleOf = null,
+    DeadzoneCalibration? calibration = null)
 {
+    /// <summary>Set on the deadzone calibration page: the window draws the two stick circles instead of rows.</summary>
+    public DeadzoneCalibration? Calibration { get; } = calibration;
+
     /// <summary>Shows the row of connected-controller tiles above the rows.</summary>
     public bool ControllerStrip { get; } = controllerStrip;
 
@@ -137,6 +141,8 @@ internal sealed class SettingsModel
     private readonly int[] _selected;
     private SettingsTab? _sub;   // a page opened from a row (a controller's page): shown in place of the tab until closed
     private int _subSelected;
+    private SettingsTab? _parent; // the page a sub-page was opened from (the deadzone screen from a controller's page)
+    private int _parentSelected;
 
     public SettingsModel(IReadOnlyList<SettingsTab> tabs)
     {
@@ -159,6 +165,8 @@ internal sealed class SettingsModel
 
     public void OpenSub(SettingsTab page)
     {
+        _parent = _sub;
+        _parentSelected = _subSelected;
         _sub = page;
         _subSelected = FirstSelectable(page, skipStrip: true); // a page starts on its first setting, not on the controller strip
     }
@@ -169,6 +177,13 @@ internal sealed class SettingsModel
     /// </summary>
     public void Back()
     {
+        if (_parent is not null)
+        {
+            _sub = _parent;
+            _subSelected = _parentSelected;
+            _parent = null;
+            return;
+        }
         _sub = null;
         if (CurrentItem is not { Kind: SettingKind.Strip }) return;
         int first = FirstSelectable(Tab, skipStrip: true);
@@ -190,14 +205,14 @@ internal sealed class SettingsModel
     {
         if (index < 0 || index >= Tabs.Count) return;
         TabIndex = index;
-        _sub = null;
+        _sub = _parent = null;
     }
 
     /// <summary>Next / previous tab, wrapping.</summary>
     public void MoveTab(int delta)
     {
         TabIndex = ((TabIndex + Math.Sign(delta)) % Tabs.Count + Tabs.Count) % Tabs.Count;
-        _sub = null;
+        _sub = _parent = null;
     }
 
     /// <summary>Moves the selection among selectable rows, wrapping.</summary>
@@ -274,6 +289,13 @@ internal interface ISettingsHost
     bool ControllerConnected(int slot);
     /// <summary>Makes the controller in <paramref name="slot"/> rumble briefly.</summary>
     void RumbleController(int slot);
+    /// <summary>Deadzone (0..0.5) of one stick of the controller, applied to its virtual pad.</summary>
+    float ControllerDeadzone(int slot, bool right);
+    void SetControllerDeadzone(int slot, bool right, float value);
+    /// <summary>Opens the deadzone calibration screen of the controller page being edited (circles showing the sticks).</summary>
+    void OpenDeadzoneCalibration();
+    /// <summary>The controller's sticks as normalized positions (before any deadzone).</summary>
+    (ControlWin.Input.Stick Left, ControlWin.Input.Stick Right) ControllerSticks(int slot);
     /// <summary>Pairs a Pro Controller that Windows does not know yet (Bluetooth).</summary>
     void AddProController();
     /// <summary>"Searching..." while a pairing runs, otherwise empty.</summary>
@@ -311,9 +333,18 @@ internal static class SettingsPages
                 () => host.ControllerName(tiles.Slot) is { Length: > 0 } name ? name : "(default)",
                 () => host.EditText(host.ControllerName(tiles.Slot), v => host.SetControllerName(tiles.Slot, v))),
             SettingItem.Action("Test rumble", () => host.RumbleController(tiles.Slot)),
+            SettingItem.Action("Calibrate deadzone", host.OpenDeadzoneCalibration),
             SettingItem.Action("Back", host.CloseControllerPage),
         ], controllerStrip: true, titleOf: () => $"Controller {tiles.Slot + 1}");
     }
+
+    /// <summary>
+    /// The deadzone calibration screen: the controller strip stays on top (<paramref name="strip"/> is the controller page's,
+    /// so ZL / ZR and the tiles still switch controller), the circles take the place of the rows.
+    /// </summary>
+    public static SettingsTab DeadzonePage(ISettingsHost host, SettingItem strip) =>
+        new("Deadzone", [strip], controllerStrip: true, titleOf: () => $"Controller {strip.Slot + 1}  >  Deadzone",
+            calibration: new DeadzoneCalibration(() => strip.Slot, host));
 
     public static SettingsModel Create(ConfigStore store, ISettingsHost host)
     {

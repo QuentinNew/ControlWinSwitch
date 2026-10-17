@@ -162,6 +162,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _slots[slot].State.Update(report);
         if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
 
+        if (_mode == Mode.Settings && _settings.Tab.Calibration is { } calibration && calibration.Slot == slot)
+        {
+            calibration.Feed();
+            long now = Environment.TickCount64;
+            if (now - _lastCalibrationPaint >= 30) // the sticks report faster than the screen needs
+            {
+                _lastCalibrationPaint = now;
+                _settingsWindow.Refresh();
+            }
+        }
+
         // The menu, settings and mouse mode belong to one controller; the others keep playing.
         if (_mode == Mode.Idle) _owner = slot;
         else if (slot != _owner)
@@ -207,6 +218,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         var gone = _slots[slot];
         gone.State.Reset();
+        gone.State.ClearCalibration();
         _window.UpdateTray();
         if (_shutDown) return;
         gone.Pad.Detach(); // re-plugged on the next report
@@ -555,6 +567,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _settingsWindow.Refresh();
         }
 
+        if (_settings.Tab.Calibration is { } calibration)
+        {
+            if (_state.Pressed(Buttons.X)) calibration.StartAuto();
+            else if (_state.Pressed(Buttons.A) || _state.Pressed(Buttons.B)) _settings.Back();
+            _settingsWindow.Refresh();
+            return;
+        }
+
         if (_state.Pressed(Buttons.A))
         {
             _settings.Activate();
@@ -595,6 +615,18 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         else if (_mode == Mode.Settings)
         {
+            if (_settings.Tab.Calibration is { } calibration)
+            {
+                switch (direction)
+                {
+                    case Dir.Up: calibration.Adjust(1); break;
+                    case Dir.Down: calibration.Adjust(-1); break;
+                    case Dir.Left: calibration.MoveStick(-1); break;
+                    case Dir.Right: calibration.MoveStick(1); break;
+                }
+                _settingsWindow.Refresh();
+                return;
+            }
             switch (direction)
             {
                 case Dir.Up: _settings.Move(-1); break;
@@ -617,6 +649,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
             if ((held & Buttons.Left) != 0) return Dir.Left;
             if ((held & Buttons.Right) != 0) return Dir.Right;
         }
+
+        if (_mode == Mode.Settings && _settings.Tab.Calibration is not null) return Dir.None; // the sticks are being looked at, not used
 
         float threshold = _heldDirection != Dir.None ? StickRelease : StickEngage;
         var stick = _state.Left; // +Y = down
@@ -943,6 +977,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
             else left = right = default;
         }
 
+        if (_set.Readers[index].Id is { } id && Config.Controllers.TryGetValue(id, out var profile))
+        {
+            left = left.WithDeadzone(profile.LeftDeadzone);
+            right = right.WithDeadzone(profile.RightDeadzone);
+        }
+
         var held = state.Current & ~slot.IgnoreMask;
         var pad = Config.VirtualPad;
         slot.Pad.Submit(XInputMapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
@@ -1011,10 +1051,25 @@ internal sealed class AppController : IDisposable, ISettingsHost
         SetTimer(_window.Handle, RumbleTimerBase + (nuint)slot, RumbleMs, 0);
     }
 
+    void ISettingsHost.OpenDeadzoneCalibration()
+    {
+        if (_pageStrip is { } strip) _settings.OpenSub(SettingsPages.DeadzonePage(this, strip));
+    }
+
+    (Stick Left, Stick Right) ISettingsHost.ControllerSticks(int slot) => (_slots[slot].State.Left, _slots[slot].State.Right);
+
+    /// <summary>The stick calibration of a controller was read from its flash.</summary>
+    public void OnCalibration(int slot, StickCalibrations calibration)
+    {
+        _slots[slot].State.SetCalibration(calibration);
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
     string ISettingsHost.PairingStatus => _pairing ? "Searching..." : "";
 
     // ---- per-controller profile (name, picture, battery) -----------------------------------
 
+    private long _lastCalibrationPaint;
     private SettingItem? _pageStrip; // the strip row of the open controller page: its Slot is the controller being edited
 
     /// <summary>
@@ -1061,8 +1116,22 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Forgets a profile that holds nothing.</summary>
     private void PruneProfile(string key)
     {
-        if (Config.Controllers.TryGetValue(key, out var profile) && profile.Name.Length == 0)
+        if (Config.Controllers.TryGetValue(key, out var profile) && profile.IsDefault)
             Config.Controllers.Remove(key);
+    }
+
+    float ISettingsHost.ControllerDeadzone(int slot, bool right) =>
+        ControllerKey(slot) is { } key && Config.Controllers.TryGetValue(key, out var profile)
+            ? (right ? profile.RightDeadzone : profile.LeftDeadzone) : 0f;
+
+    void ISettingsHost.SetControllerDeadzone(int slot, bool right, float value)
+    {
+        if (ControllerKey(slot) is not { } key) return;
+        var profile = ProfileOf(key);
+        value = Math.Clamp(value, 0f, 0.5f);
+        if (right) profile.RightDeadzone = value; else profile.LeftDeadzone = value;
+        PruneProfile(key);
+        _store.Save();
     }
 
     string ISettingsHost.ControllerName(int slot) =>

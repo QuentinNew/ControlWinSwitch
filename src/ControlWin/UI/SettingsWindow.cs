@@ -266,6 +266,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (y < StripTop) return true;                            // tabs
         if (y < RowsTop) return HitAt(x, y, out var part) >= 0 && part != StripPart.None;
 
+        if (_model.Tab.Calibration is not null) return CalibrationHit(x, y) != CalHit.None;
+
         int row = RowAt(y);
         return row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Selectable;
     }
@@ -386,6 +388,13 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             return;
         }
 
+        if (_model.Tab.Calibration is { } calibration)
+        {
+            OnCalibrationClick(calibration, x, y);
+            Refresh();
+            return;
+        }
+
         int row = RowAt(y);
         if (row < 0 || row >= _model.Tab.Items.Count) return;
         var item = _model.Tab.Items[row];
@@ -444,6 +453,114 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         int reach = Px(TileGapDip) / 2 - 1; // the name gets the tile's whole pitch, never more
         Gdi.Text(dc, fonts.Detail, Gdi.TextColor, info.Name, l - reach, t + tile + Px(6),
             l + tile + reach, t + tile + Px(6) + nameH, DT_CENTER | oneLine | DT_END_ELLIPSIS);
+    }
+
+    // ---- deadzone calibration screen -----------------------------------------------------------
+
+    private const int CircleDip = 130, CaptionDip = 34;
+
+    private enum CalHit { None, CircleLeft, CircleRight, LessLeft, MoreLeft, LessRight, MoreRight, Auto, Done }
+
+    /// <summary>Center x of a stick's circle, and its top / radius, for the rows area starting at <paramref name="top"/>.</summary>
+    private (int Cx, int Top, int Radius) CircleOf(int stick, int top) =>
+        (Px(WidthDip) * (stick == 0 ? 25 : 75) / 100, top + Px(10), Px(CircleDip) / 2);
+
+    private RECT CaptionOf(int stick, int top)
+    {
+        var (cx, circleTop, r) = CircleOf(stick, top);
+        int t = circleTop + 2 * r + Px(10);
+        return new RECT(cx - Px(90), t, cx + Px(90), t + Px(CaptionDip));
+    }
+
+    private RECT AutoButton(int top) => new(Px(WidthDip) / 2 - Px(80), top + Px(30), Px(WidthDip) / 2 + Px(80), top + Px(78));
+
+    private RECT DoneButton(int top) => new(Px(WidthDip) / 2 - Px(80), top + Px(92), Px(WidthDip) / 2 + Px(80), top + Px(140));
+
+    private static bool In(RECT r, int x, int y) => x >= r.Left && x < r.Right && y >= r.Top && y < r.Bottom;
+
+    private CalHit CalibrationHit(int x, int y)
+    {
+        int top = RowsTop;
+        if (y < top) return CalHit.None;
+        for (int stick = 0; stick < 2; stick++)
+        {
+            var (cx, circleTop, r) = CircleOf(stick, top);
+            long dx = x - cx, dy = y - (circleTop + r);
+            if (dx * dx + dy * dy <= (long)r * r) return stick == 0 ? CalHit.CircleLeft : CalHit.CircleRight;
+            var caption = CaptionOf(stick, top);
+            if (In(caption, x, y))
+            {
+                bool less = x < (caption.Left + caption.Right) / 2;
+                return stick == 0 ? (less ? CalHit.LessLeft : CalHit.MoreLeft) : (less ? CalHit.LessRight : CalHit.MoreRight);
+            }
+        }
+        if (In(AutoButton(top), x, y)) return CalHit.Auto;
+        if (In(DoneButton(top), x, y)) return CalHit.Done;
+        return CalHit.None;
+    }
+
+    private void OnCalibrationClick(DeadzoneCalibration cal, int x, int y)
+    {
+        switch (CalibrationHit(x, y))
+        {
+            case CalHit.CircleLeft: cal.SelectStick(0); break;
+            case CalHit.CircleRight: cal.SelectStick(1); break;
+            case CalHit.LessLeft: cal.SelectStick(0); cal.Adjust(-1); break;
+            case CalHit.MoreLeft: cal.SelectStick(0); cal.Adjust(1); break;
+            case CalHit.LessRight: cal.SelectStick(1); cal.Adjust(-1); break;
+            case CalHit.MoreRight: cal.SelectStick(1); cal.Adjust(1); break;
+            case CalHit.Auto: cal.StartAuto(); break;
+            case CalHit.Done: _model?.Back(); break;
+        }
+    }
+
+    private void PaintButton(nint dc, FontSet fonts, RECT r, string text)
+    {
+        Gdi.RoundedFill(dc, Gdi.SelectionBrush, r.Left, r.Top, r.Right, r.Bottom, Px(16));
+        Gdi.Text(dc, fonts.Label, Gdi.TextColor, text, r.Left, r.Top, r.Right, r.Bottom, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    }
+
+    private void Disc(nint dc, nint brush, int cx, int cy, int radius) =>
+        Gdi.RoundedFill(dc, brush, cx - radius, cy - radius, cx + radius, cy + radius, radius * 2);
+
+    /// <summary>Two circles (left / right stick): the grey disc is the deadzone, the dot is where the stick is right now.</summary>
+    private void PaintCalibration(nint dc, FontSet fonts, DeadzoneCalibration cal, int top)
+    {
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        s_amberBrush = s_amberBrush != 0 ? s_amberBrush : CreateSolidBrush(Rgb(0xE0, 0xA1, 0x2B));
+        var (left, right) = cal.Sticks;
+        string[] names = ["Left stick", "Right stick"];
+
+        for (int stick = 0; stick < 2; stick++)
+        {
+            bool selected = cal.Selected == stick;
+            var (cx, circleTop, r) = CircleOf(stick, top);
+            int cy = circleTop + r, ring = Px(3);
+            var pos = stick == 0 ? left : right;
+            float zone = cal.Get(stick);
+
+            Disc(dc, selected ? Gdi.SelectionBrush : Gdi.DimBrush, cx, cy, r);
+            Disc(dc, Gdi.PanelBrush, cx, cy, r - ring);
+            int zoneR = (int)Math.Round((r - ring) * zone);
+            if (zoneR > 0) Disc(dc, s_amberBrush, cx, cy, zoneR);
+
+            int dot = Px(6), reach = r - ring - dot;
+            int px = cx + (int)Math.Round(Math.Clamp(pos.X, -1f, 1f) * reach), py = cy + (int)Math.Round(Math.Clamp(pos.Y, -1f, 1f) * reach);
+            Disc(dc, pos.Magnitude > zone ? Gdi.OnBrush : Gdi.TextBrush, px, py, dot);
+
+            var caption = CaptionOf(stick, top);
+            if (selected) Gdi.RoundedFill(dc, Gdi.SelectionBrush, caption.Left, caption.Top, caption.Right, caption.Bottom, Px(16));
+            Gdi.Text(dc, fonts.GlyphSmall, selected ? Gdi.TextColor : Gdi.Dim, ChevronLeft, caption.Left, caption.Top, caption.Left + Px(32), caption.Bottom, DT_CENTER | oneLine);
+            Gdi.Text(dc, fonts.GlyphSmall, selected ? Gdi.TextColor : Gdi.Dim, ChevronRight, caption.Right - Px(32), caption.Top, caption.Right, caption.Bottom, DT_CENTER | oneLine);
+            Gdi.Text(dc, fonts.Detail, Gdi.TextColor, $"{names[stick]}  {zone.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}",
+                caption.Left + Px(32), caption.Top, caption.Right - Px(32), caption.Bottom, DT_CENTER | oneLine);
+        }
+
+        PaintButton(dc, fonts, AutoButton(top), "Auto");
+        PaintButton(dc, fonts, DoneButton(top), "Done");
+        int width = Px(WidthDip);
+        Gdi.Text(dc, fonts.Detail, cal.Auto == AutoDeadzone.Pushed ? Rgb(0xF2, 0x5C, 0x5C) : Gdi.Dim, cal.Status,
+            width / 2 - Px(120), top + Px(150), width / 2 + Px(120), top + Px(190), DT_CENTER | DT_WORDBREAK);
     }
 
     private static nint s_redBrush, s_redHotBrush, s_amberBrush;
@@ -539,6 +656,13 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             rowsTop += Px(StripDip);
         }
 
+        if (model.Tab.Calibration is { } calibration)
+        {
+            PaintCalibration(dc, fonts, calibration, rowsTop);
+            PaintFooter(dc, fonts, model, headerH + tabsH + Rows * rowH);
+            return;
+        }
+
         // Rows
         var items = model.Tab.Items;
         int valueRight = width - side - Px(28); // keeps values clear of the row's rounded edge
@@ -596,15 +720,22 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             }
         }
 
-        // Footer
-        int footerTop = headerH + tabsH + Rows * rowH;
+        PaintFooter(dc, fonts, model, headerH + tabsH + Rows * rowH);
+    }
+
+    private void PaintFooter(nint dc, FontSet fonts, SettingsModel model, int footerTop)
+    {
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        int width = Px(WidthDip);
         if (_editing)
         {
             Gdi.Text(dc, fonts.Footer, Gdi.Dim, "Type the name     Enter / A  OK     Esc / B  Cancel",
                 0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);
             return;
         }
-        string hint = model.InSubPage
+        string hint = model.Tab.Calibration is not null
+            ? "Left / Right  Stick     Up / Down  Deadzone     X  Auto     ZL / ZR  Controller     A / B  Back"
+            : model.InSubPage
             ? "Up / Down  Select     ZL / ZR  Controller     A  OK     B  Back"
             : "L / R  Tab     Up / Down  Select     Left / Right  Change     A  Toggle     B  Close";
         Gdi.Text(dc, fonts.Footer, Gdi.Dim, hint,

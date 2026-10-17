@@ -155,6 +155,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
         RequestFullMode();
         SetPlayerLights();
         RequestDeviceInfo();
+        RequestCalibration();
     }
 
     /// <summary>Call when <see cref="EventHandle"/> is signaled.</summary>
@@ -182,9 +183,12 @@ internal sealed unsafe class HidControllerReader : IDisposable
                 if (_mac != mac) Log.Info($"Pro Controller {_slot + 1} identified ({mac})");
                 _mac = mac;
             }
+            else if (ProCommands.TryParseSpiRead(bytes.Span, out var address, out var spi))
+                OnSpiRead(address, spi);
             else if (ProReportParser.TryParse(bytes.Span, out var report))
             {
                 if (_mac is null) RequestDeviceInfo(); // rate limited; the reply may have been lost
+                RetryCalibration();
                 // Still in simple mode (e.g. the first reports after connecting, or the mode got reset): ask again.
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
                 Report?.Invoke(report, bytes);
@@ -239,6 +243,78 @@ internal sealed unsafe class HidControllerReader : IDisposable
         _lastInfoAttempt = now;
         _infoAttempts++;
         Write(ProCommands.RequestDeviceInfo(_packetCounter++, (int)_outputLength));
+    }
+
+    // ---- stick calibration (SPI flash) -----------------------------------------------------------
+
+    private enum CalStep { None, User, Factory }
+
+    private CalStep _calStep;
+    private int _calAttempts;
+    private long _lastCalRequest;
+    private byte[] _userCal = [];
+
+    /// <summary>Raised on the UI thread once the stick calibration was read from the controller's flash.</summary>
+    public event Action<StickCalibrations>? CalibrationRead;
+
+    /// <summary>
+    /// Reads the stick calibration from the controller's flash (user block, then factory block). The replies come back
+    /// through the read loop. Returns false when the controller is absent or read-only.
+    /// </summary>
+    public bool RequestCalibration()
+    {
+        if (_file == 0 || !_canWrite) return false;
+        _calStep = CalStep.User;
+        _calAttempts = 0;
+        SendCalibrationRead();
+        return true;
+    }
+
+    private void SendCalibrationRead()
+    {
+        _calAttempts++;
+        _lastCalRequest = Environment.TickCount64;
+        var (address, length) = _calStep == CalStep.User
+            ? (StickCalibrationParser.UserAddress, StickCalibrationParser.UserLength)
+            : (StickCalibrationParser.FactoryAddress, StickCalibrationParser.FactoryLength);
+        Write(ProCommands.ReadSpi(_packetCounter++, address, length, (int)_outputLength));
+    }
+
+    /// <summary>Asks again when a reply was lost; gives up after a few attempts (the adaptive range stays).</summary>
+    private void RetryCalibration()
+    {
+        if (_calStep == CalStep.None) return;
+        if (Environment.TickCount64 - _lastCalRequest < ModeRetryMs) return;
+        if (_calAttempts >= MaxModeAttempts)
+        {
+            Log.Error("Stick calibration: the controller did not answer, keeping the adaptive range");
+            _calStep = CalStep.None;
+            return;
+        }
+        SendCalibrationRead();
+    }
+
+    private void OnSpiRead(int address, byte[] data)
+    {
+        if (_calStep == CalStep.User && address == StickCalibrationParser.UserAddress)
+        {
+            _userCal = data;
+            _calStep = CalStep.Factory;
+            _calAttempts = 0;
+            SendCalibrationRead();
+        }
+        else if (_calStep == CalStep.Factory && address == StickCalibrationParser.FactoryAddress)
+        {
+            _calStep = CalStep.None;
+            var cal = StickCalibrationParser.Combine(_userCal, data);
+            if (cal is null)
+            {
+                Log.Error("Stick calibration: the flash holds no usable calibration, keeping the adaptive range");
+                return;
+            }
+            Log.Info($"Stick calibration read ({cal.Source})");
+            CalibrationRead?.Invoke(cal);
+        }
     }
 
     /// <summary>Starts or stops the rumble motors. Returns false when the controller is absent or read-only.</summary>
@@ -359,6 +435,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
         }
         CloseHandle(_file);
         _file = 0;
+        _calStep = CalStep.None;
         _path = null;
         _mac = null;
         _fallbackId = null;

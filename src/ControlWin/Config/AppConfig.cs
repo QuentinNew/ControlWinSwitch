@@ -25,6 +25,12 @@ internal sealed class ControllerProfile
 {
     /// <summary>Shown under the controller's tile; empty = the default "Controller N".</summary>
     public string Name { get; set; } = "";
+
+    /// <summary>Radial deadzone of each stick on the virtual pad (0 = none, 0.5 max): hides a stick that drifts around its center.</summary>
+    public float LeftDeadzone { get; set; }
+    public float RightDeadzone { get; set; }
+
+    public bool IsDefault => Name.Length == 0 && LeftDeadzone <= 0f && RightDeadzone <= 0f;
 }
 
 internal sealed class MouseConfig
@@ -172,7 +178,12 @@ internal sealed class AppConfig
         Mouse ??= new();
         Controllers ??= [];
         foreach (var key in Controllers.Where(c => c.Value is null).Select(c => c.Key).ToList()) Controllers.Remove(key);
-        foreach (var profile in Controllers.Values) profile.Name = (profile.Name ?? "").Trim();
+        foreach (var profile in Controllers.Values)
+        {
+            profile.Name = (profile.Name ?? "").Trim();
+            profile.LeftDeadzone = Clamp(profile.LeftDeadzone, 0f, 0.5f, 0f);
+            profile.RightDeadzone = Clamp(profile.RightDeadzone, 0f, 0.5f, 0f);
+        }
         Shortcuts ??= [];
         Shortcuts.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Target));
         foreach (var s in Shortcuts)
