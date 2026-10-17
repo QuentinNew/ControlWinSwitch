@@ -78,7 +78,7 @@ internal static unsafe class HidHide
     }
 
     /// <summary>Device instance id of a HID interface (HID\...\...): what HidHide's blacklist holds.</summary>
-    private static string? InstanceId(string interfacePath)
+    internal static string? InstanceId(string interfacePath)
     {
         // DEVPKEY_Device_InstanceId = {78c34fc8-104a-4aca-9ea4-524d52996e57}, 256: key = GUID + pid.
         var key = stackalloc byte[20];

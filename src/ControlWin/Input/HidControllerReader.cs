@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using ControlWin.Actions;
 using ControlWin.Native;
 using static ControlWin.Native.Win32;
 
@@ -42,6 +43,9 @@ internal sealed unsafe class HidControllerReader : IDisposable
     private bool _vibrationEnabled;
     private int _modeAttempts;
     private long _lastModeAttempt;
+    private string? _mac, _fallbackId;
+    private int _infoAttempts;
+    private long _lastInfoAttempt;
     private const int MaxModeAttempts = 5;
     private const long ModeRetryMs = 1000;
 
@@ -70,6 +74,18 @@ internal sealed unsafe class HidControllerReader : IDisposable
 
     /// <summary>Device path of the open controller (null when closed).</summary>
     public string? Path => _path;
+
+    /// <summary>
+    /// Stable identity of the open controller: its Bluetooth MAC address once the controller has answered, until then
+    /// the Windows device instance id (prefixed "dev:"). Null when closed.
+    /// </summary>
+    public string? Id => _file == 0 ? null : _mac ?? _fallbackId;
+
+    /// <summary>The temporary id used until the MAC is known (null when closed).</summary>
+    public string? FallbackId => _file == 0 ? null : _fallbackId;
+
+    /// <summary>The identity is the MAC address (not the temporary instance-id fallback).</summary>
+    public bool HasMac => _mac is not null;
 
     /// <summary>
     /// Opens a controller that is present, not open yet and not in <paramref name="taken"/> (the paths other slots hold).
@@ -129,10 +145,16 @@ internal sealed unsafe class HidControllerReader : IDisposable
         _modeAttempts = 0;
         _vibrationEnabled = false;
         _lastModeAttempt = 0;
+        _mac = null;
+        _infoAttempts = 0;
+        _lastInfoAttempt = 0;
+        var instance = HidHide.InstanceId(path);
+        _fallbackId = instance is null ? null : "dev:" + instance;
         Log.Info($"Pro Controller opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
         BeginRead();
         RequestFullMode();
         SetPlayerLights();
+        RequestDeviceInfo();
     }
 
     /// <summary>Call when <see cref="EventHandle"/> is signaled.</summary>
@@ -155,8 +177,14 @@ internal sealed unsafe class HidControllerReader : IDisposable
             if (_managed.Length < transferred) _managed = new byte[transferred];
             new ReadOnlySpan<byte>(_buffer, (int)transferred).CopyTo(_managed);
             var bytes = new ReadOnlyMemory<byte>(_managed, 0, (int)transferred);
-            if (ProReportParser.TryParse(bytes.Span, out var report))
+            if (ProCommands.TryParseDeviceInfo(bytes.Span, out var mac))
             {
+                if (_mac != mac) Log.Info($"Pro Controller {_slot + 1} identified ({mac})");
+                _mac = mac;
+            }
+            else if (ProReportParser.TryParse(bytes.Span, out var report))
+            {
+                if (_mac is null) RequestDeviceInfo(); // rate limited; the reply may have been lost
                 // Still in simple mode (e.g. the first reports after connecting, or the mode got reset): ask again.
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
                 Report?.Invoke(report, bytes);
@@ -200,6 +228,17 @@ internal sealed unsafe class HidControllerReader : IDisposable
             Log.Info($"Requested full input mode (attempt {_modeAttempts})");
         else if (_modeAttempts >= MaxModeAttempts)
             _canWrite = false;
+    }
+
+    /// <summary>Asks the controller for its MAC address. Rate limited and capped, like <see cref="RequestFullMode"/>.</summary>
+    private void RequestDeviceInfo()
+    {
+        if (_file == 0 || !_canWrite || _mac is not null || _infoAttempts >= MaxModeAttempts) return;
+        long now = Environment.TickCount64;
+        if (_infoAttempts > 0 && now - _lastInfoAttempt < ModeRetryMs) return;
+        _lastInfoAttempt = now;
+        _infoAttempts++;
+        Write(ProCommands.RequestDeviceInfo(_packetCounter++, (int)_outputLength));
     }
 
     /// <summary>Starts or stops the rumble motors. Returns false when the controller is absent or read-only.</summary>
@@ -321,6 +360,8 @@ internal sealed unsafe class HidControllerReader : IDisposable
         CloseHandle(_file);
         _file = 0;
         _path = null;
+        _mac = null;
+        _fallbackId = null;
         NativeMemory.Free(_buffer);
         _buffer = null;
     }

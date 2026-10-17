@@ -119,7 +119,7 @@ public class ProReportParserTests
     public void Unknown_report_id_is_rejected()
     {
         var bytes = Simple();
-        bytes[0] = 0x21;
+        bytes[0] = 0x99;
         Assert.False(ProReportParser.TryParse(bytes, out _));
     }
 }

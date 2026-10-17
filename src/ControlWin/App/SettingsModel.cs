@@ -28,6 +28,18 @@ internal sealed class SettingItem
 
     public bool Enabled { get; init; } = true;
 
+    /// <summary>
+    /// Action rows: a cross at the right end clears the value while <see cref="CanClear"/> says so. On the pad, right
+    /// moves the focus onto the cross (<see cref="ClearFocused"/>, drawn as a square), "A" then clears, left goes back.
+    /// </summary>
+    public Action? Clear { get; init; }
+    public Func<bool>? CanClear { get; init; }
+    public bool ShowsClear => Clear is not null && CanClear?.Invoke() == true;
+
+    /// <summary>The focus is on the cross rather than on the row (reset when the selection leaves the row).</summary>
+    public bool ClearFocused { get; set; }
+    public bool ClearActive => ShowsClear && ClearFocused;
+
     public bool Selectable => Enabled && Kind != SettingKind.Info;
 
     public static SettingItem Toggle(string label, Func<bool> get, Action<bool> set) => new()
@@ -68,13 +80,32 @@ internal sealed class SettingItem
         };
     }
 
-    public static SettingItem Action(string label, Action run, Func<string>? value = null) => new()
+    public static SettingItem Action(string label, Action run, Func<string>? value = null, Action? clear = null, Func<bool>? canClear = null)
     {
-        Label = label,
-        Kind = SettingKind.Action,
-        Value = value ?? (() => ""),
-        Activate = run,
-    };
+        SettingItem? self = null;
+        return self = new()
+        {
+            Label = label,
+            Kind = SettingKind.Action,
+            Value = value ?? (() => ""),
+            Clear = clear,
+            CanClear = canClear,
+            Activate = () =>
+            {
+                if (self!.ClearActive)
+                {
+                    clear!();
+                    self.ClearFocused = false;
+                }
+                else run();
+            },
+            Adjust = clear is null ? null : d =>
+            {
+                if (d > 0) self!.ClearFocused = self.ShowsClear;
+                else if (d < 0) self!.ClearFocused = false;
+            },
+        };
+    }
 
     /// <summary>A text value; "A" / click opens the inline editor through <paramref name="edit"/>.</summary>
     public static SettingItem Text(string label, Func<string> value, Action edit) => new()
@@ -85,15 +116,28 @@ internal sealed class SettingItem
         Activate = edit,
     };
 
-    /// <summary>The row of controller tiles: left / right pick a slot, "A" runs <paramref name="run"/> on it.</summary>
-    public static SettingItem Strip(string label, int slots, Action<int> run)
+    /// <summary>
+    /// The row of controller tiles: left / right pick a slot (only those <paramref name="canFocus"/> accepts, when given),
+    /// "A" runs <paramref name="run"/> on it.
+    /// </summary>
+    public static SettingItem Strip(string label, int slots, Action<int> run, Func<int, bool>? canFocus = null)
     {
         SettingItem? self = null;
         return self = new()
         {
             Label = label,
             Kind = SettingKind.Strip,
-            Adjust = d => self!.Slot = ((self.Slot + Math.Sign(d)) % slots + slots) % slots,
+            Adjust = d =>
+            {
+                int step = Math.Sign(d);
+                for (int k = 1; k <= slots; k++)
+                {
+                    int next = ((self!.Slot + step * k) % slots + slots) % slots;
+                    if (canFocus?.Invoke(next) == false) continue;
+                    self.Slot = next;
+                    return;
+                }
+            },
             Activate = () => run(self!.Slot),
         };
     }
@@ -106,12 +150,13 @@ internal sealed class SettingItem
     };
 }
 
-internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items, bool controllerStrip = false)
+internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items, bool controllerStrip = false, Func<string>? titleOf = null)
 {
     /// <summary>Shows the row of connected-controller tiles above the rows.</summary>
     public bool ControllerStrip { get; } = controllerStrip;
 
-    public string Title { get; } = title;
+    /// <summary>The tab title, or for a page whose title follows what it edits, the current one.</summary>
+    public string Title => titleOf?.Invoke() ?? title;
     public IReadOnlyList<SettingItem> Items { get; } = items;
 }
 
@@ -119,6 +164,8 @@ internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items
 internal sealed class SettingsModel
 {
     private readonly int[] _selected;
+    private SettingsTab? _sub;   // a page opened from a row (a controller's page): shown in place of the tab until closed
+    private int _subSelected;
 
     public SettingsModel(IReadOnlyList<SettingsTab> tabs)
     {
@@ -131,20 +178,47 @@ internal sealed class SettingsModel
 
     public int TabIndex { get; private set; }
 
-    public SettingsTab Tab => Tabs[TabIndex];
+    public SettingsTab Tab => _sub ?? Tabs[TabIndex];
+
+    /// <summary>A sub-page is open (B / right click goes back to the tab instead of closing the window).</summary>
+    public bool InSubPage => _sub is not null;
+
+    /// <summary>Title of the open sub-page, or null.</summary>
+    public string? SubTitle => _sub?.Title;
+
+    public void OpenSub(SettingsTab page)
+    {
+        _sub = page;
+        _subSelected = FirstSelectable(page, skipStrip: true); // a page starts on its first setting, not on the controller strip
+    }
+
+    public void Back() => _sub = null;
 
     /// <summary>Selected row of the current tab, or -1 when nothing can be selected.</summary>
-    public int Selected => _selected[TabIndex];
+    public int Selected => _sub is not null ? _subSelected : _selected[TabIndex];
+
+    private void SetSelected(int index)
+    {
+        if (CurrentItem is { } leaving) leaving.ClearFocused = false;
+        if (_sub is not null) _subSelected = index;
+        else _selected[TabIndex] = index;
+    }
 
     public SettingItem? CurrentItem => Selected >= 0 && Selected < Tab.Items.Count ? Tab.Items[Selected] : null;
 
     public void SetTab(int index)
     {
-        if (index >= 0 && index < Tabs.Count) TabIndex = index;
+        if (index < 0 || index >= Tabs.Count) return;
+        TabIndex = index;
+        _sub = null;
     }
 
     /// <summary>Next / previous tab, wrapping.</summary>
-    public void MoveTab(int delta) => TabIndex = ((TabIndex + Math.Sign(delta)) % Tabs.Count + Tabs.Count) % Tabs.Count;
+    public void MoveTab(int delta)
+    {
+        TabIndex = ((TabIndex + Math.Sign(delta)) % Tabs.Count + Tabs.Count) % Tabs.Count;
+        _sub = null;
+    }
 
     /// <summary>Moves the selection among selectable rows, wrapping.</summary>
     public void Move(int delta)
@@ -159,7 +233,7 @@ internal sealed class SettingsModel
             index = ((index + step) % count + count) % count;
             if (items[index].Selectable)
             {
-                _selected[TabIndex] = index;
+                SetSelected(index);
                 return;
             }
         }
@@ -169,7 +243,7 @@ internal sealed class SettingsModel
     public bool Select(int index)
     {
         if (index < 0 || index >= Tab.Items.Count || !Tab.Items[index].Selectable || index == Selected) return false;
-        _selected[TabIndex] = index;
+        SetSelected(index);
         return true;
     }
 
@@ -179,10 +253,10 @@ internal sealed class SettingsModel
     /// <summary>"A" on the selected row.</summary>
     public void Activate() => CurrentItem?.Activate?.Invoke();
 
-    private static int FirstSelectable(SettingsTab tab)
+    private static int FirstSelectable(SettingsTab tab, bool skipStrip = false)
     {
         for (int i = 0; i < tab.Items.Count; i++)
-            if (tab.Items[i].Selectable) return i;
+            if (tab.Items[i].Selectable && !(skipStrip && tab.Items[i].Kind == SettingKind.Strip)) return i;
         return -1;
     }
 }
@@ -224,10 +298,47 @@ internal interface ISettingsHost
     void AddProController();
     /// <summary>"Searching..." while a pairing runs, otherwise empty.</summary>
     string PairingStatus { get; }
+
+    /// <summary>Opens the page of the controller in <paramref name="slot"/> (name, picture, rumble test).</summary>
+    void OpenControllerPage(int slot);
+    void CloseControllerPage();
+    /// <summary>The name the user gave the controller (empty = none).</summary>
+    string ControllerName(int slot);
+    void SetControllerName(int slot, string name);
+    /// <summary>File name of the picture the user chose for the controller, empty when it has none.</summary>
+    string ControllerPictureName(int slot);
+    /// <summary>Asks for a picture file (Windows dialog) and sets it as the controller's picture.</summary>
+    void ChooseControllerPicture(int slot);
+    void RemoveControllerPicture(int slot);
 }
 
 internal static class SettingsPages
 {
+    /// <summary>
+    /// The page of a connected controller: the controller strip on top (left / right switch to another connected
+    /// controller, a ring marks the one being edited), then its settings. <paramref name="strip"/> is the strip row:
+    /// its <see cref="SettingItem.Slot"/> is the controller being edited.
+    /// </summary>
+    public static SettingsTab ControllerPage(ISettingsHost host, int slot, out SettingItem strip)
+    {
+        var tiles = SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, _ => { }, host.ControllerConnected);
+        tiles.Slot = slot;
+        strip = tiles;
+        return new SettingsTab("Controller",
+        [
+            tiles,
+            SettingItem.Text("Name",
+                () => host.ControllerName(tiles.Slot) is { Length: > 0 } name ? name : "(default)",
+                () => host.EditText(host.ControllerName(tiles.Slot), v => host.SetControllerName(tiles.Slot, v))),
+            SettingItem.Action("Choose picture...", () => host.ChooseControllerPicture(tiles.Slot),
+                () => host.ControllerPictureName(tiles.Slot) is { Length: > 0 } file ? file : "None",
+                clear: () => host.RemoveControllerPicture(tiles.Slot),
+                canClear: () => host.ControllerPictureName(tiles.Slot).Length > 0),
+            SettingItem.Action("Test rumble", () => host.RumbleController(tiles.Slot)),
+            SettingItem.Action("Back", host.CloseControllerPage),
+        ], controllerStrip: true, titleOf: () => $"Controller {tiles.Slot + 1}");
+    }
+
     public static SettingsModel Create(ConfigStore store, ISettingsHost host)
     {
         var cfg = () => store.Current;
@@ -252,7 +363,7 @@ internal static class SettingsPages
 
         var controller = new SettingsTab("Controller",
         [
-            SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, host.RumbleController),
+            SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, host.OpenControllerPage, host.ControllerConnected),
             SettingItem.Action("Add new Pro Controller", host.AddProController, () => host.PairingStatus),
         ], controllerStrip: true);
 

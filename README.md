@@ -141,6 +141,14 @@ While the virtual pad is on, ControlWin hides each Pro Controller that drives a 
 - HidHide only blocks new opens: an app that already had the controller open (Steam, BetterJoy) keeps receiving it until it reconnects. Quit it first.
 - If ControlWin crashes while hiding, the controller stays hidden until you start ControlWin again (or turn the cloak off in the HidHide client).
 
+## Controllers
+
+The **Controller** tab of the settings shows the four controller slots. Each connected controller has a tile with its picture (or a gamepad icon), its name and a small battery badge: four bars (green when full or medium, amber when low, red when critical or empty) and a plus while it charges. The Pro Controller only reports four levels, not a percentage.
+
+Click a tile (or press **A** on it) to open that controller's page. The four slots stay on top, empty ones included, with a ring around the controller being edited; click another tile, or move up to the tiles and press left / right, to edit another connected controller. Below: **Name**, **Choose picture...** (a standard Open dialog; PNG, JPG or BMP; the whole picture is kept, scaled down to 128 pixels, and shown with rounded corners; the row shows the file name and a cross, or left on the pad, to remove it), **Test rumble** and **Back**. **B** or a right click goes back.
+
+Controllers are told apart by their Bluetooth MAC address, which ControlWin reads from the controller itself, so a profile follows the controller to any slot and over USB or Bluetooth. Until the MAC is known the Windows device id is used instead, and the profile moves to the MAC once it arrives. Names are stored in `config.json` under `controllers`; pictures are copied to `%APPDATA%\ControlWin\controllers\`, so the original file can move or vanish. A profile is kept while the controller is away; to forget one, delete its entry (and picture file) by hand.
+
 ## Log
 
 `%APPDATA%\ControlWin\log.txt` (also reachable from the tray). Truncated when it grows past 256 KB. First place to look when "nothing happens": it says whether the controller was opened, whether the menu opened, and why the virtual pad failed.

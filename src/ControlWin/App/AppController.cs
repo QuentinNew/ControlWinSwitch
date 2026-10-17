@@ -107,8 +107,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _radialOverlay.NodeHovered += OnRadialNodeHovered;
         _radialOverlay.NodeClicked += OnRadialNodeClicked;
         _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
-        _settingsWindow.SlotConnected = slot => ((ISettingsHost)this).ControllerConnected(slot);
-        _settingsWindow.RumbleRequested += slot => ((ISettingsHost)this).RumbleController(slot);
+        _settingsWindow.Tile = TileOf;
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
         _radialEditor.Saved += OnRadialEditorSaved;
         _radialEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseRadialEditor(); };
@@ -202,6 +201,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_shutDown) return;
         gone.Pad.Detach(); // re-plugged on the next report
         SyncHiding();
+        if (_settings.InSubPage && _pageStrip?.Slot == slot) CloseControllerPage();
         if (slot == _owner)
         {
             if (_mode == Mode.Menu) CloseMenu();
@@ -541,7 +541,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         else if (_state.Pressed(Buttons.B))
         {
-            CloseSettings();
+            if (_settings.InSubPage) CloseControllerPage();
+            else CloseSettings();
         }
     }
 
@@ -990,6 +991,115 @@ internal sealed class AppController : IDisposable, ISettingsHost
     }
 
     string ISettingsHost.PairingStatus => _pairing ? "Searching..." : "";
+
+    // ---- per-controller profile (name, picture, battery) -----------------------------------
+
+    private SettingItem? _pageStrip; // the strip row of the open controller page: its Slot is the controller being edited
+
+    /// <summary>
+    /// The id a controller's profile is stored under: its MAC address, or the temporary instance id until the MAC is
+    /// known. A profile (and picture) saved under the temporary id moves to the MAC once that is known.
+    /// </summary>
+    private string? ControllerKey(int slot)
+    {
+        var reader = _set.Readers[slot];
+        var id = reader.Id;
+        if (id is null) return null;
+        if (reader.HasMac && reader.FallbackId is { } old && old != id)
+        {
+            bool moved = false;
+            if (Config.Controllers.Remove(old, out var profile) && !Config.Controllers.ContainsKey(id))
+            {
+                Config.Controllers[id] = profile;
+                moved = true;
+            }
+            if (ControllerPictures.Has(old) && !ControllerPictures.Has(id)) ControllerPictures.Move(old, id);
+            if (moved) _store.Save();
+        }
+        return id;
+    }
+
+    private SlotTile TileOf(int slot)
+    {
+        bool connected = ((ISettingsHost)this).ControllerConnected(slot);
+        if (!connected) return default;
+        var key = ControllerKey(slot);
+        string name = key is not null && Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
+        var state = _slots[slot].State;
+        return new SlotTile(true, name.Length > 0 ? name : $"Controller {slot + 1}", state.Battery, state.Charging,
+            key is null ? 0 : ControllerPictures.Get(key));
+    }
+
+    /// <summary>The profile of a controller (created when missing).</summary>
+    private ControllerProfile ProfileOf(string key)
+    {
+        if (!Config.Controllers.TryGetValue(key, out var profile)) Config.Controllers[key] = profile = new ControllerProfile();
+        return profile;
+    }
+
+    /// <summary>Forgets a profile that holds nothing.</summary>
+    private void PruneProfile(string key)
+    {
+        if (Config.Controllers.TryGetValue(key, out var profile) && profile.Name.Length == 0 && profile.Picture.Length == 0)
+            Config.Controllers.Remove(key);
+    }
+
+    string ISettingsHost.ControllerName(int slot) =>
+        ControllerKey(slot) is { } key && Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
+
+    void ISettingsHost.SetControllerName(int slot, string name)
+    {
+        if (ControllerKey(slot) is not { } key) return;
+        name = name.Trim();
+        if (name.Length > 24) name = name[..24];
+        ProfileOf(key).Name = name;
+        PruneProfile(key);
+        _store.Save();
+    }
+
+    string ISettingsHost.ControllerPictureName(int slot) =>
+        ControllerKey(slot) is { } key && ControllerPictures.Has(key) && Config.Controllers.TryGetValue(key, out var profile)
+            ? (profile.Picture.Length > 0 ? profile.Picture : "Custom")
+            : "";
+
+    void ISettingsHost.ChooseControllerPicture(int slot)
+    {
+        if (ControllerKey(slot) is not { } key) return;
+        var file = FilePicker.Pick(_settingsWindow.Handle, "Choose a picture for this controller", FilePicker.PictureFilter);
+        if (file is null) return;
+        var error = ControllerPictures.Import(file, key);
+        if (error is not null)
+        {
+            _toast.Show(MenuPages.Gear, error);
+            return;
+        }
+        ProfileOf(key).Picture = Path.GetFileName(file);
+        _store.Save();
+    }
+
+    void ISettingsHost.RemoveControllerPicture(int slot)
+    {
+        if (ControllerKey(slot) is not { } key) return;
+        ControllerPictures.Remove(key);
+        if (Config.Controllers.TryGetValue(key, out var profile)) profile.Picture = "";
+        PruneProfile(key);
+        _store.Save();
+    }
+
+    void ISettingsHost.OpenControllerPage(int slot)
+    {
+        if (!((ISettingsHost)this).ControllerConnected(slot)) return;
+        _settings.OpenSub(SettingsPages.ControllerPage(this, slot, out _pageStrip));
+    }
+
+    private void CloseControllerPage()
+    {
+        _pageStrip = null;
+        _settings.Back();
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    void ISettingsHost.CloseControllerPage() => CloseControllerPage();
 
     void ISettingsHost.AddProController()
     {

@@ -24,6 +24,31 @@ internal static class ProCommands
         return report;
     }
 
+    public const byte SubcommandRequestDeviceInfo = 0x02;
+
+    /// <summary>Output report 0x01 carrying "request device info": the controller answers with its firmware and MAC address.</summary>
+    public static byte[] RequestDeviceInfo(byte packetCounter, int reportLength)
+    {
+        var report = SetInputMode(packetCounter, 0, reportLength);
+        report[10] = SubcommandRequestDeviceInfo;
+        report[11] = 0;
+        return report;
+    }
+
+    /// <summary>
+    /// Reads the MAC address from the device-info reply (input report 0x21, ack 0x82 at byte 13, subcommand 0x02 at byte 14, MAC at byte 19..24).
+    /// Returned as "AA:BB:CC:DD:EE:FF"; false for every other report.
+    /// </summary>
+    public static bool TryParseDeviceInfo(ReadOnlySpan<byte> r, out string mac)
+    {
+        mac = "";
+        if (r.Length < 25 || r[0] != 0x21 || r[13] != 0x82 || r[14] != SubcommandRequestDeviceInfo) return false;
+        var m = r.Slice(19, 6);
+        if (m.IndexOfAnyExcept((byte)0) < 0) return false; // all zero: no address
+        mac = string.Join(':', m.ToArray().Select(b => b.ToString("X2")));
+        return true;
+    }
+
     public const byte SubcommandEnableVibration = 0x48;
     public const byte SubcommandSetPlayerLights = 0x30;
 

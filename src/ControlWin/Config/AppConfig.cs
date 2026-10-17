@@ -20,6 +20,16 @@ internal sealed class VirtualPadConfig
     public List<string> DisableWhileRunning { get; set; } = ["steam.exe"];
 }
 
+/// <summary>What the user set for one physical controller, keyed by its id (MAC address) in <see cref="AppConfig.Controllers"/>.</summary>
+internal sealed class ControllerProfile
+{
+    /// <summary>Shown under the controller's tile; empty = the default "Controller N".</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>File name of the picture the user chose (shown in the settings); the picture itself is stored by controller id.</summary>
+    public string Picture { get; set; } = "";
+}
+
 internal sealed class MouseConfig
 {
     public float Speed { get; set; } = 800f;           // px/s at full deflection
@@ -139,6 +149,9 @@ internal sealed class AppConfig
     [JsonIgnore]
     public List<string> RepairNotes { get; } = [];
 
+    /// <summary>Per-controller name, by controller id. The picture lives in %APPDATA%\ControlWin\controllers\.</summary>
+    public Dictionary<string, ControllerProfile> Controllers { get; set; } = [];
+
     public List<ShortcutConfig> Shortcuts { get; set; } =
     [
         new() { Name = "Steam Big Picture", Target = "steam://open/bigpicture" },
@@ -160,6 +173,13 @@ internal sealed class AppConfig
             .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         Mouse ??= new();
+        Controllers ??= [];
+        foreach (var key in Controllers.Where(c => c.Value is null).Select(c => c.Key).ToList()) Controllers.Remove(key);
+        foreach (var profile in Controllers.Values)
+        {
+            profile.Name = (profile.Name ?? "").Trim();
+            profile.Picture ??= "";
+        }
         Shortcuts ??= [];
         Shortcuts.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Target));
         foreach (var s in Shortcuts)

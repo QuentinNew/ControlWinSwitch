@@ -236,7 +236,7 @@ internal static unsafe partial class Win32
         WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
 
     public const int SW_HIDE = 0, SW_SHOWNORMAL = 1, SW_SHOWMINNOACTIVE = 7, SW_SHOWNOACTIVATE = 4;
-    public const uint SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
+    public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
     public static readonly nint HWND_TOPMOST = -1;
 
     public const uint PM_REMOVE = 1, QS_ALLINPUT = 0x04FF, MWMO_INPUTAVAILABLE = 0x4;
@@ -414,6 +414,14 @@ internal static unsafe partial class Win32
     [LibraryImport("gdiplus.dll")] public static partial int GdipResetClip(nint graphics);
     [LibraryImport("gdiplus.dll")] public static partial int GdipSetInterpolationMode(nint graphics, int mode);
     public const int InterpolationModeHighQualityBicubic = 7;
+    [LibraryImport("gdiplus.dll")] public static partial int GdipDrawImageRectRectI(nint graphics, nint image, int dx, int dy, int dw, int dh,
+        int sx, int sy, int sw, int sh, int srcUnit, nint attributes, nint callback, nint callbackData);
+    [LibraryImport("gdiplus.dll", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial int GdipSaveImageToFile(nint image, string file, Guid* encoder, nint parameters);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipSetPixelOffsetMode(nint graphics, int mode);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipAddPathArcI(nint path, int x, int y, int w, int h, float startAngle, float sweepAngle);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipClosePathFigure(nint path);
+    public const int PixelFormat32bppARGB = 0x0026200A, UnitPixel = 2, PixelOffsetModeHalf = 4;
     [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial nuint SHGetFileInfoW(string path, uint attributes, SHFILEINFOW* info, uint size, uint flags);
     public const uint SHGFI_ICON = 0x100, SHGFI_LARGEICON = 0x0;

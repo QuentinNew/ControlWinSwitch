@@ -1,8 +1,24 @@
+using ControlWin.Actions;
 using ControlWin.App;
 using ControlWin.Native;
 using static ControlWin.Native.Win32;
 
 namespace ControlWin.UI;
+
+/// <summary>What a controller tile shows: the controller's name, battery (0..4, -1 unknown) and its picture (a GDI+ image, or 0).</summary>
+internal readonly record struct SlotTile(bool Connected, string Name, int Battery, bool Charging, nint Image)
+{
+    /// <summary>"Full", "Low, charging", ... ("Unknown" until the controller reported it).</summary>
+    public string BatteryText => (Battery switch
+    {
+        4 => "Full",
+        3 => "Medium",
+        2 => "Low",
+        1 => "Critical",
+        0 => "Empty",
+        _ => "Unknown",
+    }) + (Charging && Battery >= 0 ? ", charging" : "");
+}
 
 /// <summary>
 /// The settings window: tab strip + rows. Topmost and never activating, like the menu. Painted from
@@ -14,9 +30,9 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
     // Layout in DIPs.
     private const int WidthDip = 760, HeaderDip = 60, TabsDip = 52, RowDip = 56, Rows = 6, FooterDip = 44;
-    private const int SideDip = 16, ValueWidthDip = 300, ArrowDip = 40, CloseDip = 48;
-    // Connected-controller strip (Controller tab): tiles with a Rumble button under each.
-    private const int StripDip = RowDip * 2, TileDip = 64, TileGapDip = 24, RumbleHeightDip = 28;
+    private const int SideDip = 16, ValueWidthDip = 300, ArrowDip = 40, CloseDip = 48, CrossDip = 44;
+    // Connected-controller strip (Controller tab): tiles with the controller's name under each.
+    private const int StripDip = RowDip * 2, TileDip = 64, TileGapDip = 40, NameHeightDip = 28;
     private const string GamepadGlyph = "", NoneGlyph = "";
 
     private const string ChevronLeft = "", ChevronRight = "", Close = "";
@@ -44,11 +60,10 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     /// <summary>The mouse changed something (the controller path refreshes by itself).</summary>
     public event Action? Changed;
 
-    /// <summary>Whether the controller in a slot is connected (tile color, Rumble enabled).</summary>
-    public Func<int, bool>? SlotConnected { get; set; }
+    /// <summary>What the tile of a slot shows (a default tile = nothing connected).</summary>
+    public Func<int, SlotTile>? Tile { get; set; }
 
-    /// <summary>The user clicked a connected controller's tile or Rumble button.</summary>
-    public event Action<int>? RumbleRequested;
+    private bool Connected(int slot) => Tile?.Invoke(slot).Connected == true;
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
 
@@ -153,7 +168,12 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 OnClick(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
             case WM_RBUTTONUP:
-                CloseRequested?.Invoke();
+                if (_model is { InSubPage: true })
+                {
+                    _model.Back();
+                    Refresh();
+                }
+                else CloseRequested?.Invoke();
                 return 0;
             case WM_MOUSEWHEEL:
                 if (_model is not null)
@@ -171,17 +191,23 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     private int StripTop => Px(HeaderDip + TabsDip);
     private int RowsTop => Px(HeaderDip + TabsDip + StripHeightDip);
 
-    private int TilesLeft => (Px(WidthDip) - (Slots * Px(TileDip) + (Slots - 1) * Px(TileGapDip))) / 2;
+    /// <summary>The connected slots, in order: the only ones the strip shows.</summary>
+    private int[] ConnectedSlots() => Enumerable.Range(0, Slots).Where(Connected).ToArray();
 
-    /// <summary>Slot whose tile or Rumble button is at the point, or -1.</summary>
+    /// <summary>Left edge of a row of <paramref name="count"/> tiles centered in the window.</summary>
+    private int TilesLeftFor(int count) => (Px(WidthDip) - (count * Px(TileDip) + (count - 1) * Px(TileGapDip))) / 2;
+
+    /// <summary>Connected slot whose tile or name is at the point, or -1.</summary>
     private int SlotAt(int x, int y)
     {
-        if (StripHeightDip == 0 || y < StripTop || y >= RowsTop) return -1;
+        if (_model?.Tab.ControllerStrip != true || y < StripTop || y >= RowsTop) return -1;
+        var slots = ConnectedSlots();
+        if (slots.Length == 0) return -1;
         int tile = Px(TileDip), pitch = tile + Px(TileGapDip);
-        int rel = x - TilesLeft;
+        int rel = x - TilesLeftFor(slots.Length);
         if (rel < 0) return -1;
-        int slot = rel / pitch;
-        return slot < Slots && rel % pitch < tile ? slot : -1;
+        int index = rel / pitch;
+        return index < slots.Length && rel % pitch < tile ? slots[index] : -1;
     }
 
     private int RowAt(int y)
@@ -204,7 +230,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (_editing) return true; // a click confirms
         if (y < TabsTop) return x >= Px(WidthDip) - Px(CloseDip); // close button
         if (y < StripTop) return true;                            // tabs
-        if (y < RowsTop) return SlotAt(x, y) is var slot and >= 0 && SlotConnected?.Invoke(slot) == true;
+        if (y < RowsTop) return SlotAt(x, y) is var slot and >= 0 && Connected(slot);
 
         int row = RowAt(y);
         return row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Selectable;
@@ -246,6 +272,15 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
         int row = RowAt(y);
         if (row >= 0 && _model.Select(row)) Refresh();
+        if (row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row] is { ShowsClear: true } item)
+        {
+            bool overCross = x >= Px(WidthDip) - Px(SideDip) - Px(CrossDip);
+            if (item.ClearFocused != overCross)
+            {
+                item.ClearFocused = overCross;
+                Refresh();
+            }
+        }
     }
 
     private void OnClick(int x, int y)
@@ -268,9 +303,9 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         {
             int slot = SlotAt(x, y);
             if (slot < 0) return;
-            _model.Select(0);
-            _model.Tab.Items[0].Slot = slot;
-            if (SlotConnected?.Invoke(slot) == true) RumbleRequested?.Invoke(slot);
+            if (!_model.InSubPage || Connected(slot)) _model.Tab.Items[0].Slot = slot; // a page only edits connected controllers
+            if (!_model.InSubPage) _model.Select(0);
+            if (Connected(slot)) _model.Tab.Items[0].Activate?.Invoke(); // on the Controller tab: opens the controller's page
             Refresh();
             return;
         }
@@ -294,6 +329,9 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             case SettingKind.Toggle:
                 item.Activate?.Invoke();
                 break;
+            case SettingKind.Action when item.ShowsClear && x >= width - Px(SideDip) - Px(CrossDip):
+                item.Clear!();
+                break;
             case SettingKind.Action:
             case SettingKind.Text:
                 item.Activate?.Invoke();
@@ -307,6 +345,55 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         }
         Refresh();
         Changed?.Invoke();
+    }
+
+    /// <summary>One controller tile: picture or gamepad icon, battery badge, name underneath.</summary>
+    private void PaintTile(nint dc, FontSet fonts, SlotTile info, int l, int t, bool focused)
+    {
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        bool on = info.Connected;
+        int tile = Px(TileDip), nameH = Px(NameHeightDip);
+        if (focused)
+            Gdi.RoundedFill(dc, Gdi.SelectionBrush, l - Px(3), t - Px(3), l + tile + Px(3), t + tile + Px(3), Px(18));
+        Gdi.RoundedFill(dc, on && info.Image == 0 ? Gdi.OnBrush : Gdi.PanelBrush, l, t, l + tile, t + tile, Px(14));
+        if (on && info.Image != 0)
+            ControllerPictures.DrawRounded(dc, info.Image, l, t, tile, Px(14));
+        else
+            Gdi.Text(dc, fonts.Glyph, on ? Gdi.TextColor : Gdi.Dim, on ? GamepadGlyph : NoneGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+        if (!on) return;
+        PaintBattery(dc, info, l + tile, t + tile);
+        int reach = Px(TileGapDip) / 2 - 1; // the name gets the tile's whole pitch, never more
+        Gdi.Text(dc, fonts.Detail, Gdi.TextColor, info.Name, l - reach, t + tile + Px(6),
+            l + tile + reach, t + tile + Px(6) + nameH, DT_CENTER | oneLine | DT_END_ELLIPSIS);
+    }
+
+    private static nint s_redBrush, s_amberBrush;
+
+    /// <summary>A small battery badge on the bottom-right corner of a tile: four bars, a plus while charging.</summary>
+    private void PaintBattery(nint dc, SlotTile info, int right, int bottom)
+    {
+        if (info.Battery < 0) return;
+        int w = Px(38), h = Px(18);
+        int l = right - w + Px(6), t = bottom - h + Px(4);
+        Gdi.RoundedFill(dc, Gdi.BackgroundBrush, l, t, l + w, t + h, Px(8));
+
+        s_redBrush = s_redBrush != 0 ? s_redBrush : CreateSolidBrush(Rgb(0xD6, 0x3B, 0x3B));
+        s_amberBrush = s_amberBrush != 0 ? s_amberBrush : CreateSolidBrush(Rgb(0xE0, 0xA1, 0x2B));
+        nint color = info.Battery <= 1 ? s_redBrush : info.Battery == 2 ? s_amberBrush : Gdi.OnBrush;
+
+        int barW = Px(5), gap = Px(2), barH = Px(10), x = l + Px(6), y = t + (h - barH) / 2;
+        int filled = Math.Max(info.Battery, info.Battery == 0 ? 1 : 0); // an empty battery still shows one (red) bar
+        for (int i = 0; i < 4; i++)
+        {
+            int bx = x + i * (barW + gap);
+            Gdi.Fill(dc, i < filled ? color : Gdi.DimBrush, bx, y, bx + barW, y + barH);
+        }
+        if (info.Charging)
+        {
+            int cx = x + 4 * (barW + gap) + Px(2), cy = t + h / 2, arm = Px(3), thick = Px(1);
+            Gdi.Fill(dc, Gdi.TextBrush, cx - arm, cy - thick, cx + arm + thick, cy + thick + 1);
+            Gdi.Fill(dc, Gdi.TextBrush, cx - thick, cy - arm, cx + thick + 1, cy + arm + thick);
+        }
     }
 
     private void Paint()
@@ -323,7 +410,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         int headerH = Px(HeaderDip), tabsH = Px(TabsDip), rowH = Px(RowDip), side = Px(SideDip);
 
         // Header
-        Gdi.Text(dc, fonts.Title, Gdi.TextColor, "Settings", Px(24), 0, width, headerH, DT_LEFT | oneLine);
+        Gdi.Text(dc, fonts.Title, Gdi.TextColor, model.SubTitle is { } sub ? "Settings  >  " + sub : "Settings",
+            Px(24), 0, width, headerH, DT_LEFT | oneLine);
         Gdi.Text(dc, fonts.GlyphSmall, Gdi.Dim, Close, width - Px(CloseDip), 0, width, headerH, DT_CENTER | oneLine);
 
         // Tabs
@@ -343,21 +431,17 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         bool strip = model.Tab.ControllerStrip;
         if (strip)
         {
+            // Only connected controllers are shown, centered as a group.
+            var slots = ConnectedSlots();
+            var strip0 = model.Tab.Items[0];
+            if (slots.Length > 0 && !slots.Contains(strip0.Slot)) strip0.Slot = slots[0]; // the focus follows a controller that is there
             bool stripSelected = model.Selected == 0;
-            int focus = model.Tab.Items[0].Slot;
-            int tile = Px(TileDip), pitch = tile + Px(TileGapDip), btnH = Px(RumbleHeightDip);
-            for (int i = 0; i < Slots; i++)
-            {
-                bool on = SlotConnected?.Invoke(i) == true;
-                int l = TilesLeft + i * pitch, t = rowsTop + Px(8);
-                Gdi.RoundedFill(dc, on ? Gdi.OnBrush : Gdi.PanelBrush, l, t, l + tile, t + tile, Px(14));
-                Gdi.Text(dc, fonts.Glyph, on ? Gdi.TextColor : Gdi.Dim, on ? GamepadGlyph : NoneGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
-                int bt = t + tile + Px(6);
-                if (stripSelected && i == focus)
-                    Gdi.RoundedFill(dc, Gdi.TextBrush, l - Px(2), bt - Px(2), l + tile + Px(2), bt + btnH + Px(2), Px(12));
-                Gdi.RoundedFill(dc, on ? Gdi.SelectionBrush : Gdi.PanelBrush, l, bt, l + tile, bt + btnH, Px(10));
-                Gdi.Text(dc, fonts.Detail, on ? Gdi.TextColor : Gdi.Dim, "Rumble", l, bt, l + tile, bt + btnH, DT_CENTER | oneLine);
-            }
+            int tile = Px(TileDip), pitch = tile + Px(TileGapDip), left = TilesLeftFor(slots.Length);
+            for (int j = 0; j < slots.Length; j++)
+                PaintTile(dc, fonts, Tile?.Invoke(slots[j]) ?? default, left + j * pitch, rowsTop + Px(8),
+                    (stripSelected || model.InSubPage) && slots[j] == strip0.Slot);
+            if (slots.Length == 0)
+                Gdi.Text(dc, fonts.Label, Gdi.Dim, "No controller connected", 0, rowsTop, width, rowsTop + Px(StripDip), DT_CENTER | oneLine);
             rowsTop += Px(StripDip);
         }
 
@@ -413,8 +497,23 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                     break;
 
                 default:
-                    Gdi.Text(dc, fonts.Detail, selected ? Gdi.DimOnSelection : Gdi.Dim, value, valueLeft, y, valueRight + Px(8), y + rowH, DT_RIGHT | oneLine | DT_END_ELLIPSIS);
+                {
+                    int right = valueRight + Px(8);
+                    if (item.ShowsClear)
+                    {
+                        // The cross at the end of the row clears the value; a square marks it when it has the focus.
+                        int cl = right - Px(CrossDip), box = Px(38), bx = cl + (Px(CrossDip) - box) / 2, by = y + (rowH - box) / 2;
+                        if (item.ClearFocused)
+                        {
+                            Gdi.RoundedFill(dc, Gdi.TextBrush, bx, by, bx + box, by + box, Px(12));
+                            Gdi.RoundedFill(dc, Gdi.BackgroundBrush, bx + Px(2), by + Px(2), bx + box - Px(2), by + box - Px(2), Px(10));
+                        }
+                        Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, Close, cl, y, right, y + rowH, DT_CENTER | oneLine);
+                        right = cl - Px(8);
+                    }
+                    Gdi.Text(dc, fonts.Detail, selected ? Gdi.DimOnSelection : Gdi.Dim, value, valueLeft, y, right, y + rowH, DT_RIGHT | oneLine | DT_END_ELLIPSIS);
                     break;
+                }
             }
         }
 
@@ -426,7 +525,10 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);
             return;
         }
-        Gdi.Text(dc, fonts.Footer, Gdi.Dim, "L / R  Tab     Up / Down  Select     Left / Right  Change     A  Toggle     B  Close",
+        string hint = model.InSubPage
+            ? "Up / Down  Select     Left / Right  Reach the cross     A  OK     B  Back"
+            : "L / R  Tab     Up / Down  Select     Left / Right  Change     A  Toggle     B  Close";
+        Gdi.Text(dc, fonts.Footer, Gdi.Dim, hint,
             0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);
     }
 }

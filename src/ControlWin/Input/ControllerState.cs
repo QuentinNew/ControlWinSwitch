@@ -56,6 +56,10 @@ internal sealed class ControllerState
     public Stick Left { get; private set; }
     public Stick Right { get; private set; }
 
+    /// <summary>Battery level 0 (empty) to 4 (full), or -1 when not reported yet.</summary>
+    public int Battery { get; private set; } = -1;
+    public bool Charging { get; private set; }
+
     public bool Pressed(Buttons b) => (Current & b) != 0 && (Previous & b) == 0;
     public bool Released(Buttons b) => (Current & b) == 0 && (Previous & b) != 0;
     public bool Held(Buttons b) => (Current & b) != 0;
@@ -64,6 +68,11 @@ internal sealed class ControllerState
     {
         Previous = Current;
         Current = r.Buttons;
+        if (r.Battery >= 0)
+        {
+            Battery = r.Battery;
+            Charging = r.Charging;
+        }
         if (r.Format == ReportFormat.Simple)
         {
             Left = new Stick(_simple[0].Normalize(r.LX), _simple[1].Normalize(r.LY));
@@ -82,5 +91,7 @@ internal sealed class ControllerState
     {
         Previous = Current = Buttons.None;
         Left = Right = default;
+        Battery = -1;
+        Charging = false;
     }
 }

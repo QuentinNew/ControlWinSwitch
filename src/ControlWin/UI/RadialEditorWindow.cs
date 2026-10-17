@@ -459,25 +459,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private string? PickFile(string title, string filter)
     {
         CommitField();
-        const int Max = 1024;
-        char* file = stackalloc char[Max];
-        file[0] = '\0';
-        fixed (char* pFilter = filter)
-        fixed (char* pTitle = title)
-        {
-            var ofn = new OPENFILENAMEW
-            {
-                lStructSize = (uint)sizeof(OPENFILENAMEW),
-                hwndOwner = Handle,
-                lpstrFilter = pFilter,
-                nFilterIndex = 1,
-                lpstrFile = file,
-                nMaxFile = Max,
-                lpstrTitle = pTitle,
-                Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR,
-            };
-            return GetOpenFileNameW(&ofn) != 0 ? new string(file) : null;
-        }
+        return FilePicker.Pick(Handle, title, filter);
     }
 
     private void Save()

@@ -19,7 +19,12 @@ internal enum ReportFormat : byte
     Full,
 }
 
-internal readonly record struct ProReport(ReportFormat Format, Buttons Buttons, int LX, int LY, int RX, int RY);
+/// <summary>
+/// One decoded input report. <paramref name="Battery"/> is 0 (empty) to 4 (full), or -1 when the report format does not
+/// carry it (the simple 0x3F reports).
+/// </summary>
+internal readonly record struct ProReport(ReportFormat Format, Buttons Buttons, int LX, int LY, int RX, int RY,
+    int Battery = -1, bool Charging = false);
 
 /// <summary>Decodes Switch Pro Controller HID input reports (report ID in byte 0).</summary>
 internal static class ProReportParser
@@ -54,7 +59,7 @@ internal static class ProReportParser
                     U16(r, 4), U16(r, 6), U16(r, 8), U16(r, 10));
                 return true;
             }
-            case 0x30 or 0x31 when r.Length >= 12:
+            case 0x30 or 0x31 or 0x21 when r.Length >= 12: // 0x21 (a subcommand reply) carries the same input data first
             {
                 var b = Buttons.None;
                 byte right = r[3], shared = r[4], left = r[5];
@@ -78,7 +83,8 @@ internal static class ProReportParser
                 if ((left & 0x80) != 0) b |= Buttons.ZL;
                 report = new ProReport(ReportFormat.Full, b,
                     r[6] | ((r[7] & 0x0F) << 8), (r[7] >> 4) | (r[8] << 4),
-                    r[9] | ((r[10] & 0x0F) << 8), (r[10] >> 4) | (r[11] << 4));
+                    r[9] | ((r[10] & 0x0F) << 8), (r[10] >> 4) | (r[11] << 4),
+                    Battery: (r[2] >> 5) & 0x07, Charging: (r[2] & 0x10) != 0); // high nibble: 8 full, 6, 4, 2, 0 empty; +1 while charging
                 return true;
             }
             default:
