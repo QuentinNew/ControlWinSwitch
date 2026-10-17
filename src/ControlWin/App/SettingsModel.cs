@@ -354,13 +354,12 @@ internal static class SettingsPages
         var cfg = () => store.Current;
         void Changed() => host.ConfigChanged();
 
-        var general = new SettingsTab("General",
+        var other = new SettingsTab("Other",
         [
-            SettingItem.Info("Config file", () => host.ConfigPath),
+            SettingItem.Toggle("Launch on startup", () => host.StartOnLogon, host.SetStartOnLogon),
             SettingItem.Action("Edit config file", host.EditConfig),
             SettingItem.Action("Reload config file", host.ReloadConfig),
             SettingItem.Action("Open log", host.OpenLog),
-            SettingItem.Toggle("Launch on startup", () => host.StartOnLogon, host.SetStartOnLogon),
         ]);
 
         var layout = new SettingsTab("Layout",
@@ -413,6 +412,6 @@ internal static class SettingsPages
             SettingItem.Action("Bluetooth settings", host.OpenBluetoothSettings),
         ]);
 
-        return new SettingsModel([general, layout, controller, virtualPad, mouse, headset]);
+        return new SettingsModel([controller, layout, virtualPad, mouse, headset, other]);
     }
 }

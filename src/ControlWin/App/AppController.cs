@@ -1197,7 +1197,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         if (_pairing || _shutDown) return;
         _pairing = true;
-        _toast.Show(MenuPages.Gear, "Searching - hold the Pro Controller's sync button");
+        _toast.Show(MenuPages.Game, "Searching... Please hold sync button");
         nint hwnd = _window.Handle;
         new Thread(() =>
         {
@@ -1212,10 +1212,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _pairing = false;
         if (_shutDown) return;
         Log.Info($"Pairing: {result}");
-        _toast.Show(MenuPages.Gear, result switch
+        _toast.Show(MenuPages.Game, result switch
         {
             PairResult.Paired => "Pro Controller paired",
-            PairResult.NotFound => "No new Pro Controller found - hold its sync button and try again",
+            PairResult.NotFound => "No new controller found",
             _ => "Pairing failed - try Windows Bluetooth settings",
         });
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
