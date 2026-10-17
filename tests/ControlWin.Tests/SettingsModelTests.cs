@@ -66,6 +66,34 @@ public class SettingsModelTests
     }
 
     [Fact]
+    public void Going_back_from_a_controller_page_leaves_no_controller_selected()
+    {
+        var (m, _, host) = Create();
+        m.SetTab(m.Tabs.ToList().FindIndex(t => t.ControllerStrip));
+        Assert.Equal(SettingKind.Strip, m.CurrentItem!.Kind); // the tab opens on the strip
+        m.Activate(); // opens the page of the focused controller
+        m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
+
+        m.Back();
+
+        Assert.False(m.InSubPage);
+        Assert.NotEqual(SettingKind.Strip, m.CurrentItem!.Kind);
+        Assert.Equal("Add new Pro Controller", m.CurrentItem.Label);
+    }
+
+    [Fact]
+    public void Back_keeps_the_selection_of_tabs_without_a_strip()
+    {
+        var (m, _, host) = Create();
+        int before = m.Selected;
+        m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
+
+        m.Back();
+
+        Assert.Equal(before, m.Selected);
+    }
+
+    [Fact]
     public void A_sub_page_replaces_the_tab_until_back_and_tab_changes_leave_it()
     {
         var (m, _, host) = Create();
@@ -120,22 +148,33 @@ public class SettingsModelTests
     }
 
     [Fact]
-    public void Left_right_on_the_page_strip_switches_between_connected_controllers_only()
+    public void Switching_controller_on_the_page_skips_slots_without_a_controller()
     {
         var (m, _, host) = Create();
         host.Connected = [0, 2];
         m.OpenSub(SettingsPages.ControllerPage(host, 0, out var strip));
-        m.Move(-1); // up to the strip
-        Assert.Equal(SettingKind.Strip, m.CurrentItem!.Kind);
 
-        m.Adjust(1);
+        strip.Adjust!(1); // what ZR does
         Assert.Equal(2, strip.Slot); // slot 1 is empty: skipped
         Assert.Equal("Controller 3", m.SubTitle);
 
-        m.Adjust(1);
+        strip.Adjust!(1);
         Assert.Equal(0, strip.Slot); // wraps
-        m.Adjust(-1);
+        strip.Adjust!(-1); // what ZL does
         Assert.Equal(2, strip.Slot);
+    }
+
+    [Fact]
+    public void The_controller_strip_is_not_a_selectable_row_of_the_page()
+    {
+        var (m, _, host) = Create();
+        m.OpenSub(SettingsPages.ControllerPage(host, 0, out _));
+
+        for (int i = 0; i < 6; i++)
+        {
+            m.Move(-1);
+            Assert.NotEqual(SettingKind.Strip, m.CurrentItem!.Kind);
+        }
     }
 
     [Fact]
@@ -143,9 +182,8 @@ public class SettingsModelTests
     {
         var (m, _, host) = Create();
         m.OpenSub(SettingsPages.ControllerPage(host, 0, out var strip));
-        m.Move(-1);
 
-        m.Adjust(1);
+        strip.Adjust!(1);
 
         Assert.Equal(0, strip.Slot);
     }

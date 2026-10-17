@@ -533,6 +533,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         TrackDirection(horizontal: true);
 
+        // On a controller's page ZL / ZR edit the previous / next connected controller.
+        if (_settings.InSubPage && _pageStrip is { } controllers)
+        {
+            int step = _state.Pressed(Buttons.ZR) ? 1 : _state.Pressed(Buttons.ZL) ? -1 : 0;
+            if (step != 0)
+            {
+                controllers.Adjust?.Invoke(step);
+                _settingsWindow.Refresh();
+            }
+        }
+
         if (_state.Pressed(Buttons.L))
         {
             _settings.MoveTab(-1);

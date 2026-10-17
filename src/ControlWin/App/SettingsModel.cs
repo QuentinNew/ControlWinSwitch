@@ -90,13 +90,14 @@ internal sealed class SettingItem
     /// The row of controller tiles: left / right pick a slot (only those <paramref name="canFocus"/> accepts, when given),
     /// "A" runs <paramref name="run"/> on it.
     /// </summary>
-    public static SettingItem Strip(string label, int slots, Action<int> run, Func<int, bool>? canFocus = null)
+    public static SettingItem Strip(string label, int slots, Action<int> run, Func<int, bool>? canFocus = null, bool selectable = true)
     {
         SettingItem? self = null;
         return self = new()
         {
             Label = label,
             Kind = SettingKind.Strip,
+            Enabled = selectable,
             Adjust = d =>
             {
                 int step = Math.Sign(d);
@@ -162,7 +163,17 @@ internal sealed class SettingsModel
         _subSelected = FirstSelectable(page, skipStrip: true); // a page starts on its first setting, not on the controller strip
     }
 
-    public void Back() => _sub = null;
+    /// <summary>
+    /// Closes the open sub-page. When the tab below keeps its controller strip selected, the selection moves to the
+    /// first row after it: coming back from a controller's page leaves no controller selected.
+    /// </summary>
+    public void Back()
+    {
+        _sub = null;
+        if (CurrentItem is not { Kind: SettingKind.Strip }) return;
+        int first = FirstSelectable(Tab, skipStrip: true);
+        if (first >= 0) _selected[TabIndex] = first;
+    }
 
     /// <summary>Selected row of the current tab, or -1 when nothing can be selected.</summary>
     public int Selected => _sub is not null ? _subSelected : _selected[TabIndex];
@@ -289,7 +300,8 @@ internal static class SettingsPages
     /// </summary>
     public static SettingsTab ControllerPage(ISettingsHost host, int slot, out SettingItem strip)
     {
-        var tiles = SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, _ => { }, host.ControllerConnected);
+        // Not a row of the page: the pad switches controller with ZL / ZR (see AppController), the mouse by clicking a tile.
+        var tiles = SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, _ => { }, host.ControllerConnected, selectable: false);
         tiles.Slot = slot;
         strip = tiles;
         return new SettingsTab("Controller",

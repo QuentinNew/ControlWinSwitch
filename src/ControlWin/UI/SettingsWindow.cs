@@ -605,7 +605,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             return;
         }
         string hint = model.InSubPage
-            ? "Up / Down  Select     Left / Right  Controller     A  OK     B  Back"
+            ? "Up / Down  Select     ZL / ZR  Controller     A  OK     B  Back"
             : "L / R  Tab     Up / Down  Select     Left / Right  Change     A  Toggle     B  Close";
         Gdi.Text(dc, fonts.Footer, Gdi.Dim, hint,
             0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);
