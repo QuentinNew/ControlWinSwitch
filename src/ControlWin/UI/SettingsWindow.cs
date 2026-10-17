@@ -15,10 +15,14 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     // Layout in DIPs.
     private const int WidthDip = 760, HeaderDip = 60, TabsDip = 52, RowDip = 56, Rows = 6, FooterDip = 44;
     private const int SideDip = 16, ValueWidthDip = 300, ArrowDip = 40, CloseDip = 48;
+    // Connected-controller strip (Controller tab): tiles with a Rumble button under each.
+    private const int StripDip = RowDip * 2, TileDip = 64, TileGapDip = 24, RumbleHeightDip = 28;
+    private const string GamepadGlyph = "", NoneGlyph = "";
 
     private const string ChevronLeft = "", ChevronRight = "", Close = "";
 
     private SettingsModel? _model;
+    private const int Slots = 4;
     private RECT _work;
     private uint _dpi = 96;
     private int _lastMouseX = -1, _lastMouseY = -1;
@@ -40,6 +44,12 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     /// <summary>The mouse changed something (the controller path refreshes by itself).</summary>
     public event Action? Changed;
 
+    /// <summary>Whether the controller in a slot is connected (tile color, Rumble enabled).</summary>
+    public Func<int, bool>? SlotConnected { get; set; }
+
+    /// <summary>The user clicked a connected controller's tile or Rumble button.</summary>
+    public event Action<int>? RumbleRequested;
+
     public bool IsShown => IsWindowVisible(Handle) != 0;
 
     public void Show(SettingsModel model)
@@ -58,7 +68,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
     public void Refresh()
     {
-        if (_model is not null) InvalidateRect(Handle, null, 0);
+        if (_model is null) return;
+        InvalidateRect(Handle, null, 0);
     }
 
     public void Hide()
@@ -109,6 +120,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         Refresh();
     }
 
+    private int StripHeightDip => _model?.Tab.ControllerStrip == true ? StripDip : 0;
+
     private static int TotalHeightDip => HeaderDip + TabsDip + Rows * RowDip + FooterDip;
 
     private int Px(int dip) => (int)Math.Round(dip * _dpi / 96.0);
@@ -155,14 +168,29 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     }
 
     private int TabsTop => Px(HeaderDip);
-    private int RowsTop => Px(HeaderDip + TabsDip);
+    private int StripTop => Px(HeaderDip + TabsDip);
+    private int RowsTop => Px(HeaderDip + TabsDip + StripHeightDip);
+
+    private int TilesLeft => (Px(WidthDip) - (Slots * Px(TileDip) + (Slots - 1) * Px(TileGapDip))) / 2;
+
+    /// <summary>Slot whose tile or Rumble button is at the point, or -1.</summary>
+    private int SlotAt(int x, int y)
+    {
+        if (StripHeightDip == 0 || y < StripTop || y >= RowsTop) return -1;
+        int tile = Px(TileDip), pitch = tile + Px(TileGapDip);
+        int rel = x - TilesLeft;
+        if (rel < 0) return -1;
+        int slot = rel / pitch;
+        return slot < Slots && rel % pitch < tile ? slot : -1;
+    }
 
     private int RowAt(int y)
     {
-        int top = RowsTop;
+        int top = StripTop;
         if (y < top) return -1;
-        int row = (y - top) / Px(RowDip);
-        return row < Rows ? row : -1;
+        int rel = y - top, strip = Px(StripHeightDip);
+        if (strip == 0) return rel / Px(RowDip);
+        return rel < strip ? 0 : 1 + (rel - strip) / Px(RowDip);
     }
 
     private bool IsClickableAtCursor()
@@ -175,7 +203,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
         if (_editing) return true; // a click confirms
         if (y < TabsTop) return x >= Px(WidthDip) - Px(CloseDip); // close button
-        if (y < RowsTop) return true;                             // tabs
+        if (y < StripTop) return true;                            // tabs
+        if (y < RowsTop) return SlotAt(x, y) is var slot and >= 0 && SlotConnected?.Invoke(slot) == true;
 
         int row = RowAt(y);
         return row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Selectable;
@@ -235,7 +264,18 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             return;
         }
 
-        if (y < RowsTop)
+        if (y >= StripTop && y < RowsTop)
+        {
+            int slot = SlotAt(x, y);
+            if (slot < 0) return;
+            _model.Select(0);
+            _model.Tab.Items[0].Slot = slot;
+            if (SlotConnected?.Invoke(slot) == true) RumbleRequested?.Invoke(slot);
+            Refresh();
+            return;
+        }
+
+        if (y < StripTop)
         {
             int tab = Math.Clamp(x * _model.Tabs.Count / width, 0, _model.Tabs.Count - 1);
             _model.SetTab(tab);
@@ -298,16 +338,39 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             Gdi.Text(dc, fonts.Label, Gdi.TextColor, model.Tabs[i].Title, l, headerH, r, headerH + tabsH, DT_CENTER | oneLine);
         }
 
+        // Connected controllers
+        int rowsTop = headerH + tabsH;
+        bool strip = model.Tab.ControllerStrip;
+        if (strip)
+        {
+            bool stripSelected = model.Selected == 0;
+            int focus = model.Tab.Items[0].Slot;
+            int tile = Px(TileDip), pitch = tile + Px(TileGapDip), btnH = Px(RumbleHeightDip);
+            for (int i = 0; i < Slots; i++)
+            {
+                bool on = SlotConnected?.Invoke(i) == true;
+                int l = TilesLeft + i * pitch, t = rowsTop + Px(8);
+                Gdi.RoundedFill(dc, on ? Gdi.OnBrush : Gdi.PanelBrush, l, t, l + tile, t + tile, Px(14));
+                Gdi.Text(dc, fonts.Glyph, on ? Gdi.TextColor : Gdi.Dim, on ? GamepadGlyph : NoneGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+                int bt = t + tile + Px(6);
+                if (stripSelected && i == focus)
+                    Gdi.RoundedFill(dc, Gdi.TextBrush, l - Px(2), bt - Px(2), l + tile + Px(2), bt + btnH + Px(2), Px(12));
+                Gdi.RoundedFill(dc, on ? Gdi.SelectionBrush : Gdi.PanelBrush, l, bt, l + tile, bt + btnH, Px(10));
+                Gdi.Text(dc, fonts.Detail, on ? Gdi.TextColor : Gdi.Dim, "Rumble", l, bt, l + tile, bt + btnH, DT_CENTER | oneLine);
+            }
+            rowsTop += Px(StripDip);
+        }
+
         // Rows
         var items = model.Tab.Items;
-        int rowsTop = headerH + tabsH;
         int valueRight = width - side - Px(28); // keeps values clear of the row's rounded edge
         int valueLeft = width - side - Px(ValueWidthDip);
 
-        for (int i = 0; i < Rows && i < items.Count; i++)
+        for (int i = 0; i < items.Count; i++)
         {
             var item = items[i];
-            int y = rowsTop + i * rowH;
+            if (item.Kind == SettingKind.Strip) continue;
+            int y = rowsTop + (strip ? i - 1 : i) * rowH;
             bool selected = i == model.Selected;
             if (selected)
                 Gdi.RoundedFill(dc, Gdi.SelectionBrush, side, y + Px(4), width - side, y + rowH - Px(4), Px(16));
@@ -356,7 +419,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         }
 
         // Footer
-        int footerTop = rowsTop + Rows * rowH;
+        int footerTop = headerH + tabsH + Rows * rowH;
         if (_editing)
         {
             Gdi.Text(dc, fonts.Footer, Gdi.Dim, "Type the name     Enter / A  OK     Esc / B  Cancel",

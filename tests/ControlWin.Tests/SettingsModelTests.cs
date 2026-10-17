@@ -21,6 +21,9 @@ public class SettingsModelTests
         public void ToggleHeadset() { }
         public void OpenBluetoothSettings() { }
         public void EditRadialMenu() { }
+        public bool ControllerConnected(int slot) => slot == 0;
+        public List<int> Rumbled = [];
+        public void RumbleController(int slot) => Rumbled.Add(slot);
         public bool StartOnLogon { get; private set; }
         public void SetStartOnLogon(bool enabled) => StartOnLogon = enabled;
         public Action<string>? Commit;
@@ -53,6 +56,32 @@ public class SettingsModelTests
     {
         var (m, _, _) = Create();
         Assert.Equal(["General", "Layout", "Controller", "Mouse", "Headset"], m.Tabs.Select(t => t.Title));
+    }
+
+    [Fact]
+    public void Only_the_controller_tab_shows_the_controller_strip()
+    {
+        var (m, _, _) = Create();
+        Assert.Equal(["Controller"], m.Tabs.Where(t => t.ControllerStrip).Select(t => t.Title));
+    }
+
+    [Fact]
+    public void Controller_strip_is_driven_with_left_right_and_a()
+    {
+        var (m, _, host) = Create();
+        m.SetTab(2);
+        Assert.Equal(SettingKind.Strip, m.CurrentItem!.Kind);
+
+        m.Adjust(1);
+        m.Adjust(1);
+        m.Activate();
+        m.Adjust(-1);
+        m.Activate();
+        m.Adjust(-1);
+        m.Adjust(-1); // wraps
+        m.Activate();
+
+        Assert.Equal([2, 1, 3], host.Rumbled);
     }
 
     [Fact]
@@ -97,7 +126,8 @@ public class SettingsModelTests
     {
         var (m, store, host) = Create();
         m.SetTab(2); // Controller
-        m.Move(1);   // Swap A / B
+        m.Move(1);
+        m.Move(1);   // strip -> pad -> Swap A / B
         Assert.True(store.Current.VirtualPad.SwapAB);
 
         m.Activate();
@@ -113,7 +143,8 @@ public class SettingsModelTests
     {
         var (m, store, host) = Create();
         m.SetTab(2);
-        Assert.Equal(0, m.Selected);
+        m.Move(1);
+        Assert.Equal(1, m.Selected);
 
         m.Activate();
         Assert.False(host.Pad);

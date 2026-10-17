@@ -38,6 +38,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
     private uint _outputLength;
     private bool _canWrite;
     private byte _packetCounter;
+    private bool _vibrationEnabled;
     private int _modeAttempts;
     private long _lastModeAttempt;
     private const int MaxModeAttempts = 5;
@@ -118,6 +119,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
         _canWrite = canWrite && outputLength > 0;
         _outputLength = outputLength;
         _modeAttempts = 0;
+        _vibrationEnabled = false;
         _lastModeAttempt = 0;
         Log.Info($"Pro Controller opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
         BeginRead();
@@ -189,6 +191,20 @@ internal sealed unsafe class HidControllerReader : IDisposable
             Log.Info($"Requested full input mode (attempt {_modeAttempts})");
         else if (_modeAttempts >= MaxModeAttempts)
             _canWrite = false;
+    }
+
+    /// <summary>Starts or stops the rumble motors. Returns false when the controller is absent or read-only.</summary>
+    public bool SetRumble(bool on)
+    {
+        if (_file == 0 || !_canWrite) return false;
+        if (on && !_vibrationEnabled)
+        {
+            if (!Write(ProCommands.EnableVibration(_packetCounter++, (int)_outputLength))) return false;
+            _vibrationEnabled = true;
+        }
+        bool ok = Write(ProCommands.Rumble(_packetCounter++, on, (int)_outputLength));
+        Log.Info($"Rumble {(on ? "on" : "off")}: {(ok ? "sent" : "failed")}");
+        return ok;
     }
 
     /// <summary>Synchronous (bounded) overlapped write on the device handle.</summary>

@@ -39,6 +39,10 @@ internal sealed unsafe class MainWindow : NativeWindow
     }
 
     /// <summary>Call after the controller (dis)connected.</summary>
+    public bool ControllerConnected => _reader.IsOpen;
+
+    public bool SetRumble(bool on) => _reader.SetRumble(on);
+
     public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_reader.IsOpen));
 
     /// <summary>Removes the tray icon right away (shutdown).</summary>

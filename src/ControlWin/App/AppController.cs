@@ -13,7 +13,8 @@ namespace ControlWin.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1, WatchTimerId = 4;
+    private const nuint RepeatTimerId = 1, WatchTimerId = 4, RumbleTimerId = 5;
+    private const uint RumbleMs = 400;
     private const uint WatchPollMs = 5000, WatchFastPollMs = 1000, WatchFastWindowMs = 15000;
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
@@ -82,6 +83,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _radialOverlay.NodeHovered += OnRadialNodeHovered;
         _radialOverlay.NodeClicked += OnRadialNodeClicked;
         _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
+        _settingsWindow.SlotConnected = slot => ((ISettingsHost)this).ControllerConnected(slot);
+        _settingsWindow.RumbleRequested += slot => ((ISettingsHost)this).RumbleController(slot);
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
         _radialEditor.Saved += OnRadialEditorSaved;
         _radialEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseRadialEditor(); };
@@ -169,6 +172,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (id == WatchTimerId)
         {
             CheckProcesses();
+            return;
+        }
+        if (id == RumbleTimerId)
+        {
+            KillTimer(_window.Handle, RumbleTimerId);
+            _window.SetRumble(false);
             return;
         }
         if (id != RepeatTimerId) return;
@@ -858,6 +867,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
     string ISettingsHost.ConfigPath => _store.Path;
 
     string ISettingsHost.HeadsetStatus => _headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
+
+    bool ISettingsHost.ControllerConnected(int slot) => slot == 0 && _window.ControllerConnected;
+
+    void ISettingsHost.RumbleController(int slot)
+    {
+        if (slot != 0 || !_window.SetRumble(true)) return;
+        SetTimer(_window.Handle, RumbleTimerId, RumbleMs, 0);
+    }
 
     void ISettingsHost.EditRadialMenu() => OpenRadialEditor();
 

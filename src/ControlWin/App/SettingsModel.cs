@@ -3,7 +3,7 @@ using ControlWin.Config;
 
 namespace ControlWin.App;
 
-internal enum SettingKind { Toggle, Number, Action, Info, Text, Choice }
+internal enum SettingKind { Toggle, Number, Action, Info, Text, Choice, Strip }
 
 /// <summary>One row of the settings window.</summary>
 internal sealed class SettingItem
@@ -22,6 +22,9 @@ internal sealed class SettingItem
 
     /// <summary>Action rows, and Toggle rows when "A" is pressed.</summary>
     public Action? Activate { get; init; }
+
+    /// <summary>Strip rows: the focused controller slot (left / right move it).</summary>
+    public int Slot { get; set; }
 
     public bool Enabled { get; init; } = true;
 
@@ -82,6 +85,19 @@ internal sealed class SettingItem
         Activate = edit,
     };
 
+    /// <summary>The row of controller tiles: left / right pick a slot, "A" runs <paramref name="run"/> on it.</summary>
+    public static SettingItem Strip(string label, int slots, Action<int> run)
+    {
+        SettingItem? self = null;
+        return self = new()
+        {
+            Label = label,
+            Kind = SettingKind.Strip,
+            Adjust = d => self!.Slot = ((self.Slot + Math.Sign(d)) % slots + slots) % slots,
+            Activate = () => run(self!.Slot),
+        };
+    }
+
     public static SettingItem Info(string label, Func<string> value) => new()
     {
         Label = label,
@@ -90,8 +106,11 @@ internal sealed class SettingItem
     };
 }
 
-internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items)
+internal sealed class SettingsTab(string title, IReadOnlyList<SettingItem> items, bool controllerStrip = false)
 {
+    /// <summary>Shows the row of connected-controller tiles above the rows.</summary>
+    public bool ControllerStrip { get; } = controllerStrip;
+
     public string Title { get; } = title;
     public IReadOnlyList<SettingItem> Items { get; } = items;
 }
@@ -195,6 +214,12 @@ internal interface ISettingsHost
     /// <summary>ControlWin is registered to start when Windows starts.</summary>
     bool StartOnLogon { get; }
     void SetStartOnLogon(bool enabled);
+
+    /// <summary>Slots shown above the Controller tab rows (the app drives one Pro Controller, in slot 1).</summary>
+    const int ControllerSlots = 4;
+    bool ControllerConnected(int slot);
+    /// <summary>Makes the controller in <paramref name="slot"/> rumble briefly.</summary>
+    void RumbleController(int slot);
 }
 
 internal static class SettingsPages
@@ -223,6 +248,7 @@ internal static class SettingsPages
 
         var controller = new SettingsTab("Controller",
         [
+            SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, host.RumbleController),
             SettingItem.Toggle("Virtual Xbox pad", () => host.PadEnabled, host.SetPad),
             SettingItem.Toggle("Swap A / B", () => cfg().VirtualPad.SwapAB, v => { cfg().VirtualPad.SwapAB = v; Changed(); }),
             SettingItem.Toggle("Swap X / Y", () => cfg().VirtualPad.SwapXY, v => { cfg().VirtualPad.SwapXY = v; Changed(); }),
@@ -234,7 +260,7 @@ internal static class SettingsPages
                     Changed();
                     host.WatchListChanged();
                 })),
-        ]);
+        ], controllerStrip: true);
 
         var mouse = new SettingsTab("Mouse",
         [
