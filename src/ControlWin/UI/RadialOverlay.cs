@@ -51,6 +51,8 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         RadialIcons.Clear(); // pictures are read again each time the menu opens
         Render();
         ShowWindow(Handle, SW_SHOWNOACTIVATE);
+        // Re-assert topmost: at logon the shell can push a window created early below the others.
+        SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     /// <summary>Call after the model changed.</summary>
