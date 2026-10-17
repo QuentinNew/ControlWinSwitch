@@ -272,6 +272,9 @@ internal interface ISettingsHost
     bool PadEnabled { get; }
     /// <summary>The user switched the pad from the settings window.</summary>
     void SetPad(bool enabled);
+    /// <summary>The pad's kind: 0 = none, 1 = Xbox, 2 = PS4.</summary>
+    int PadMode { get; }
+    void SetPadMode(int mode);
     /// <summary>The list of watched processes changed.</summary>
     void WatchListChanged();
     /// <summary>Starts inline text editing; <paramref name="commit"/> receives the new text on Enter / A.</summary>
@@ -376,7 +379,7 @@ internal static class SettingsPages
 
         var virtualPad = new SettingsTab("Virtual Pad",
         [
-            SettingItem.Toggle("Virtual Xbox pad", () => host.PadEnabled, host.SetPad),
+            SettingItem.Choice("Virtual pad", ["None", "Xbox", "PS4"], () => host.PadMode, host.SetPadMode),
             SettingItem.Toggle("Swap A / B", () => cfg().VirtualPad.SwapAB, v => { cfg().VirtualPad.SwapAB = v; Changed(); }),
             SettingItem.Toggle("Swap X / Y", () => cfg().VirtualPad.SwapXY, v => { cfg().VirtualPad.SwapXY = v; Changed(); }),
             SettingItem.Number("Rumble", () => cfg().VirtualPad.Rumble, v => { cfg().VirtualPad.Rumble = (int)v; Changed(); }, 0, 100, 10, "0", "%"),

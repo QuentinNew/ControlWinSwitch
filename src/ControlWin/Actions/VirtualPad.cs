@@ -5,8 +5,11 @@ using static ControlWin.Native.Win32;
 
 namespace ControlWin.Actions;
 
+/// <summary>What the virtual pad presents itself as.</summary>
+internal enum PadKind { Xbox, Ps4 }
+
 /// <summary>
-/// A virtual Xbox 360 pad on the ViGEmBus driver. Talks to the bus driver directly with IOCTLs
+/// A virtual Xbox 360 or DualShock 4 pad on the ViGEmBus driver. Talks to the bus driver directly with IOCTLs
 /// (no ViGEmClient.dll to ship). Closing the bus handle makes the driver unplug the pad, so a crash
 /// never leaves a ghost controller behind. UI thread only.
 /// </summary>
@@ -20,11 +23,18 @@ internal sealed unsafe class VirtualPad : IDisposable
     private static uint Ioctl(uint function) => (FileDeviceBusExtender << 16) | (2u << 14) | (function << 2);
 
     private static readonly uint IoctlPlugin = Ioctl(0x801), IoctlUnplug = Ioctl(0x802),
-        IoctlCheckVersion = Ioctl(0x803), IoctlWaitReady = Ioctl(0x804), IoctlXusbSubmit = Ioctl(0xA02);
+        IoctlCheckVersion = Ioctl(0x803), IoctlWaitReady = Ioctl(0x804), IoctlXusbSubmit = Ioctl(0xA02), IoctlDs4Submit = Ioctl(0xA03);
 
     // CTL_CODE(FILE_DEVICE_BUS_EXTENDER, 0xA01, METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA): completes when a game
     // changes the pad's vibration. XUSB_REQUEST_NOTIFICATION { Size = 12, SerialNo, LargeMotor, SmallMotor, LedNumber }.
     private static readonly uint IoctlXusbRequestNotification = (FileDeviceBusExtender << 16) | (3u << 14) | (0xA01u << 2);
+
+    // CTL_CODE(..., 0xA04, METHOD_BUFFERED, FILE_WRITE_DATA): the DualShock 4 counterpart.
+    // DS4_REQUEST_NOTIFICATION { Size = 16, SerialNo, SmallMotor, LargeMotor, R, G, B }.
+    private static readonly uint IoctlDs4RequestNotification = Ioctl(0xA04);
+
+    private const uint TargetXbox360Wired = 0, TargetDualShock4Wired = 2;
+    private const int NotifyBufferSize = 16;
 
     private static uint s_nextSerial = (uint)Environment.ProcessId << 8; // unique per process and plug-in: a lingering target can never collide
     private uint _serial;
@@ -32,7 +42,9 @@ internal sealed unsafe class VirtualPad : IDisposable
     private nint _bus = INVALID_HANDLE_VALUE;
     private bool _plugged;
     private XusbReport _last;
+    private Ds4Report _lastDs4;
     private bool _hasLast;
+    private PadKind _plugKind;
 
     // Rumble feedback: a pending overlapped request on the bus handle that plugged the pad, completed by the driver.
     // The bus handle is overlapped, so the synchronous calls go through Control().
@@ -43,6 +55,14 @@ internal sealed unsafe class VirtualPad : IDisposable
     private bool _notifyPending;
 
     public bool IsAttached => _plugged;
+
+    /// <summary>What the pad presents itself as the next time it is plugged in; changing it needs a re-plug.</summary>
+    public PadKind Kind { get; set; } = PadKind.Xbox;
+
+    /// <summary>What the plugged-in pad presents itself as.</summary>
+    public PadKind PluggedKind => _plugKind;
+
+    private string KindName => _plugKind == PadKind.Ps4 ? "DualShock 4" : "Xbox 360";
 
     /// <summary>Signaled when a game changed the vibration; 0 when nothing is pending. Call <see cref="OnNotifySignaled"/>.</summary>
     public nint NotifyHandle => _notifyPending ? _notifyEvent : 0;
@@ -67,8 +87,9 @@ internal sealed unsafe class VirtualPad : IDisposable
                 return false;
             }
 
-            // VIGEM_PLUGIN_TARGET { Size = 16, SerialNo, TargetType = X360Wired (0), VendorId = 0, ProductId = 0 }
-            uint* plug = stackalloc uint[4] { 16, _serial = ++s_nextSerial, 0, 0 };
+            // VIGEM_PLUGIN_TARGET { Size = 16, SerialNo, TargetType = X360Wired (0) / DualShock4Wired (2), VendorId = 0, ProductId = 0 }
+            _plugKind = Kind;
+            uint* plug = stackalloc uint[4] { 16, _serial = ++s_nextSerial, _plugKind == PadKind.Ps4 ? TargetDualShock4Wired : TargetXbox360Wired, 0 };
             if (Control(IoctlPlugin, plug, 16) != 0)
             {
                 Log.Error($"ViGEmBus refused the virtual pad (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
@@ -83,7 +104,7 @@ internal sealed unsafe class VirtualPad : IDisposable
 
             _plugged = true;
             _hasLast = false;
-            Log.Info("Virtual Xbox 360 pad plugged in");
+            Log.Info($"Virtual {KindName} pad plugged in");
             StartNotify();
             return true;
         }
@@ -94,10 +115,10 @@ internal sealed unsafe class VirtualPad : IDisposable
         }
     }
 
-    /// <summary>Sends a report; identical consecutive reports are skipped.</summary>
+    /// <summary>Sends an Xbox report; identical consecutive reports are skipped.</summary>
     public void Submit(in XusbReport report)
     {
-        if (!_plugged) return;
+        if (!_plugged || _plugKind != PadKind.Xbox) return;
         if (_hasLast && _last.Equals(report)) return;
 
         // XUSB_SUBMIT_REPORT { Size = 20, SerialNo, XUSB_REPORT }
@@ -105,16 +126,43 @@ internal sealed unsafe class VirtualPad : IDisposable
         *(uint*)buffer = 20;
         *(uint*)(buffer + 4) = _serial;
         *(XusbReport*)(buffer + 8) = report;
-        int error = Control(IoctlXusbSubmit, buffer, 20);
-        if (error != 0)
-        {
-            if (error == 170) return; // ERROR_BUSY: not ready yet, the next report retries
-            Log.Error($"Virtual pad submit failed (error {error}), unplugging");
-            Detach();
-            return;
-        }
+        if (!Send(IoctlXusbSubmit, buffer)) return;
         _last = report;
         _hasLast = true;
+    }
+
+    /// <summary>Sends a DualShock 4 report; identical consecutive reports are skipped.</summary>
+    public void Submit(in Ds4Report report)
+    {
+        if (!_plugged || _plugKind != PadKind.Ps4) return;
+        if (_hasLast && _lastDs4.Equals(report)) return;
+
+        // DS4_SUBMIT_REPORT { Size = 20, SerialNo, DS4_REPORT (9 bytes, padded) }
+        byte* buffer = stackalloc byte[20];
+        new Span<byte>(buffer, 20).Clear();
+        *(uint*)buffer = 20;
+        *(uint*)(buffer + 4) = _serial;
+        *(Ds4Report*)(buffer + 8) = report;
+        if (!Send(IoctlDs4Submit, buffer)) return;
+        _lastDs4 = report;
+        _hasLast = true;
+    }
+
+    /// <summary>Neutral pad of whichever kind is plugged in.</summary>
+    public void SubmitNeutral()
+    {
+        if (_plugKind == PadKind.Ps4) Submit(Ds4Mapper.Neutral);
+        else Submit(default(XusbReport));
+    }
+
+    private bool Send(uint code, byte* buffer)
+    {
+        int error = Control(code, buffer, 20);
+        if (error == 0) return true;
+        if (error == 170) return false; // ERROR_BUSY: not ready yet, the next report retries
+        Log.Error($"Virtual pad submit failed (error {error}), unplugging");
+        Detach();
+        return false;
     }
 
     public void Detach()
@@ -124,7 +172,7 @@ internal sealed unsafe class VirtualPad : IDisposable
         {
             uint* unplug = stackalloc uint[2] { 8, _serial };
             Control(IoctlUnplug, unplug, 8);
-            Log.Info("Virtual Xbox 360 pad removed");
+            Log.Info($"Virtual {KindName} pad removed");
         }
         _plugged = false;
         _hasLast = false;
@@ -164,7 +212,7 @@ internal sealed unsafe class VirtualPad : IDisposable
         {
             _notifyEvent = CreateEventW(0, 1, 0, null); // manual reset: the next request resets it
             _notifyOverlapped = (OVERLAPPED*)NativeMemory.AllocZeroed((nuint)sizeof(OVERLAPPED));
-            _notifyBuffer = (byte*)NativeMemory.AllocZeroed(12);
+            _notifyBuffer = (byte*)NativeMemory.AllocZeroed(NotifyBufferSize);
         }
         RequestNotification();
     }
@@ -173,11 +221,13 @@ internal sealed unsafe class VirtualPad : IDisposable
     {
         *_notifyOverlapped = default;
         _notifyOverlapped->hEvent = _notifyEvent;
-        new Span<byte>(_notifyBuffer, 12).Clear();
-        *(uint*)_notifyBuffer = 12;
+        bool ps4 = _plugKind == PadKind.Ps4;
+        uint size = ps4 ? 16u : 12u;
+        new Span<byte>(_notifyBuffer, NotifyBufferSize).Clear();
+        *(uint*)_notifyBuffer = size;
         *(uint*)(_notifyBuffer + 4) = _serial;
         uint returned;
-        if (DeviceIoControl(_bus, IoctlXusbRequestNotification, _notifyBuffer, 12, _notifyBuffer, 12, &returned, (nint)_notifyOverlapped) == 0)
+        if (DeviceIoControl(_bus, ps4 ? IoctlDs4RequestNotification : IoctlXusbRequestNotification, _notifyBuffer, size, _notifyBuffer, size, &returned, (nint)_notifyOverlapped) == 0)
         {
             int error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
             if (error != ERROR_IO_PENDING)
@@ -204,7 +254,9 @@ internal sealed unsafe class VirtualPad : IDisposable
             return;
         }
         _notifyPending = false;
-        byte large = _notifyBuffer[8], small = _notifyBuffer[9];
+        // Xbox: LargeMotor, SmallMotor. DualShock 4: SmallMotor, LargeMotor.
+        byte large = _plugKind == PadKind.Ps4 ? _notifyBuffer[9] : _notifyBuffer[8];
+        byte small = _plugKind == PadKind.Ps4 ? _notifyBuffer[8] : _notifyBuffer[9];
         Feedback?.Invoke(large, small);
         if (_plugged) RequestNotification();
     }

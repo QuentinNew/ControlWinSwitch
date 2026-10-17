@@ -6,6 +6,10 @@ namespace ControlWin.Config;
 internal sealed class VirtualPadConfig
 {
     public bool Enabled { get; set; } = true;
+
+    /// <summary>What the pad presents itself as: <see cref="PadTypes.Xbox"/> or <see cref="PadTypes.Ps4"/>.</summary>
+    public string Type { get; set; } = PadTypes.Xbox;
+
     /// <summary>Label-based mapping: Switch A = Xbox A, B = B, X = X, Y = Y.</summary>
     public bool SwapAB { get; set; } = true;
     public bool SwapXY { get; set; } = true;
@@ -18,6 +22,11 @@ internal sealed class VirtualPadConfig
 
     /// <summary>The pad is switched off while one of these processes runs (empty = feature off).</summary>
     public List<string> DisableWhileRunning { get; set; } = ["steam.exe"];
+}
+
+internal static class PadTypes
+{
+    public const string Xbox = "xbox", Ps4 = "ps4";
 }
 
 /// <summary>What the user set for one physical controller, keyed by its id (MAC address) in <see cref="AppConfig.Controllers"/>.</summary>
@@ -170,6 +179,7 @@ internal sealed class AppConfig
         RadialReleaseMs = Math.Clamp(RadialReleaseMs, 20, 500);
         RadialCardinalBias = Math.Clamp(RadialCardinalBias, 0, 25);
         VirtualPad ??= new();
+        VirtualPad.Type = string.Equals(VirtualPad.Type?.Trim(), PadTypes.Ps4, StringComparison.OrdinalIgnoreCase) ? PadTypes.Ps4 : PadTypes.Xbox;
         VirtualPad.Rumble = Math.Clamp(VirtualPad.Rumble, 0, 100);
         VirtualPad.DisableWhileRunning ??= [];
         VirtualPad.DisableWhileRunning = VirtualPad.DisableWhileRunning

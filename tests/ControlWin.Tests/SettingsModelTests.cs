@@ -11,6 +11,9 @@ public class SettingsModelTests
         public bool Pad = true;
         public bool PadEnabled => Pad;
         public void SetPad(bool enabled) => Pad = enabled;
+        public int Mode = 1;
+        public int PadMode => Pad ? Mode : 0;
+        public void SetPadMode(int mode) { Pad = mode > 0; if (mode > 0) Mode = mode; }
         public void WatchListChanged() => WatchChanges++;
         public string ConfigPath => "x";
         public string HeadsetStatus => "Connected";
@@ -372,13 +375,15 @@ public class SettingsModelTests
     }
 
     [Fact]
-    public void Pad_toggle_goes_through_the_host_not_the_config()
+    public void Pad_mode_goes_through_the_host_not_the_config()
     {
         var (m, store, host) = Create();
         m.SetTab(3);
         Assert.Equal(0, m.Selected);
 
-        m.Activate();
+        m.Activate(); // Xbox -> PS4
+        Assert.True(host.Pad);
+        m.Activate(); // PS4 -> None
         Assert.False(host.Pad);
         Assert.True(store.Current.VirtualPad.Enabled); // the host decides whether it is persisted
     }

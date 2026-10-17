@@ -283,7 +283,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         ReloadConfigIfChanged();
         var root = MenuPages.Root(PadDetail, HeadsetDetail, BuildShortcutsPage);
         _radialShown = Config.MenuLayout == MenuLayouts.Radial;
-        _pad.Submit(default); // neutral pad while the menu owns the input
+        _pad.SubmitNeutral(); // neutral pad while the menu owns the input
         _mode = Mode.Menu;
         if (_radialShown)
         {
@@ -513,7 +513,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (fromMenu) StopRepeat();
 
         ReloadConfigIfChanged();
-        _pad.Submit(default);
+        _pad.SubmitNeutral();
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
         _settingsWindow.Show(_settings);
@@ -677,7 +677,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private void EnterMouse(char glyph)
     {
         _mouseGlyph = glyph;
-        _pad.Submit(default); // neutral pad while the mouse owns the input
+        _pad.SubmitNeutral(); // neutral pad while the mouse owns the input
         _mode = Mode.Mouse;
         _mouse.Activate(_state.Current);
         _toast.Show(glyph, "Mouse mode - Capture to exit");
@@ -911,12 +911,18 @@ internal sealed class AppController : IDisposable, ISettingsHost
         SetTimer(_window.Handle, WatchTimerId, interval, 0); // same id: replaces the interval
     }
 
+    private PadKind ConfiguredKind => Config.VirtualPad.Type == PadTypes.Ps4 ? PadKind.Ps4 : PadKind.Xbox;
+
     private void SetPadEnabled(bool enabled)
     {
         _padEnabled = enabled;
         _padFailed = false;
+        var kind = ConfiguredKind;
         for (int i = 0; i < _slots.Length; i++)
         {
+            var pad = _slots[i].Pad;
+            if (pad.IsAttached && pad.PluggedKind != kind) pad.Detach();
+            pad.Kind = kind;
             if (!enabled) _slots[i].Pad.Detach();
             else if (_set.Readers[i].IsOpen && !_slots[i].Pad.Attach()) _padFailed = true;
         }
@@ -985,7 +991,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         var held = state.Current & ~slot.IgnoreMask;
         var pad = Config.VirtualPad;
-        slot.Pad.Submit(XInputMapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
+        if (slot.Pad.PluggedKind == PadKind.Ps4) slot.Pad.Submit(Ds4Mapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
+        else slot.Pad.Submit(XInputMapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
     }
 
     // ---- config ------------------------------------------------------------------------------
@@ -1011,6 +1018,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         bool enabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
         UpdateWatchTimer();
         if (enabled != _padEnabled) SetPadEnabled(enabled);
+        else if (_padEnabled && _slots.Any(s => s.Pad.IsAttached && s.Pad.PluggedKind != ConfiguredKind)) SetPadEnabled(true); // the kind changed
         else SyncHiding(); // the Hide setting may have changed
         for (int i = 0; i < _slots.Length; i++) ApplyGameRumble(i, restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
     }
@@ -1227,7 +1235,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Menu) CloseMenu();
         if (_mode == Mode.Settings) CloseSettings();
 
-        _pad.Submit(default); // neutral pad while the editor is open
+        _pad.SubmitNeutral(); // neutral pad while the editor is open
         _heldDirection = Dir.None;
         _mode = Mode.Editor;
         _radialEditor.Show(Config.RadialMenu ?? [], Config.Shortcuts);
@@ -1286,6 +1294,23 @@ internal sealed class AppController : IDisposable, ISettingsHost
     }
 
     bool ISettingsHost.PadEnabled => _padEnabled;
+
+    int ISettingsHost.PadMode => !_padEnabled ? 0 : Config.VirtualPad.Type == PadTypes.Ps4 ? 2 : 1;
+
+    void ISettingsHost.SetPadMode(int mode)
+    {
+        if (mode == ((ISettingsHost)this).PadMode) return;
+        if (mode > 0)
+        {
+            string type = mode == 2 ? PadTypes.Ps4 : PadTypes.Xbox;
+            if (Config.VirtualPad.Type != type)
+            {
+                Config.VirtualPad.Type = type;
+                if (!_watchRunning) _store.Save();
+            }
+        }
+        UserSetPad(mode > 0); // also re-plugs the pads already in when the kind changed
+    }
 
     void ISettingsHost.SetPad(bool enabled)
     {
