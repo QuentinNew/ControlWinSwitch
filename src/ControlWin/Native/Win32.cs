@@ -520,6 +520,13 @@ internal static unsafe partial class Win32
     [LibraryImport("bthprops.cpl")] public static partial int BluetoothFindNextDevice(nint find, byte* info);
     [LibraryImport("bthprops.cpl")] public static partial int BluetoothFindDeviceClose(nint find);
     [LibraryImport("bthprops.cpl")] public static partial uint BluetoothAuthenticateDeviceEx(nint owner, nint radio, byte* info, nint oob, uint requirements);
+    /// <summary>address: 64-bit Bluetooth address. Removes the remembered pairing. Returns 0 on success.</summary>
+    [LibraryImport("bthprops.cpl")] public static partial uint BluetoothRemoveDevice(ulong* address);
+    /// <summary>callback: BOOL (nint param, BLUETOOTH_AUTHENTICATION_CALLBACK_PARAMS*). Returns 0 on success.</summary>
+    [LibraryImport("bthprops.cpl")] public static partial uint BluetoothRegisterForAuthenticationEx(byte* info, nint* registration, delegate* unmanaged<nint, byte*, int> callback, nint param);
+    [LibraryImport("bthprops.cpl")] public static partial int BluetoothUnregisterAuthentication(nint registration);
+    /// <summary>response: 48-byte BLUETOOTH_AUTHENTICATE_RESPONSE. Returns 0 on success.</summary>
+    [LibraryImport("bthprops.cpl")] public static partial uint BluetoothSendAuthenticationResponseEx(nint radio, byte* response);
     [LibraryImport("bthprops.cpl")] public static partial uint BluetoothSetServiceState(nint radio, byte* info, Guid* service, uint flags);
 
     // ---- misc -----------------------------------------------------------------------------
