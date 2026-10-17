@@ -26,7 +26,8 @@ internal sealed unsafe class VirtualPad : IDisposable
     // changes the pad's vibration. XUSB_REQUEST_NOTIFICATION { Size = 12, SerialNo, LargeMotor, SmallMotor, LedNumber }.
     private static readonly uint IoctlXusbRequestNotification = (FileDeviceBusExtender << 16) | (3u << 14) | (0xA01u << 2);
 
-    private uint _serial = (uint)Environment.ProcessId << 8; // unique per process and plug-in: a lingering target can never collide
+    private static uint s_nextSerial = (uint)Environment.ProcessId << 8; // unique per process and plug-in: a lingering target can never collide
+    private uint _serial;
 
     private nint _bus = INVALID_HANDLE_VALUE;
     private bool _plugged;
@@ -67,7 +68,7 @@ internal sealed unsafe class VirtualPad : IDisposable
             }
 
             // VIGEM_PLUGIN_TARGET { Size = 16, SerialNo, TargetType = X360Wired (0), VendorId = 0, ProductId = 0 }
-            uint* plug = stackalloc uint[4] { 16, ++_serial, 0, 0 };
+            uint* plug = stackalloc uint[4] { 16, _serial = ++s_nextSerial, 0, 0 };
             if (Control(IoctlPlugin, plug, 16) != 0)
             {
                 Log.Error($"ViGEmBus refused the virtual pad (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");

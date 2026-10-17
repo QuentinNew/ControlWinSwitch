@@ -18,8 +18,12 @@ internal sealed unsafe class TrayIcon : IDisposable
 
     public TrayIcon(nint hwnd) => _hwnd = hwnd;
 
-    public static string Tooltip(bool controllerConnected) =>
-        controllerConnected ? "ControlWin - controller connected" : "ControlWin - controller not found";
+    public static string Tooltip(int controllers) => controllers switch
+    {
+        0 => "ControlWin - controller not found",
+        1 => "ControlWin - controller connected",
+        _ => $"ControlWin - {controllers} controllers connected",
+    };
 
     /// <summary>Adds (or re-adds, after an explorer restart) the icon.</summary>
     public void Add(string tooltip)

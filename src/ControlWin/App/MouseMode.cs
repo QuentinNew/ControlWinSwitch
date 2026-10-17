@@ -25,7 +25,9 @@ internal sealed class MouseMode
 {
     private const int WheelChunk = 40;
 
-    private readonly ControllerState _state;
+    private readonly Func<ControllerState> _stateOf;
+
+    private ControllerState _state => _stateOf();
     private readonly IMouseOutput _output;
     private readonly Func<long> _clock;
     private readonly Func<MouseConfig> _config;
@@ -39,8 +41,14 @@ internal sealed class MouseMode
     private float _fracX, _fracY, _wheel, _hwheel;
 
     public MouseMode(ControllerState state, IMouseOutput output, Func<MouseConfig>? config = null, Func<long>? clock = null)
+        : this(() => state, output, config, clock)
     {
-        _state = state;
+    }
+
+    /// <summary>The state is looked up on every use: with several controllers, the one that opened the mouse mode drives it.</summary>
+    public MouseMode(Func<ControllerState> stateOf, IMouseOutput output, Func<MouseConfig>? config = null, Func<long>? clock = null)
+    {
+        _stateOf = stateOf;
         _output = output;
         var fallback = new MouseConfig();
         _config = config ?? (() => fallback);

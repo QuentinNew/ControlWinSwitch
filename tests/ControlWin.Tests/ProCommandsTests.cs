@@ -75,6 +75,16 @@ public class ProCommandsTests
     }
 
     [Fact]
+    public void SetPlayerLights_lights_the_led_of_the_slot()
+    {
+        Assert.Equal(new byte[] { 1, 2, 4, 8 }, Enumerable.Range(0, 4).Select(ProCommands.PlayerLightMask));
+
+        var r = ProCommands.SetPlayerLights(0, ProCommands.PlayerLightMask(1), 49);
+        Assert.Equal(0x30, r[10]);
+        Assert.Equal(0x02, r[11]);
+    }
+
+    [Fact]
     public void EnableVibration_sends_subcommand_0x48()
     {
         var r = ProCommands.EnableVibration(1, 49);

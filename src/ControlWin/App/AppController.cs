@@ -13,7 +13,9 @@ namespace ControlWin.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1, WatchTimerId = 4, RumbleTimerId = 5, GameRumbleTimerId = 6;
+    private const nuint RepeatTimerId = 1, WatchTimerId = 4;
+    // One timer per controller slot: the settings rumble test (10..13) and the game rumble refresh (20..23).
+    private const nuint RumbleTimerBase = 10, GameRumbleTimerBase = 20;
     private const uint RumbleMs = 400, GameRumbleRefreshMs = 80;
     private const uint WatchPollMs = 5000, WatchFastPollMs = 1000, WatchFastWindowMs = 15000;
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
@@ -26,7 +28,25 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly SendInputMouse _mouseOutput = new();
     private readonly MouseMode _mouse;
     private char _mouseGlyph;
-    private readonly ControllerState _state;
+    private readonly ControllerSet _set;
+
+    /// <summary>What belongs to one controller: its state, its virtual pad and what a game asks of its motors.</summary>
+    private sealed class Slot
+    {
+        public readonly ControllerState State = new();
+        public readonly VirtualPad Pad = new();
+        public Buttons IgnoreMask; // buttons still held from the menu: hidden from the game until released
+        public bool IgnoreSticks;  // sticks used in the menu: hidden until back near center
+        public byte GameLarge, GameSmall;
+    }
+
+    private readonly Slot[] _slots = new Slot[ControllerSet.Slots];
+    private int _owner; // the controller that has the menu / mouse mode / settings (the last one heard while idle)
+    private Slot Owner => _slots[_owner];
+    private ControllerState _state => Owner.State;
+    private VirtualPad _pad => Owner.Pad;
+    private Buttons _ignoreMask { get => Owner.IgnoreMask; set => Owner.IgnoreMask = value; }
+    private bool _ignoreSticks { get => Owner.IgnoreSticks; set => Owner.IgnoreSticks = value; }
     private readonly MainWindow _window;
     private readonly MenuModel _menu = new();
     private readonly MenuOverlay _overlay = new();
@@ -38,7 +58,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly SettingsWindow _settingsWindow = new();
     private readonly SettingsModel _settings;
     private readonly Toast _toast = new();
-    private readonly VirtualPad _pad = new();
     private readonly ConfigStore _store = new();
     private readonly PadGate _gate = new();
 
@@ -47,27 +66,29 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private string _watchName = "";   // list entry of the process that matched
     private long _fastPollUntil;      // Environment.TickCount64 until which the poll is fast (after a shortcut launch)
 
-    private byte _gameLarge, _gameSmall; // what the game asks of the virtual pad's motors
     private bool _pairing;
     private bool _padEnabled;
     private bool _padFailed;
     private bool _shutDown;
     private HeadsetState _headsetState;
     private bool _headsetBusy;
-    private Buttons _ignoreMask; // buttons still held from the menu: hidden from the game until released
-    private bool _ignoreSticks;  // sticks used in the menu: hidden until back near center
 
     private Mode _mode;
     private Dir _heldDirection;
     private bool _repeatTimerArmed;
 
-    public AppController(ControllerState state, MainWindow window)
+    public AppController(ControllerSet set, MainWindow window)
     {
-        _state = state;
+        _set = set;
         _window = window;
-        _mouse = new MouseMode(state, _mouseOutput, () => _store.Current.Mouse);
+        _mouse = new MouseMode(() => _state, _mouseOutput, () => _store.Current.Mouse);
         _settings = SettingsPages.Create(_store, this);
-        _pad.Feedback += OnPadFeedback;
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            int slot = i;
+            _slots[slot] = new Slot();
+            _slots[slot].Pad.Feedback += (large, small) => OnPadFeedback(slot, large, small);
+        }
 
         var error = _store.Load();
         if (error is not null) _toast.Show('', error);
@@ -98,9 +119,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
     // ---- loop hooks --------------------------------------------------------------------------
 
     /// <summary>Waitable timer handle for the message loop; signalled only while a stick moves the mouse.</summary>
-    public nint PadNotifyHandle => _pad.NotifyHandle;
+    public nint PadNotifyHandle(int slot) => _slots[slot].Pad.NotifyHandle;
 
-    public void OnPadNotify() => _pad.OnNotifySignaled();
+    public void OnPadNotify(int slot) => _slots[slot].Pad.OnNotifySignaled();
+
+    public ControllerState StateOf(int slot) => _slots[slot].State;
 
     public nint MouseTimerHandle => _mouseOutput.TimerHandle;
 
@@ -114,18 +137,29 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>PC going to sleep or resuming: nothing may stay pressed, and the old state is stale.</summary>
     public void OnPowerChange()
     {
-        _state.Reset();
+        foreach (var slot in _slots)
+        {
+            slot.State.Reset();
+            slot.IgnoreMask = Buttons.None;
+            slot.IgnoreSticks = false;
+        }
         if (_shutDown) return;
         if (_mode == Mode.Mouse) ExitMouse(announce: false);
-        _ignoreMask = Buttons.None;
-        _ignoreSticks = false;
     }
 
     /// <summary>Report handler: updates the shared state first, so later subscribers (the debug printer) see it.</summary>
-    public void OnReport(ProReport report, ReadOnlyMemory<byte> raw)
+    public void OnReport(int slot, ProReport report, ReadOnlyMemory<byte> raw)
     {
-        _state.Update(report);
+        _slots[slot].State.Update(report);
         if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
+
+        // The menu, settings and mouse mode belong to one controller; the others keep playing.
+        if (_mode == Mode.Idle) _owner = slot;
+        else if (slot != _owner)
+        {
+            Forward(slot);
+            return;
+        }
 
         // Capture is reserved for the menu toggle and is never forwarded.
         if (_state.Pressed(Buttons.Capture))
@@ -155,22 +189,27 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 _mouse.OnReport();
                 break;
             default:
-                Forward();
+                Forward(slot);
                 break;
         }
     }
 
-    public void OnControllerRemoved()
+    public void OnControllerRemoved(int slot)
     {
-        _state.Reset();
+        var gone = _slots[slot];
+        gone.State.Reset();
         _window.UpdateTray();
         if (_shutDown) return;
-        _pad.Detach(); // re-plugged on the next report
-        if (_mode == Mode.Menu) CloseMenu();
-        else if (_mode == Mode.Settings) CloseSettings();
-        else if (_mode == Mode.Mouse) ExitMouse(announce: false);
-        _ignoreMask = Buttons.None;
-        _ignoreSticks = false;
+        gone.Pad.Detach(); // re-plugged on the next report
+        if (slot == _owner)
+        {
+            if (_mode == Mode.Menu) CloseMenu();
+            else if (_mode == Mode.Settings) CloseSettings();
+            else if (_mode == Mode.Mouse) ExitMouse(announce: false);
+        }
+        gone.IgnoreMask = Buttons.None;
+        gone.IgnoreSticks = false;
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
     /// <summary>WM_TIMER of the main window: key-repeat of the held direction.</summary>
@@ -181,15 +220,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
             CheckProcesses();
             return;
         }
-        if (id == GameRumbleTimerId)
+        if (id >= GameRumbleTimerBase && id < GameRumbleTimerBase + (nuint)_slots.Length)
         {
-            ApplyGameRumble(restartTimer: false);
+            ApplyGameRumble((int)(id - GameRumbleTimerBase), restartTimer: false);
             return;
         }
-        if (id == RumbleTimerId)
+        if (id >= RumbleTimerBase && id < RumbleTimerBase + (nuint)_slots.Length)
         {
-            KillTimer(_window.Handle, RumbleTimerId);
-            _window.SetRumble(false);
+            KillTimer(_window.Handle, id);
+            _window.SetRumble((int)(id - RumbleTimerBase), false);
             return;
         }
         if (id != RepeatTimerId) return;
@@ -819,35 +858,40 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         _padEnabled = enabled;
         _padFailed = false;
-        if (!enabled) _pad.Detach();
-        else if (!_pad.Attach()) _padFailed = true;
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            if (!enabled) _slots[i].Pad.Detach();
+            else if (_set.Readers[i].IsOpen && !_slots[i].Pad.Attach()) _padFailed = true;
+        }
     }
 
     private string? PadDetail() => !_padEnabled ? (_gate.HeldOff ? $"Off ({ProcessList.DisplayName(_watchName)})" : "Off") : _padFailed ? "Unavailable" : "On";
 
     /// <summary>The state is not consumed: it drives the virtual pad.</summary>
-    private void Forward()
+    private void Forward(int index)
     {
+        var slot = _slots[index];
         if (!_padEnabled || _padFailed) return;
-        if (!_pad.IsAttached && !_pad.Attach())
+        if (!slot.Pad.IsAttached && !slot.Pad.Attach())
         {
             _padFailed = true;
             _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
             return;
         }
 
-        _ignoreMask &= _state.Current;
-        var left = _state.Left;
-        var right = _state.Right;
-        if (_ignoreSticks)
+        var state = slot.State;
+        slot.IgnoreMask &= state.Current;
+        var left = state.Left;
+        var right = state.Right;
+        if (slot.IgnoreSticks)
         {
-            if (left.Magnitude < 0.3f && right.Magnitude < 0.3f) _ignoreSticks = false;
+            if (left.Magnitude < 0.3f && right.Magnitude < 0.3f) slot.IgnoreSticks = false;
             else left = right = default;
         }
 
-        var held = _state.Current & ~_ignoreMask;
+        var held = state.Current & ~slot.IgnoreMask;
         var pad = Config.VirtualPad;
-        _pad.Submit(XInputMapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
+        slot.Pad.Submit(XInputMapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
     }
 
     // ---- config ------------------------------------------------------------------------------
@@ -873,28 +917,30 @@ internal sealed class AppController : IDisposable, ISettingsHost
         bool enabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
         UpdateWatchTimer();
         if (enabled != _padEnabled) SetPadEnabled(enabled);
-        ApplyGameRumble(restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
+        for (int i = 0; i < _slots.Length; i++) ApplyGameRumble(i, restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
     }
 
-    /// <summary>A game set the virtual pad's motors: forward them to the Pro Controller, scaled by the Rumble setting.</summary>
-    private void OnPadFeedback(byte large, byte small)
+    /// <summary>A game set a virtual pad's motors: forward them to its Pro Controller, scaled by the Rumble setting.</summary>
+    private void OnPadFeedback(int slot, byte large, byte small)
     {
-        _gameLarge = large;
-        _gameSmall = small;
-        ApplyGameRumble(restartTimer: true);
+        _slots[slot].GameLarge = large;
+        _slots[slot].GameSmall = small;
+        ApplyGameRumble(slot, restartTimer: true);
     }
 
     /// <summary>
     /// The controller keeps vibrating only while it keeps receiving rumble reports: refresh them while the game
     /// asks for any, and send a neutral one when it stops.
     /// </summary>
-    private void ApplyGameRumble(bool restartTimer)
+    private void ApplyGameRumble(int index, bool restartTimer)
     {
+        var slot = _slots[index];
         int percent = Config.VirtualPad.Rumble;
-        bool active = percent > 0 && (_gameLarge > 0 || _gameSmall > 0);
-        _window.SetRumbleMotors(active ? _gameLarge : (byte)0, active ? _gameSmall : (byte)0, percent);
-        if (!active) KillTimer(_window.Handle, GameRumbleTimerId);
-        else if (restartTimer) SetTimer(_window.Handle, GameRumbleTimerId, GameRumbleRefreshMs, 0);
+        bool active = percent > 0 && (slot.GameLarge > 0 || slot.GameSmall > 0);
+        _window.SetRumbleMotors(index, active ? slot.GameLarge : (byte)0, active ? slot.GameSmall : (byte)0, percent);
+        nuint timer = GameRumbleTimerBase + (nuint)index;
+        if (!active) KillTimer(_window.Handle, timer);
+        else if (restartTimer) SetTimer(_window.Handle, timer, GameRumbleRefreshMs, 0);
     }
 
     // ISettingsHost
@@ -902,12 +948,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     string ISettingsHost.HeadsetStatus => _headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
 
-    bool ISettingsHost.ControllerConnected(int slot) => slot == 0 && _window.ControllerConnected;
+    bool ISettingsHost.ControllerConnected(int slot) => _window.ControllerConnected(slot);
 
     void ISettingsHost.RumbleController(int slot)
     {
-        if (slot != 0 || !_window.SetRumble(true)) return;
-        SetTimer(_window.Handle, RumbleTimerId, RumbleMs, 0);
+        if (!_window.SetRumble(slot, true)) return;
+        SetTimer(_window.Handle, RumbleTimerBase + (nuint)slot, RumbleMs, 0);
     }
 
     string ISettingsHost.PairingStatus => _pairing ? "Searching..." : "";
@@ -1160,7 +1206,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mouse.Deactivate(); // releases held mouse buttons
         _mode = Mode.Idle;
         _toast.Hide();
-        _pad.Dispose(); // unplugs the pad: it disappears from the games
+        foreach (var slot in _slots) slot.Pad.Dispose(); // unplugs the pads: they disappear from the games
         _window.RemoveTray();
     }
 
@@ -1168,6 +1214,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         _mouse.Deactivate();
         _mouseOutput.Dispose();
-        _pad.Dispose();
+        foreach (var slot in _slots) slot.Pad.Dispose();
     }
 }

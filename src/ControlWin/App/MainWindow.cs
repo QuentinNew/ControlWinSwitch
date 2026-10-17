@@ -16,16 +16,16 @@ internal sealed unsafe class MainWindow : NativeWindow
 
     private static readonly Guid HidInterface = new("4D1E55B2-F16F-11CF-88CB-001111000030");
 
-    private readonly HidControllerReader _reader;
+    private readonly ControllerSet _set;
     private readonly TrayIcon _tray;
     private nint _deviceNotification;
 
     /// <summary>Receives WM_TIMER; set right after construction (the controller needs this window's handle).</summary>
     public AppController? Controller { get; set; }
 
-    public MainWindow(HidControllerReader reader)
+    public MainWindow(ControllerSet set)
     {
-        _reader = reader;
+        _set = set;
         Create(ClassName, WS_POPUP, 0);
         RegisterHidNotifications();
 
@@ -35,17 +35,17 @@ internal sealed unsafe class MainWindow : NativeWindow
         ChangeWindowMessageFilterEx(Handle, AppMessages.TaskbarCreated, MSGFLT_ALLOW, 0);
 
         _tray = new TrayIcon(Handle);
-        _tray.Add(TrayIcon.Tooltip(_reader.IsOpen));
+        _tray.Add(TrayIcon.Tooltip(_set.OpenCount));
     }
 
     /// <summary>Call after the controller (dis)connected.</summary>
-    public bool ControllerConnected => _reader.IsOpen;
+    public bool ControllerConnected(int slot) => _set.Readers[slot].IsOpen;
 
-    public bool SetRumble(bool on) => _reader.SetRumble(on);
+    public bool SetRumble(int slot, bool on) => _set.Readers[slot].SetRumble(on);
 
-    public bool SetRumbleMotors(byte large, byte small, int percent) => _reader.SetRumbleMotors(large, small, percent);
+    public bool SetRumbleMotors(int slot, byte large, byte small, int percent) => _set.Readers[slot].SetRumbleMotors(large, small, percent);
 
-    public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_reader.IsOpen));
+    public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_set.OpenCount));
 
     /// <summary>Removes the tray icon right away (shutdown).</summary>
     public void RemoveTray() => _tray.Dispose();
@@ -102,7 +102,7 @@ internal sealed unsafe class MainWindow : NativeWindow
         }
         if (msg == AppMessages.TaskbarCreated)
         {
-            _tray.Add(TrayIcon.Tooltip(_reader.IsOpen)); // explorer restarted
+            _tray.Add(TrayIcon.Tooltip(_set.OpenCount)); // explorer restarted
             return 0;
         }
 
@@ -173,12 +173,12 @@ internal sealed unsafe class MainWindow : NativeWindow
 
         if (what == DBT_DEVICEARRIVAL)
         {
-            _reader.TryOpen();
+            _set.TryOpen();
         }
         else
         {
             var path = new string(&header->dbcc_name);
-            _reader.OnInterfaceRemoved(path);
+            _set.OnInterfaceRemoved(path);
         }
         UpdateTray();
     }

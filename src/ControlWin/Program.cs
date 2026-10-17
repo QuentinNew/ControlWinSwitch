@@ -35,29 +35,32 @@ internal static unsafe class Program
 
         try
         {
-            using var reader = new HidControllerReader();
-            var state = new ControllerState();
-            var window = new MainWindow(reader);
-            var controller = new AppController(state, window);
+            using var set = new ControllerSet();
+            var window = new MainWindow(set);
+            var controller = new AppController(set, window);
             window.Controller = controller;
             Log.Info($"Started (elevated={IsElevated()}, hwnd=0x{window.Handle:X})");
 
-            // The controller updates the shared state before any later subscriber (the debug printer) reads it.
-            reader.Report += controller.OnReport;
-            reader.ControllerRemoved += controller.OnControllerRemoved;
+            // The controller updates the slot's state before any later subscriber (the debug printer) reads it.
+            for (int i = 0; i < ControllerSet.Slots; i++)
+            {
+                int slot = i;
+                set.Readers[slot].Report += (report, raw) => controller.OnReport(slot, report, raw);
+                set.Readers[slot].ControllerRemoved += () => controller.OnControllerRemoved(slot);
+            }
 
             if (debugInput)
             {
-                var printer = new DebugInputPrinter(state);
-                reader.Report += printer.OnReport;
-                reader.UnknownReport += printer.OnUnknownReport;
+                var printer = new DebugInputPrinter(controller.StateOf(0));
+                set.Readers[0].Report += printer.OnReport;
+                set.Readers[0].UnknownReport += printer.OnUnknownReport;
             }
 
-            reader.TryOpen();
-            if (!reader.IsOpen) Log.Info("Pro Controller not connected yet (waiting for it)");
+            set.TryOpen();
+            if (!set.AnyOpen) Log.Info("Pro Controller not connected yet (waiting for it)");
             window.UpdateTray();
 
-            RunMessageLoop(reader, controller);
+            RunMessageLoop(set, controller);
             controller.Shutdown(); // no-op when WM_CLOSE already did it
             controller.Dispose();
             return 0;
@@ -70,40 +73,51 @@ internal static unsafe class Program
     }
 
     /// <summary>Event-driven loop: blocks until a message or a controller report arrives (~0% CPU idle).</summary>
-    private static void RunMessageLoop(HidControllerReader reader, AppController controller)
+    private static void RunMessageLoop(ControllerSet set, AppController controller)
     {
-        // Wait set: controller reports, the mouse timer (signalled only while a stick moves the cursor), and
-        // the watched process (signalled when it exits). The last one changes at run time, so it is re-read.
-        nint* handles = stackalloc nint[4];
+        // Wait set: the controllers' reports, the virtual pads' rumble requests, the mouse timer (signalled only while
+        // a stick moves the cursor) and the watched process (signalled when it exits). Pads, mouse and process
+        // change at run time, so the set is rebuilt on every iteration.
+        const int Slots = ControllerSet.Slots, MouseId = 2 * Slots, WatchId = 2 * Slots + 1;
+        nint* handles = stackalloc nint[2 * Slots + 2];
+        int* ids = stackalloc int[2 * Slots + 2]; // 0..3 reader, 4..7 pad rumble, then mouse, watch
         MSG msg;
         while (true)
         {
             uint count = 0;
-            handles[count++] = reader.EventHandle;
-            uint mouseIndex = uint.MaxValue, watchIndex = uint.MaxValue, padIndex = uint.MaxValue;
+            for (int i = 0; i < Slots; i++)
+            {
+                ids[count] = i;
+                handles[count++] = set.Readers[i].EventHandle;
+            }
+            for (int i = 0; i < Slots; i++)
+            {
+                nint pad = controller.PadNotifyHandle(i);
+                if (pad == 0) continue;
+                ids[count] = Slots + i;
+                handles[count++] = pad;
+            }
             if (controller.MouseTimerHandle != 0)
             {
-                mouseIndex = count;
+                ids[count] = MouseId;
                 handles[count++] = controller.MouseTimerHandle;
             }
             if (controller.WatchHandle != 0)
             {
-                watchIndex = count;
+                ids[count] = WatchId;
                 handles[count++] = controller.WatchHandle;
-            }
-
-            if (controller.PadNotifyHandle != 0)
-            {
-                padIndex = count;
-                handles[count++] = controller.PadNotifyHandle;
             }
 
             uint r = MsgWaitForMultipleObjectsEx(count, handles, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             if (r == uint.MaxValue) return; // WAIT_FAILED
-            if (r == WAIT_OBJECT_0) reader.OnSignaled();
-            else if (r == WAIT_OBJECT_0 + mouseIndex) controller.OnMouseTick();
-            else if (r == WAIT_OBJECT_0 + watchIndex) controller.OnWatchedProcessExited();
-            else if (r == WAIT_OBJECT_0 + padIndex) controller.OnPadNotify();
+            if (r < WAIT_OBJECT_0 + count)
+            {
+                int id = ids[r - WAIT_OBJECT_0];
+                if (id < Slots) set.Readers[id].OnSignaled();
+                else if (id < MouseId) controller.OnPadNotify(id - Slots);
+                else if (id == MouseId) controller.OnMouseTick();
+                else controller.OnWatchedProcessExited();
+            }
 
             while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE) != 0)
             {

@@ -25,6 +25,19 @@ internal static class ProCommands
     }
 
     public const byte SubcommandEnableVibration = 0x48;
+    public const byte SubcommandSetPlayerLights = 0x30;
+
+    /// <summary>Output report 0x01 carrying "set player lights": bit n of <paramref name="mask"/> lights LED n + 1 (solid).</summary>
+    public static byte[] SetPlayerLights(byte packetCounter, byte mask, int reportLength)
+    {
+        var report = SetInputMode(packetCounter, 0, reportLength);
+        report[10] = SubcommandSetPlayerLights;
+        report[11] = (byte)(mask & 0x0F);
+        return report;
+    }
+
+    /// <summary>LED mask for a zero-based slot: slot 0 lights LED 1, slot 1 LED 2, ...</summary>
+    public static byte PlayerLightMask(int slot) => (byte)(1 << Math.Clamp(slot, 0, 3));
     public const byte ReportRumbleOnly = 0x10;
 
     /// <summary>Output report 0x01 carrying "enable vibration" (the controller ignores rumble until it gets this).</summary>

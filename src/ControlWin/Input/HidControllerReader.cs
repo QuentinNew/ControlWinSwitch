@@ -38,14 +38,16 @@ internal sealed unsafe class HidControllerReader : IDisposable
     private uint _outputLength;
     private bool _canWrite;
     private byte _packetCounter;
+    private readonly int _slot;
     private bool _vibrationEnabled;
     private int _modeAttempts;
     private long _lastModeAttempt;
     private const int MaxModeAttempts = 5;
     private const long ModeRetryMs = 1000;
 
-    public HidControllerReader()
+    public HidControllerReader(int slot = 0)
     {
+        _slot = slot;
         _event = CreateEventW(0, 1, 0, null); // manual reset: ReadFile resets it when a new read starts
         if (_event == 0) throw new InvalidOperationException($"CreateEvent failed ({Marshal.GetLastPInvokeError()})");
         _writeEvent = CreateEventW(0, 1, 0, null);
@@ -66,12 +68,18 @@ internal sealed unsafe class HidControllerReader : IDisposable
     /// <summary>Raised when the controller goes away (disconnected, or the read failed).</summary>
     public event Action? ControllerRemoved;
 
-    /// <summary>Opens the controller if it is present and not open yet. Cheap enough to call on every HID arrival.</summary>
-    public void TryOpen()
+    /// <summary>Device path of the open controller (null when closed).</summary>
+    public string? Path => _path;
+
+    /// <summary>
+    /// Opens a controller that is present, not open yet and not in <paramref name="taken"/> (the paths other slots hold).
+    /// Cheap enough to call on every HID arrival.
+    /// </summary>
+    public void TryOpen(IReadOnlyCollection<string> taken)
     {
         if (_file != 0) return;
 
-        var path = FindControllerPath();
+        var path = FindControllerPath(taken);
         if (path is null) return;
 
         // Read+write so we can ask for full mode; fall back to read-only if write access is refused.
@@ -124,6 +132,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
         Log.Info($"Pro Controller opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
         BeginRead();
         RequestFullMode();
+        SetPlayerLights();
     }
 
     /// <summary>Call when <see cref="EventHandle"/> is signaled.</summary>
@@ -206,6 +215,14 @@ internal sealed unsafe class HidControllerReader : IDisposable
             _vibrationEnabled = true;
         }
         return Write(ProCommands.RumbleMotors(_packetCounter++, large, small, percent, (int)_outputLength));
+    }
+
+    /// <summary>Lights the LED of the player number (slot 1 = LED 1, ...), so each controller shows which pad it drives.</summary>
+    private void SetPlayerLights()
+    {
+        if (_file == 0 || !_canWrite) return;
+        if (Write(ProCommands.SetPlayerLights(_packetCounter++, ProCommands.PlayerLightMask(_slot), (int)_outputLength)))
+            Log.Info($"Player light {_slot + 1} set");
     }
 
     /// <summary>Synchronous (bounded) overlapped write on the device handle.</summary>
@@ -308,7 +325,7 @@ internal sealed unsafe class HidControllerReader : IDisposable
         _buffer = null;
     }
 
-    private static string? FindControllerPath()
+    private static string? FindControllerPath(IReadOnlyCollection<string> taken)
     {
         var guid = HidInterface;
         uint length = 0;
@@ -321,8 +338,9 @@ internal sealed unsafe class HidControllerReader : IDisposable
         // USB: ...vid_057e&pid_2009...   Bluetooth: ..._vid&0002057e_pid&2009...
         foreach (var path in new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (path.Contains("vid_057e&pid_2009", StringComparison.OrdinalIgnoreCase)
-                || path.Contains("vid&0002057e_pid&2009", StringComparison.OrdinalIgnoreCase))
+            if ((path.Contains("vid_057e&pid_2009", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("vid&0002057e_pid&2009", StringComparison.OrdinalIgnoreCase))
+                && !taken.Contains(path, StringComparer.OrdinalIgnoreCase))
                 return path;
         }
         return null;
