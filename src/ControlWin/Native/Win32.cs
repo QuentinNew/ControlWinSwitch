@@ -382,6 +382,7 @@ internal static unsafe partial class Win32
     [LibraryImport("gdi32.dll")] public static partial nint CreateBitmap(int w, int h, uint planes, uint bpp, void* bits);
     [LibraryImport("gdi32.dll")] public static partial nint SelectObject(nint hdc, nint obj);
     [LibraryImport("gdi32.dll")] public static partial int DeleteObject(nint obj);
+    [LibraryImport("gdi32.dll")] public static partial int Polygon(nint hdc, POINT* points, int count);
     [LibraryImport("gdi32.dll")] public static partial int DeleteDC(nint hdc);
     [LibraryImport("gdi32.dll")] public static partial int GdiFlush();
     [LibraryImport("gdi32.dll")] public static partial uint GetPixel(nint hdc, int x, int y);

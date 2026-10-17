@@ -10,7 +10,7 @@ internal sealed unsafe class Toast : NativeWindow
 
     private const nuint HideTimerId = 1;
     private const uint DurationMs = 1600;
-    private const int WidthDip = 460, HeightDip = 64, BottomMarginDip = 48;
+    private const int HeightDip = 64, BottomMarginDip = 48, RightPadDip = 20;
 
     private char _glyph;
     private string _text = "";
@@ -31,7 +31,9 @@ internal sealed unsafe class Toast : NativeWindow
         _text = text;
         Gdi.GetMonitorUnderCursor(out var work, out _dpi);
 
-        int width = Px(WidthDip), height = Px(HeightDip);
+        int width = Px(TextLeftDip() + RightPadDip) + MeasureText(text, Gdi.GetFonts(_dpi).Label);
+        width = Math.Min(width, work.Width - Px(32));
+        int height = Px(HeightDip);
         int x = work.Left + (work.Width - width) / 2;
         int y = work.Bottom - height - Px(BottomMarginDip);
         SetWindowPos(Handle, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -66,6 +68,19 @@ internal sealed unsafe class Toast : NativeWindow
 
     private int Px(int dip) => (int)Math.Round(dip * _dpi / 96.0);
 
+    private int TextLeftDip() => _glyph != '\0' ? 60 : 20;
+
+    private static int MeasureText(string text, nint font)
+    {
+        var dc = CreateCompatibleDC(0);
+        var old = SelectObject(dc, font);
+        var size = new SIZE();
+        GetTextExtentPoint32W(dc, text, text.Length, &size);
+        SelectObject(dc, old);
+        DeleteDC(dc);
+        return size.cx;
+    }
+
     private void Paint()
     {
         using var paint = new BufferedPaint(Handle);
@@ -76,6 +91,6 @@ internal sealed unsafe class Toast : NativeWindow
         Gdi.Fill(dc, Gdi.BackgroundBrush, 0, 0, paint.Width, paint.Height);
         if (_glyph != '\0')
             Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, _glyph.ToString(), Px(16), 0, Px(16 + 32), paint.Height, DT_CENTER | oneLine);
-        Gdi.Text(dc, fonts.Label, Gdi.TextColor, _text, Px(60), 0, paint.Width - Px(20), paint.Height, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+        Gdi.Text(dc, fonts.Label, Gdi.TextColor, _text, Px(TextLeftDip()), 0, paint.Width - Px(RightPadDip), paint.Height, DT_LEFT | oneLine | DT_END_ELLIPSIS);
     }
 }

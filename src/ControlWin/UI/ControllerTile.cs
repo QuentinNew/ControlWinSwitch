@@ -31,8 +31,7 @@ internal static class ControllerTile
         for (int i = 0; i < xs.Length; i++)
         {
             xs[i] = x;
-            bool plus = controllers[i].Charging && controllers[i].Battery >= 0;
-            x += picRadius * 2 + Px(dpi, PicGapDip) + barsW + (plus ? Px(dpi, 10) : 0) + (i < xs.Length - 1 ? Px(dpi, EntryGapDip) : 0);
+            x += picRadius * 2 + Px(dpi, PicGapDip) + barsW +(i < xs.Length - 1 ? Px(dpi, EntryGapDip) : 0);
         }
         return x;
     }
@@ -78,11 +77,7 @@ internal static class ControllerTile
             Gdi.Fill(dc, i < filled ? color : Gdi.DimBrush, bx, y, bx + barW, y + barH);
         }
         if (info.Charging)
-        {
-            int cx = x + 4 * (barW + gap) + Px(dpi, 2), cy = t + h / 2, arm = Px(dpi, 3), thick = Px(dpi, 1);
-            Gdi.Fill(dc, Gdi.TextBrush, cx - arm, cy - thick, cx + arm + thick, cy + thick + 1);
-            Gdi.Fill(dc, Gdi.TextBrush, cx - thick, cy - arm, cx + thick + 1, cy + arm + thick);
-        }
+            Gdi.Bolt(dc, x + (4 * barW + 3 * gap) / 2, t + h / 2, Px(dpi, 14));
     }
 
     /// <summary>Four battery bars (a plus after them while charging), centered on <paramref name="cy"/>. Returns the width used.</summary>
@@ -100,12 +95,8 @@ internal static class ControllerTile
                 Gdi.Fill(dc, i < filled ? color : Gdi.DimBrush, bx, y, bx + barW, y + barH);
             }
             if (info.Charging)
-            {
-                int px = x + width + Px(dpi, 6), arm = Px(dpi, 3), thick = Px(dpi, 1);
-                Gdi.Fill(dc, Gdi.TextBrush, px - arm, cy - thick, px + arm + thick, cy + thick + 1);
-                Gdi.Fill(dc, Gdi.TextBrush, px - thick, cy - arm, px + thick + 1, cy + arm + thick);
-            }
+                Gdi.Bolt(dc, x + width / 2, cy, Px(dpi, 14));
         }
-        return width + Px(dpi, 6) + Px(dpi, 7); // bars, then room for the charging plus (kept so the bar doesn't jump)
+        return width;
     }
 }

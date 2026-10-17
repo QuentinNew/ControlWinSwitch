@@ -98,6 +98,28 @@ internal static unsafe class Gdi
         SelectObject(dc, oldBrush);
     }
 
+    /// <summary>A lightning bolt centered on (<paramref name="cx"/>, <paramref name="cy"/>), <paramref name="height"/> pixels tall, with a thin outline in the background color.</summary>
+    public static void Bolt(nint dc, int cx, int cy, int height)
+    {
+        ReadOnlySpan<double> unit = [0.30, -1, -0.50, 0.15, -0.05, 0.15, -0.30, 1, 0.50, -0.20, 0.05, -0.20];
+        var oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+        var oldBrush = SelectObject(dc, BackgroundBrush);
+        POINT* pts = stackalloc POINT[6];
+        for (int pass = 0; pass < 2; pass++)
+        {
+            double scale = height / 2.0 * (pass == 0 ? 1.25 : 1.0);
+            for (int i = 0; i < 6; i++)
+            {
+                pts[i].X = cx + (int)Math.Round(unit[i * 2] * scale);
+                pts[i].Y = cy + (int)Math.Round(unit[i * 2 + 1] * scale);
+            }
+            if (pass == 1) SelectObject(dc, TextBrush);
+            Polygon(dc, pts, 6);
+        }
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+    }
+
     private static nint Create(int pixelHeight, int weight, string face, uint quality = CLEARTYPE_QUALITY) =>
         CreateFontW(-pixelHeight, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, quality, 0, face);
 
