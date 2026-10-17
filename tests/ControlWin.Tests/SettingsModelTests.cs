@@ -24,6 +24,9 @@ public class SettingsModelTests
         public bool ControllerConnected(int slot) => slot == 0;
         public List<int> Rumbled = [];
         public void RumbleController(int slot) => Rumbled.Add(slot);
+        public int Added;
+        public void AddProController() => Added++;
+        public string PairingStatus => "";
         public bool StartOnLogon { get; private set; }
         public void SetStartOnLogon(bool enabled) => StartOnLogon = enabled;
         public Action<string>? Commit;
@@ -52,10 +55,10 @@ public class SettingsModelTests
     }
 
     [Fact]
-    public void Has_the_five_tabs_in_order()
+    public void Has_the_six_tabs_in_order()
     {
         var (m, _, _) = Create();
-        Assert.Equal(["General", "Layout", "Controller", "Mouse", "Headset"], m.Tabs.Select(t => t.Title));
+        Assert.Equal(["General", "Layout", "Controller", "Virtual Pad", "Mouse", "Headset"], m.Tabs.Select(t => t.Title));
     }
 
     [Fact]
@@ -82,6 +85,39 @@ public class SettingsModelTests
         m.Activate();
 
         Assert.Equal([2, 1, 3], host.Rumbled);
+    }
+
+    [Fact]
+    public void Controller_tab_adds_a_pro_controller()
+    {
+        var (m, _, host) = Create();
+        m.SetTab(2);
+        m.Move(1);
+        Assert.Equal("Add new Pro Controller", m.CurrentItem!.Label);
+
+        m.Activate();
+
+        Assert.Equal(1, host.Added);
+    }
+
+    [Fact]
+    public void Virtual_pad_tab_has_a_rumble_percent_from_0_to_100()
+    {
+        var (m, store, host) = Create();
+        m.SetTab(3);
+        m.Move(1);
+        m.Move(1);
+        m.Move(1);
+        Assert.Equal("Rumble", m.CurrentItem!.Label);
+        Assert.Equal("100%", m.CurrentItem.Value());
+
+        m.Adjust(1);
+        Assert.Equal(100, store.Current.VirtualPad.Rumble);
+        for (int i = 0; i < 12; i++) m.Adjust(-1);
+
+        Assert.Equal(0, store.Current.VirtualPad.Rumble);
+        Assert.Equal("0%", m.CurrentItem.Value());
+        Assert.True(host.Changes > 0);
     }
 
     [Fact]
@@ -125,9 +161,8 @@ public class SettingsModelTests
     public void Toggle_flips_the_config_and_reports_the_change()
     {
         var (m, store, host) = Create();
-        m.SetTab(2); // Controller
-        m.Move(1);
-        m.Move(1);   // strip -> pad -> Swap A / B
+        m.SetTab(3); // Virtual Pad
+        m.Move(1);   // Swap A / B
         Assert.True(store.Current.VirtualPad.SwapAB);
 
         m.Activate();
@@ -142,9 +177,8 @@ public class SettingsModelTests
     public void Pad_toggle_goes_through_the_host_not_the_config()
     {
         var (m, store, host) = Create();
-        m.SetTab(2);
-        m.Move(1);
-        Assert.Equal(1, m.Selected);
+        m.SetTab(3);
+        Assert.Equal(0, m.Selected);
 
         m.Activate();
         Assert.False(host.Pad);
@@ -155,7 +189,7 @@ public class SettingsModelTests
     public void Watch_list_is_edited_as_comma_separated_text()
     {
         var (m, store, host) = Create();
-        m.SetTab(2);
+        m.SetTab(3);
         m.Move(-1); // wraps to the last row: "Pad off while running"
         Assert.Equal("steam.exe", host.Editing ?? "steam.exe");
         m.Activate();
@@ -170,7 +204,7 @@ public class SettingsModelTests
     public void Number_steps_and_clamps()
     {
         var (m, store, _) = Create();
-        m.SetTab(3); // Mouse, first row = Speed (800, step 100, 100..3000)
+        m.SetTab(4); // Mouse, first row = Speed (800, step 100, 100..3000)
         m.Adjust(1);
         Assert.Equal(900f, store.Current.Mouse.Speed);
         m.Adjust(-1);
@@ -189,7 +223,7 @@ public class SettingsModelTests
     public void Number_does_not_accumulate_float_drift()
     {
         var (m, store, _) = Create();
-        m.SetTab(3);
+        m.SetTab(4);
         m.Move(1); // Fast multiplier: 2.5, step 0.5
         for (int i = 0; i < 6; i++) m.Adjust(-1);
         Assert.Equal(1f, store.Current.Mouse.FastMultiplier); // clamped at the minimum
@@ -223,11 +257,11 @@ public class SettingsModelTests
     public void Each_tab_remembers_its_selection()
     {
         var (m, _, _) = Create();
-        m.SetTab(3);
+        m.SetTab(4);
         m.Move(1);
         Assert.Equal(1, m.Selected);
         m.SetTab(0);
-        m.SetTab(3);
+        m.SetTab(4);
         Assert.Equal(1, m.Selected);
     }
 
@@ -235,7 +269,7 @@ public class SettingsModelTests
     public void Text_row_opens_the_editor_and_commit_updates_the_config()
     {
         var (m, store, host) = Create();
-        m.SetTab(4); // Headset
+        m.SetTab(5); // Headset
         Assert.Equal(0, m.Selected); // device name is the first selectable row
         m.Activate();
         Assert.Equal("WH-CH700N", host.Editing);

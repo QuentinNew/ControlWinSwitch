@@ -10,6 +10,9 @@ internal sealed class VirtualPadConfig
     public bool SwapAB { get; set; } = true;
     public bool SwapXY { get; set; } = true;
 
+    /// <summary>Strength of the controller rumble when a game vibrates the virtual pad: 0 (none) to 100.</summary>
+    public int Rumble { get; set; } = 100;
+
     /// <summary>The pad is switched off while one of these processes runs (empty = feature off).</summary>
     public List<string> DisableWhileRunning { get; set; } = ["steam.exe"];
 }
@@ -148,6 +151,7 @@ internal sealed class AppConfig
         RadialReleaseMs = Math.Clamp(RadialReleaseMs, 20, 500);
         RadialCardinalBias = Math.Clamp(RadialCardinalBias, 0, 25);
         VirtualPad ??= new();
+        VirtualPad.Rumble = Math.Clamp(VirtualPad.Rumble, 0, 100);
         VirtualPad.DisableWhileRunning ??= [];
         VirtualPad.DisableWhileRunning = VirtualPad.DisableWhileRunning
             .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())

@@ -43,6 +43,8 @@ internal sealed unsafe class MainWindow : NativeWindow
 
     public bool SetRumble(bool on) => _reader.SetRumble(on);
 
+    public bool SetRumbleMotors(byte large, byte small, int percent) => _reader.SetRumbleMotors(large, small, percent);
+
     public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_reader.IsOpen));
 
     /// <summary>Removes the tray icon right away (shutdown).</summary>
@@ -136,6 +138,10 @@ internal sealed unsafe class MainWindow : NativeWindow
 
             case AppMessages.HeadsetDone:
                 Controller?.OnHeadsetDone((HeadsetState)(int)wParam, lParam != 0);
+                return 0;
+
+            case AppMessages.PairDone:
+                Controller?.OnPairDone((PairResult)(int)wParam);
                 return 0;
 
             case AppMessages.PowerFailed:

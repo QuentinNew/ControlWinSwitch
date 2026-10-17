@@ -39,12 +39,35 @@ internal static class ProCommands
     /// <summary>
     /// Builds output report 0x10 (rumble only): [0]=0x10, [1]=packet counter, [2..5]=left motor, [6..9]=right motor.
     /// </summary>
-    public static byte[] Rumble(byte packetCounter, bool on, int reportLength)
+    public static byte[] Rumble(byte packetCounter, bool on, int reportLength) =>
+        RumbleMotors(packetCounter, on ? (byte)255 : (byte)0, on ? (byte)255 : (byte)0, 100, reportLength);
+
+    /// <summary>
+    /// Rumble report from an Xbox pad's two motors (0..255): the large motor drives the low band, the small one the
+    /// high band, both scaled by <paramref name="percent"/> (0..100). Full strength is the usual "buzz" pattern;
+    /// no strength is the neutral pattern.
+    /// </summary>
+    public static byte[] RumbleMotors(byte packetCounter, byte large, byte small, int percent, int reportLength)
     {
+        double k = Math.Clamp(percent, 0, 100) / 100.0;
+        double low = large / 255.0 * k, high = small / 255.0 * k;
+
         var report = new byte[Math.Max(reportLength, 10)];
         report[0] = ReportRumbleOnly;
         report[1] = (byte)(packetCounter & 0x0F);
-        byte[] motor = on ? [0x28, 0x88, 0x60, 0x61] : [0x00, 0x01, 0x40, 0x40];
+
+        byte hfFreq = 0x00, hfAmp = 0x01, lfFreq = 0x40, lfAmp = 0x40;
+        if (high > 0)
+        {
+            hfFreq = 0x28;
+            hfAmp = (byte)((int)(0x88 * high) & ~1);
+        }
+        if (low > 0)
+        {
+            lfFreq = 0x60;
+            lfAmp = (byte)(0x40 + (int)((0x61 - 0x40) * low));
+        }
+        byte[] motor = [hfFreq, hfAmp, lfFreq, lfAmp];
         motor.CopyTo(report, 2);
         motor.CopyTo(report, 6);
         return report;

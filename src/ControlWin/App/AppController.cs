@@ -13,8 +13,8 @@ namespace ControlWin.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1, WatchTimerId = 4, RumbleTimerId = 5;
-    private const uint RumbleMs = 400;
+    private const nuint RepeatTimerId = 1, WatchTimerId = 4, RumbleTimerId = 5, GameRumbleTimerId = 6;
+    private const uint RumbleMs = 400, GameRumbleRefreshMs = 80;
     private const uint WatchPollMs = 5000, WatchFastPollMs = 1000, WatchFastWindowMs = 15000;
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
@@ -47,6 +47,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private string _watchName = "";   // list entry of the process that matched
     private long _fastPollUntil;      // Environment.TickCount64 until which the poll is fast (after a shortcut launch)
 
+    private byte _gameLarge, _gameSmall; // what the game asks of the virtual pad's motors
+    private bool _pairing;
     private bool _padEnabled;
     private bool _padFailed;
     private bool _shutDown;
@@ -65,6 +67,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _window = window;
         _mouse = new MouseMode(state, _mouseOutput, () => _store.Current.Mouse);
         _settings = SettingsPages.Create(_store, this);
+        _pad.Feedback += OnPadFeedback;
 
         var error = _store.Load();
         if (error is not null) _toast.Show('', error);
@@ -95,6 +98,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
     // ---- loop hooks --------------------------------------------------------------------------
 
     /// <summary>Waitable timer handle for the message loop; signalled only while a stick moves the mouse.</summary>
+    public nint PadNotifyHandle => _pad.NotifyHandle;
+
+    public void OnPadNotify() => _pad.OnNotifySignaled();
+
     public nint MouseTimerHandle => _mouseOutput.TimerHandle;
 
     /// <summary>The mouse timer fired.</summary>
@@ -172,6 +179,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (id == WatchTimerId)
         {
             CheckProcesses();
+            return;
+        }
+        if (id == GameRumbleTimerId)
+        {
+            ApplyGameRumble(restartTimer: false);
             return;
         }
         if (id == RumbleTimerId)
@@ -861,6 +873,28 @@ internal sealed class AppController : IDisposable, ISettingsHost
         bool enabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
         UpdateWatchTimer();
         if (enabled != _padEnabled) SetPadEnabled(enabled);
+        ApplyGameRumble(restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
+    }
+
+    /// <summary>A game set the virtual pad's motors: forward them to the Pro Controller, scaled by the Rumble setting.</summary>
+    private void OnPadFeedback(byte large, byte small)
+    {
+        _gameLarge = large;
+        _gameSmall = small;
+        ApplyGameRumble(restartTimer: true);
+    }
+
+    /// <summary>
+    /// The controller keeps vibrating only while it keeps receiving rumble reports: refresh them while the game
+    /// asks for any, and send a neutral one when it stops.
+    /// </summary>
+    private void ApplyGameRumble(bool restartTimer)
+    {
+        int percent = Config.VirtualPad.Rumble;
+        bool active = percent > 0 && (_gameLarge > 0 || _gameSmall > 0);
+        _window.SetRumbleMotors(active ? _gameLarge : (byte)0, active ? _gameSmall : (byte)0, percent);
+        if (!active) KillTimer(_window.Handle, GameRumbleTimerId);
+        else if (restartTimer) SetTimer(_window.Handle, GameRumbleTimerId, GameRumbleRefreshMs, 0);
     }
 
     // ISettingsHost
@@ -874,6 +908,36 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         if (slot != 0 || !_window.SetRumble(true)) return;
         SetTimer(_window.Handle, RumbleTimerId, RumbleMs, 0);
+    }
+
+    string ISettingsHost.PairingStatus => _pairing ? "Searching..." : "";
+
+    void ISettingsHost.AddProController()
+    {
+        if (_pairing || _shutDown) return;
+        _pairing = true;
+        _toast.Show(MenuPages.Gear, "Searching - hold the Pro Controller's sync button");
+        nint hwnd = _window.Handle;
+        new Thread(() =>
+        {
+            var result = BluetoothPairing.PairNewProController();
+            PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)result, 0);
+        }) { IsBackground = true, Name = "pairing" }.Start();
+    }
+
+    /// <summary>AppMessages.PairDone, on the UI thread.</summary>
+    public void OnPairDone(PairResult result)
+    {
+        _pairing = false;
+        if (_shutDown) return;
+        Log.Info($"Pairing: {result}");
+        _toast.Show(MenuPages.Gear, result switch
+        {
+            PairResult.Paired => "Pro Controller paired",
+            PairResult.NotFound => "No new Pro Controller found - hold its sync button and try again",
+            _ => "Pairing failed - try Windows Bluetooth settings",
+        });
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
     void ISettingsHost.EditRadialMenu() => OpenRadialEditor();

@@ -489,6 +489,16 @@ internal static unsafe partial class Win32
     /// <summary>info: 560-byte BLUETOOTH_DEVICE_INFO (dwSize@0, Address@8, fConnected@20). Returns 0 on success.</summary>
     [LibraryImport("bthprops.cpl")] public static partial uint BluetoothGetDeviceInfo(nint radio, byte* info);
 
+    // Bluetooth discovery / pairing (bthprops.cpl). Structs are passed as raw buffers.
+    [LibraryImport("bthprops.cpl")] public static partial nint BluetoothFindFirstRadio(uint* findParams, nint* radio);
+    [LibraryImport("bthprops.cpl")] public static partial int BluetoothFindNextRadio(nint find, nint* radio);
+    [LibraryImport("bthprops.cpl")] public static partial int BluetoothFindRadioClose(nint find);
+    [LibraryImport("bthprops.cpl")] public static partial nint BluetoothFindFirstDevice(byte* search, byte* info);
+    [LibraryImport("bthprops.cpl")] public static partial int BluetoothFindNextDevice(nint find, byte* info);
+    [LibraryImport("bthprops.cpl")] public static partial int BluetoothFindDeviceClose(nint find);
+    [LibraryImport("bthprops.cpl")] public static partial uint BluetoothAuthenticateDeviceEx(nint owner, nint radio, byte* info, nint oob, uint requirements);
+    [LibraryImport("bthprops.cpl")] public static partial uint BluetoothSetServiceState(nint radio, byte* info, Guid* service, uint flags);
+
     // ---- misc -----------------------------------------------------------------------------
     [LibraryImport("powrprof.dll")] public static partial byte SetSuspendState(byte hibernate, byte force, byte wakeupEventsDisabled);
     [LibraryImport("user32.dll", SetLastError = true)] public static partial int ExitWindowsEx(uint flags, uint reason);

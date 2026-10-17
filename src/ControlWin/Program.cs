@@ -74,13 +74,13 @@ internal static unsafe class Program
     {
         // Wait set: controller reports, the mouse timer (signalled only while a stick moves the cursor), and
         // the watched process (signalled when it exits). The last one changes at run time, so it is re-read.
-        nint* handles = stackalloc nint[3];
+        nint* handles = stackalloc nint[4];
         MSG msg;
         while (true)
         {
             uint count = 0;
             handles[count++] = reader.EventHandle;
-            uint mouseIndex = uint.MaxValue, watchIndex = uint.MaxValue;
+            uint mouseIndex = uint.MaxValue, watchIndex = uint.MaxValue, padIndex = uint.MaxValue;
             if (controller.MouseTimerHandle != 0)
             {
                 mouseIndex = count;
@@ -92,11 +92,18 @@ internal static unsafe class Program
                 handles[count++] = controller.WatchHandle;
             }
 
+            if (controller.PadNotifyHandle != 0)
+            {
+                padIndex = count;
+                handles[count++] = controller.PadNotifyHandle;
+            }
+
             uint r = MsgWaitForMultipleObjectsEx(count, handles, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             if (r == uint.MaxValue) return; // WAIT_FAILED
             if (r == WAIT_OBJECT_0) reader.OnSignaled();
             else if (r == WAIT_OBJECT_0 + mouseIndex) controller.OnMouseTick();
             else if (r == WAIT_OBJECT_0 + watchIndex) controller.OnWatchedProcessExited();
+            else if (r == WAIT_OBJECT_0 + padIndex) controller.OnPadNotify();
 
             while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE) != 0)
             {

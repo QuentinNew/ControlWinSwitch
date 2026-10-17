@@ -220,6 +220,10 @@ internal interface ISettingsHost
     bool ControllerConnected(int slot);
     /// <summary>Makes the controller in <paramref name="slot"/> rumble briefly.</summary>
     void RumbleController(int slot);
+    /// <summary>Pairs a Pro Controller that Windows does not know yet (Bluetooth).</summary>
+    void AddProController();
+    /// <summary>"Searching..." while a pairing runs, otherwise empty.</summary>
+    string PairingStatus { get; }
 }
 
 internal static class SettingsPages
@@ -249,9 +253,15 @@ internal static class SettingsPages
         var controller = new SettingsTab("Controller",
         [
             SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, host.RumbleController),
+            SettingItem.Action("Add new Pro Controller", host.AddProController, () => host.PairingStatus),
+        ], controllerStrip: true);
+
+        var virtualPad = new SettingsTab("Virtual Pad",
+        [
             SettingItem.Toggle("Virtual Xbox pad", () => host.PadEnabled, host.SetPad),
             SettingItem.Toggle("Swap A / B", () => cfg().VirtualPad.SwapAB, v => { cfg().VirtualPad.SwapAB = v; Changed(); }),
             SettingItem.Toggle("Swap X / Y", () => cfg().VirtualPad.SwapXY, v => { cfg().VirtualPad.SwapXY = v; Changed(); }),
+            SettingItem.Number("Rumble", () => cfg().VirtualPad.Rumble, v => { cfg().VirtualPad.Rumble = (int)v; Changed(); }, 0, 100, 10, "0", "%"),
             SettingItem.Text("Pad off while running",
                 () => cfg().VirtualPad.DisableWhileRunning.Count == 0 ? "(off)" : ProcessList.Format(cfg().VirtualPad.DisableWhileRunning),
                 () => host.EditText(ProcessList.Format(cfg().VirtualPad.DisableWhileRunning), v =>
@@ -260,7 +270,7 @@ internal static class SettingsPages
                     Changed();
                     host.WatchListChanged();
                 })),
-        ], controllerStrip: true);
+        ]);
 
         var mouse = new SettingsTab("Mouse",
         [
@@ -281,6 +291,6 @@ internal static class SettingsPages
             SettingItem.Action("Bluetooth settings", host.OpenBluetoothSettings),
         ]);
 
-        return new SettingsModel([general, layout, controller, mouse, headset]);
+        return new SettingsModel([general, layout, controller, virtualPad, mouse, headset]);
     }
 }

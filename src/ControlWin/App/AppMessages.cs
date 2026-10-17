@@ -15,6 +15,9 @@ internal static class AppMessages
     /// <summary>Posted by the power worker thread when sleep / restart / shut down was refused.</summary>
     public const uint PowerFailed = WM_APP + 3;
 
+    /// <summary>Posted by the pairing worker thread: wParam = <c>PairResult</c>.</summary>
+    public const uint PairDone = WM_APP + 4;
+
     /// <summary>Posts <paramref name="message"/> to the running instance. False when none is running.</summary>
     public static bool PostToRunningInstance(uint message)
     {

@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using ControlWin.Input;
+using ControlWin.Native;
 using static ControlWin.Native.Win32;
 
 namespace ControlWin.Actions;
@@ -20,6 +22,10 @@ internal sealed unsafe class VirtualPad : IDisposable
     private static readonly uint IoctlPlugin = Ioctl(0x801), IoctlUnplug = Ioctl(0x802),
         IoctlCheckVersion = Ioctl(0x803), IoctlWaitReady = Ioctl(0x804), IoctlXusbSubmit = Ioctl(0xA02);
 
+    // CTL_CODE(FILE_DEVICE_BUS_EXTENDER, 0xA01, METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA): completes when a game
+    // changes the pad's vibration. XUSB_REQUEST_NOTIFICATION { Size = 12, SerialNo, LargeMotor, SmallMotor, LedNumber }.
+    private static readonly uint IoctlXusbRequestNotification = (FileDeviceBusExtender << 16) | (3u << 14) | (0xA01u << 2);
+
     private uint _serial = (uint)Environment.ProcessId << 8; // unique per process and plug-in: a lingering target can never collide
 
     private nint _bus = INVALID_HANDLE_VALUE;
@@ -27,7 +33,21 @@ internal sealed unsafe class VirtualPad : IDisposable
     private XusbReport _last;
     private bool _hasLast;
 
+    // Rumble feedback: a pending overlapped request on the bus handle that plugged the pad, completed by the driver.
+    // The bus handle is overlapped, so the synchronous calls go through Control().
+    private nint _controlEvent;
+    private nint _notifyEvent;
+    private OVERLAPPED* _notifyOverlapped;
+    private byte* _notifyBuffer;
+    private bool _notifyPending;
+
     public bool IsAttached => _plugged;
+
+    /// <summary>Signaled when a game changed the vibration; 0 when nothing is pending. Call <see cref="OnNotifySignaled"/>.</summary>
+    public nint NotifyHandle => _notifyPending ? _notifyEvent : 0;
+
+    /// <summary>A game set the pad's motors (large, small: 0..255). (0, 0) is also raised when the pad goes away.</summary>
+    public event Action<byte, byte>? Feedback;
 
     /// <summary>Plugs the pad in. Returns false (and logs why) when ViGEmBus is missing or refuses.</summary>
     public bool Attach()
@@ -39,8 +59,7 @@ internal sealed unsafe class VirtualPad : IDisposable
 
             // VIGEM_CHECK_VERSION { Size, Version = 1 }
             uint* check = stackalloc uint[2] { 8, 1 };
-            uint returned;
-            if (DeviceIoControl(_bus, IoctlCheckVersion, check, 8, null, 0, &returned, 0) == 0)
+            if (Control(IoctlCheckVersion, check, 8) != 0)
             {
                 Log.Error($"ViGEmBus version check failed (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
                 CloseBus();
@@ -49,7 +68,7 @@ internal sealed unsafe class VirtualPad : IDisposable
 
             // VIGEM_PLUGIN_TARGET { Size = 16, SerialNo, TargetType = X360Wired (0), VendorId = 0, ProductId = 0 }
             uint* plug = stackalloc uint[4] { 16, ++_serial, 0, 0 };
-            if (DeviceIoControl(_bus, IoctlPlugin, plug, 16, null, 0, &returned, 0) == 0)
+            if (Control(IoctlPlugin, plug, 16) != 0)
             {
                 Log.Error($"ViGEmBus refused the virtual pad (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
                 CloseBus();
@@ -58,12 +77,13 @@ internal sealed unsafe class VirtualPad : IDisposable
 
             // VIGEM_WAIT_DEVICE_READY { Size = 8, SerialNo }: blocks until the new pad finished enumerating.
             uint* wait = stackalloc uint[2] { 8, _serial };
-            if (DeviceIoControl(_bus, IoctlWaitReady, wait, 8, null, 0, &returned, 0) == 0)
+            if (Control(IoctlWaitReady, wait, 8) != 0)
                 Log.Error($"Virtual pad wait-ready failed (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
 
             _plugged = true;
             _hasLast = false;
             Log.Info("Virtual Xbox 360 pad plugged in");
+            StartNotify();
             return true;
         }
         catch (Exception ex)
@@ -84,10 +104,9 @@ internal sealed unsafe class VirtualPad : IDisposable
         *(uint*)buffer = 20;
         *(uint*)(buffer + 4) = _serial;
         *(XusbReport*)(buffer + 8) = report;
-        uint returned;
-        if (DeviceIoControl(_bus, IoctlXusbSubmit, buffer, 20, null, 0, &returned, 0) == 0)
+        int error = Control(IoctlXusbSubmit, buffer, 20);
+        if (error != 0)
         {
-            int error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
             if (error == 170) return; // ERROR_BUSY: not ready yet, the next report retries
             Log.Error($"Virtual pad submit failed (error {error}), unplugging");
             Detach();
@@ -99,11 +118,11 @@ internal sealed unsafe class VirtualPad : IDisposable
 
     public void Detach()
     {
+        StopNotify();
         if (_plugged && _bus != INVALID_HANDLE_VALUE)
         {
             uint* unplug = stackalloc uint[2] { 8, _serial };
-            uint returned;
-            DeviceIoControl(_bus, IoctlUnplug, unplug, 8, null, 0, &returned, 0);
+            Control(IoctlUnplug, unplug, 8);
             Log.Info("Virtual Xbox 360 pad removed");
         }
         _plugged = false;
@@ -111,31 +130,122 @@ internal sealed unsafe class VirtualPad : IDisposable
         CloseBus();
     }
 
-    public void Dispose() => Detach();
+    public void Dispose()
+    {
+        Detach();
+        if (_notifyEvent != 0) CloseHandle(_notifyEvent);
+        if (_controlEvent != 0) CloseHandle(_controlEvent);
+        _notifyEvent = _controlEvent = 0;
+        if (_notifyOverlapped != null) NativeMemory.Free(_notifyOverlapped);
+        if (_notifyBuffer != null) NativeMemory.Free(_notifyBuffer);
+        _notifyOverlapped = null;
+        _notifyBuffer = null;
+    }
 
-    private bool OpenBus()
+    /// <summary>DeviceIoControl on the overlapped bus handle, waited for. Returns 0, or the Win32 error.</summary>
+    private int Control(uint code, void* input, uint size)
+    {
+        if (_controlEvent == 0) _controlEvent = CreateEventW(0, 1, 0, null);
+        OVERLAPPED overlapped = default;
+        overlapped.hEvent = _controlEvent;
+        uint returned;
+        if (DeviceIoControl(_bus, code, input, size, null, 0, &returned, (nint)(&overlapped)) != 0) return 0;
+        int error = Marshal.GetLastPInvokeError();
+        if (error != ERROR_IO_PENDING) return error;
+        if (GetOverlappedResult(_bus, &overlapped, &returned, 1) != 0) return 0;
+        return Marshal.GetLastPInvokeError();
+    }
+
+    private void StartNotify()
+    {
+        if (_notifyPending) return;
+        if (_notifyEvent == 0)
+        {
+            _notifyEvent = CreateEventW(0, 1, 0, null); // manual reset: the next request resets it
+            _notifyOverlapped = (OVERLAPPED*)NativeMemory.AllocZeroed((nuint)sizeof(OVERLAPPED));
+            _notifyBuffer = (byte*)NativeMemory.AllocZeroed(12);
+        }
+        RequestNotification();
+    }
+
+    private void RequestNotification()
+    {
+        *_notifyOverlapped = default;
+        _notifyOverlapped->hEvent = _notifyEvent;
+        new Span<byte>(_notifyBuffer, 12).Clear();
+        *(uint*)_notifyBuffer = 12;
+        *(uint*)(_notifyBuffer + 4) = _serial;
+        uint returned;
+        if (DeviceIoControl(_bus, IoctlXusbRequestNotification, _notifyBuffer, 12, _notifyBuffer, 12, &returned, (nint)_notifyOverlapped) == 0)
+        {
+            int error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            if (error != ERROR_IO_PENDING)
+            {
+                Log.Error($"Rumble feedback request failed (error {error})");
+                StopNotify();
+                return;
+            }
+        }
+        _notifyPending = true; // completed immediately or still pending: the event gets signaled either way
+    }
+
+    /// <summary>Call when <see cref="NotifyHandle"/> is signaled.</summary>
+    public void OnNotifySignaled()
+    {
+        if (!_notifyPending) return;
+        uint transferred;
+        if (GetOverlappedResult(_bus, _notifyOverlapped, &transferred, 0) == 0)
+        {
+            int error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            if (error == ERROR_IO_INCOMPLETE) return;
+            Log.Error($"Rumble feedback read failed (error {error})");
+            StopNotify();
+            return;
+        }
+        _notifyPending = false;
+        byte large = _notifyBuffer[8], small = _notifyBuffer[9];
+        Feedback?.Invoke(large, small);
+        if (_plugged) RequestNotification();
+    }
+
+    private void StopNotify()
+    {
+        if (!_notifyPending) return;
+        uint n;
+        CancelIoEx(_bus, _notifyOverlapped);
+        GetOverlappedResult(_bus, _notifyOverlapped, &n, 1);
+        _notifyPending = false;
+        Feedback?.Invoke(0, 0);
+    }
+
+    private static string? FindBusPath()
     {
         var guid = BusInterface;
         uint length = 0;
         if (CM_Get_Device_Interface_List_SizeW(&length, &guid, null, 0) != 0 || length <= 1)
         {
             Log.Error("ViGEmBus not found: virtual pad unavailable (install ViGEmBus)");
-            return false;
+            return null;
         }
 
         var buffer = new char[length];
-        string path;
         fixed (char* p = buffer)
         {
             if (CM_Get_Device_Interface_ListW(&guid, null, p, length, 0) != 0)
             {
                 Log.Error("ViGEmBus interface list failed");
-                return false;
+                return null;
             }
-            path = new string(p);
+            return new string(p);
         }
+    }
 
-        _bus = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
+    private bool OpenBus()
+    {
+        var path = FindBusPath();
+        if (path is null) return false;
+
+        _bus = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
         if (_bus == INVALID_HANDLE_VALUE)
         {
             Log.Error($"Cannot open ViGEmBus (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");

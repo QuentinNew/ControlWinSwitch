@@ -194,17 +194,18 @@ internal sealed unsafe class HidControllerReader : IDisposable
     }
 
     /// <summary>Starts or stops the rumble motors. Returns false when the controller is absent or read-only.</summary>
-    public bool SetRumble(bool on)
+    public bool SetRumble(bool on) => SetRumbleMotors(on ? (byte)255 : (byte)0, on ? (byte)255 : (byte)0, 100);
+
+    /// <summary>Rumbles from Xbox motor strengths (0..255) scaled by <paramref name="percent"/>; (0, 0) stops it.</summary>
+    public bool SetRumbleMotors(byte large, byte small, int percent)
     {
         if (_file == 0 || !_canWrite) return false;
-        if (on && !_vibrationEnabled)
+        if ((large > 0 || small > 0) && percent > 0 && !_vibrationEnabled)
         {
             if (!Write(ProCommands.EnableVibration(_packetCounter++, (int)_outputLength))) return false;
             _vibrationEnabled = true;
         }
-        bool ok = Write(ProCommands.Rumble(_packetCounter++, on, (int)_outputLength));
-        Log.Info($"Rumble {(on ? "on" : "off")}: {(ok ? "sent" : "failed")}");
-        return ok;
+        return Write(ProCommands.RumbleMotors(_packetCounter++, large, small, percent, (int)_outputLength));
     }
 
     /// <summary>Synchronous (bounded) overlapped write on the device handle.</summary>
