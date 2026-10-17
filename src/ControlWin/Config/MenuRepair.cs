@@ -14,13 +14,15 @@ internal static class MenuDefaults
     public static List<MenuNodeConfig> Create(string layout) =>
         layout == MenuLayouts.Radial ? CreateRadial() : CreateList();
 
-    private static MenuNodeConfig Action(string type, int slot) => new() { Type = type, Slot = slot };
+    private static MenuNodeConfig Action(string type, int slot, string? color = null) =>
+        new() { Type = type, Slot = slot, Color = color };
 
-    private static MenuNodeConfig Folder(string name, int slot, string glyph, List<MenuNodeConfig> children) => new()
+    private static MenuNodeConfig Folder(string name, int slot, string glyph, List<MenuNodeConfig> children, string? color = null) => new()
     {
         Type = MenuNodeTypes.Folder,
         Slot = slot,
         Name = name,
+        Color = color,
         Icon = new MenuIconConfig { Glyph = glyph },
         Children = children,
     };
@@ -33,9 +35,9 @@ internal static class MenuDefaults
 
     private static List<MenuNodeConfig> PowerNodes() =>
     [
-        Action(MenuNodeTypes.Sleep, 0),
-        Action(MenuNodeTypes.Restart, 1),
-        Action(MenuNodeTypes.Shutdown, 2),
+        Action(MenuNodeTypes.Sleep, 0, "#C7652B"),
+        Action(MenuNodeTypes.Restart, 1, "#2B9DC7"),
+        Action(MenuNodeTypes.Shutdown, 2, "#713333"),
     ];
 
     private static List<MenuNodeConfig> CreateRadial() =>
@@ -44,10 +46,10 @@ internal static class MenuDefaults
         Folder("Shortcuts", 1, "E768", Launchers()),
         Action(MenuNodeTypes.VirtualPad, 2),
         Action(MenuNodeTypes.Headset, 3),
-        Action(MenuNodeTypes.Settings, 4),
-        Folder("Power", 5, "E7E8", PowerNodes()),
-        Action(MenuNodeTypes.Quit, 6),
-        Action(MenuNodeTypes.Close, 7),
+        Action(MenuNodeTypes.Settings, 4, "#2A6573"),
+        Folder("Power", 5, "E7E8", PowerNodes(), "#7D4444"),
+        Action(MenuNodeTypes.Quit, 6, "#713333"),
+        Action(MenuNodeTypes.Close, 7, "#0C0B0B"),
     ];
 
     private static List<MenuNodeConfig> CreateList() =>
@@ -56,9 +58,9 @@ internal static class MenuDefaults
         Folder("Shortcuts", 1, "E768", Launchers()),
         Action(MenuNodeTypes.VirtualPad, 2),
         Action(MenuNodeTypes.Headset, 3),
-        Action(MenuNodeTypes.Settings, 4),
-        Folder("Power", 5, "E7E8", PowerNodes()),
-        Action(MenuNodeTypes.Quit, 6),
+        Action(MenuNodeTypes.Settings, 4, "#2A6573"),
+        Folder("Power", 5, "E7E8", PowerNodes(), "#7D4444"),
+        Action(MenuNodeTypes.Quit, 6, "#713333"),
     ];
 }
 
