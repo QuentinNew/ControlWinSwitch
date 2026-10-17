@@ -70,9 +70,6 @@ internal sealed unsafe class HidControllerReader : IDisposable
     /// <summary>Raised for every decoded report (on the UI thread).</summary>
     public event Action<ProReport, ReadOnlyMemory<byte>>? Report;
 
-    /// <summary>Raised for reports with an ID the parser doesn't know (diagnostics).</summary>
-    public event Action<ReadOnlyMemory<byte>>? UnknownReport;
-
     /// <summary>Raised when the controller goes away (disconnected, or the read failed).</summary>
     public event Action? ControllerRemoved;
 
@@ -202,7 +199,6 @@ internal sealed unsafe class HidControllerReader : IDisposable
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
                 Report?.Invoke(report, bytes);
             }
-            else UnknownReport?.Invoke(bytes);
         }
 
         // A handler may have closed the device.

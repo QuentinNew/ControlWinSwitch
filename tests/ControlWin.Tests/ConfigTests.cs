@@ -8,7 +8,7 @@ public class ConfigTests
     public void Defaults_match_the_plan()
     {
         var c = new AppConfig().Sanitize();
-        Assert.Equal("WH-CH700N", c.HeadsetName);
+        Assert.Equal("", c.HeadsetName);
         Assert.True(c.VirtualPad.Enabled);
         Assert.True(c.VirtualPad.SwapAB);
         Assert.True(c.VirtualPad.SwapXY);
@@ -34,7 +34,7 @@ public class ConfigTests
     public void Missing_sections_fall_back_to_defaults()
     {
         var c = ConfigStore.Parse("{}");
-        Assert.Equal("WH-CH700N", c.HeadsetName);
+        Assert.Equal("", c.HeadsetName);
         Assert.NotNull(c.ListMenu);
     }
 

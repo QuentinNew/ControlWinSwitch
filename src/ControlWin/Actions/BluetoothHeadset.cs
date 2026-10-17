@@ -33,6 +33,7 @@ internal static unsafe class BluetoothHeadset
     /// <summary>Current state of the headset whose endpoint name contains <paramref name="name"/>.</summary>
     public static HeadsetState GetState(string name)
     {
+        if (string.IsNullOrWhiteSpace(name)) return HeadsetState.NotFound; // no name set: would match every endpoint
         if (!Initialize(out bool uninit)) return HeadsetState.Failed;
         try
         {
@@ -55,6 +56,7 @@ internal static unsafe class BluetoothHeadset
     /// </summary>
     public static HeadsetState Toggle(string name)
     {
+        if (string.IsNullOrWhiteSpace(name)) return HeadsetState.NotFound;
         if (!Initialize(out bool uninit)) return HeadsetState.Failed;
         try
         {

@@ -11,9 +11,6 @@ internal static class Log
     private static string? s_path;
     private static bool s_initialized;
 
-    /// <summary>Also echo every line to <see cref="Console"/> (--debug-input).</summary>
-    public static bool ConsoleEnabled { get; set; }
-
     /// <summary>Full path of log.txt, or null when the folder is unavailable.</summary>
     public static string? FilePath
     {
@@ -35,11 +32,6 @@ internal static class Log
     private static void Write(string level, string message)
     {
         var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {message}";
-
-        if (ConsoleEnabled)
-        {
-            try { Console.WriteLine(line); } catch { }
-        }
 
         try
         {

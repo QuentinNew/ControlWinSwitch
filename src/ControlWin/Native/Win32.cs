@@ -236,14 +236,14 @@ internal static unsafe partial class Win32
     public const byte VK_MENU = 0x12;
     public const uint KEYEVENTF_KEYUP = 0x2;
     public const nint MA_ACTIVATE = 1;
-    public const uint WM_MOUSEACTIVATE = 0x0021, WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_RBUTTONDOWN = 0x0204, WM_MOUSEWHEEL = 0x020A;
+    public const uint WM_MOUSEACTIVATE = 0x0021, WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_MOUSEWHEEL = 0x020A;
     public const nint MA_NOACTIVATE = 3;
 
     public const uint WS_POPUP = 0x80000000;
     public const uint WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80,
         WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
 
-    public const int SW_HIDE = 0, SW_SHOWNORMAL = 1, SW_SHOWMINNOACTIVE = 7, SW_SHOWNOACTIVATE = 4;
+    public const int SW_HIDE = 0, SW_SHOWNORMAL = 1, SW_SHOWNOACTIVATE = 4;
     public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
     public static readonly nint HWND_TOPMOST = -1;
 
@@ -277,15 +277,13 @@ internal static unsafe partial class Win32
     public const uint NOTIFYICON_VERSION_4 = 4;
 
     public const uint MSGFLT_ALLOW = 1;
-    public const uint MB_OK = 0, MB_ICONINFORMATION = 0x40, MB_ICONERROR = 0x10, MB_YESNO = 4, MB_ICONQUESTION = 0x20;
-    public const int IDYES = 6;
 
     public const uint STARTF_USESHOWWINDOW = 1;
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
-    public const uint SEE_MASK_NOCLOSEPROCESS = 0x40, SEE_MASK_FLAG_NO_UI = 0x400;
+    public const uint SEE_MASK_FLAG_NO_UI = 0x400;
 
     public const uint SYNCHRONIZE = 0x00100000;
-    public const uint PROCESS_QUERY_INFORMATION = 0x400, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     public const uint TOKEN_QUERY = 0x8, TOKEN_DUPLICATE = 0x2, TOKEN_ASSIGN_PRIMARY = 0x1,
         TOKEN_ADJUST_DEFAULT = 0x80, TOKEN_ADJUST_SESSIONID = 0x100, TOKEN_ADJUST_PRIVILEGES = 0x20;
     public const int SecurityImpersonation = 2, TokenPrimary = 1, TokenElevation = 20;
@@ -336,10 +334,7 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial uint RegisterWindowMessageW(string name);
     [LibraryImport("user32.dll")] public static partial int ChangeWindowMessageFilterEx(nint hwnd, uint msg, uint action, nint changeInfo);
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial nint FindWindowW(string? className, string? windowName);
-    [LibraryImport("user32.dll")] public static partial int EnumWindows(delegate* unmanaged<nint, nint, int> callback, nint param);
     [LibraryImport("user32.dll")] public static partial uint GetWindowThreadProcessId(nint hwnd, uint* pid);
-    [LibraryImport("user32.dll")] public static partial int GetClassNameW(nint hwnd, char* buffer, int max);
-    [LibraryImport("user32.dll")] public static partial int GetWindowTextLengthW(nint hwnd);
     [LibraryImport("user32.dll")] public static partial nint GetShellWindow();
     [LibraryImport("user32.dll")] public static partial nint CreatePopupMenu();
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial int AppendMenuW(nint menu, uint flags, nuint id, string? item);
@@ -359,11 +354,8 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static partial nint SetWindowLongPtrW(nint hwnd, int index, nint value);
     [LibraryImport("user32.dll")] public static partial nint CreateIconIndirect(ICONINFO* info);
     [LibraryImport("user32.dll")] public static partial int DestroyIcon(nint icon);
-    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial int MessageBoxW(nint hwnd, string text, string caption, uint type);
     [LibraryImport("user32.dll")] public static partial nint GetDC(nint hwnd);
     [LibraryImport("user32.dll")] public static partial int ReleaseDC(nint hwnd, nint hdc);
-    [LibraryImport("user32.dll")] public static partial int SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags);
-    public const uint LWA_ALPHA = 0x2, LWA_COLORKEY = 0x1;
     [LibraryImport("user32.dll")] public static partial nint SetCapture(nint hwnd);
     [LibraryImport("user32.dll")] public static partial int ReleaseCapture();
     [LibraryImport("user32.dll")] public static partial int OpenClipboard(nint owner);
@@ -454,7 +446,6 @@ internal static unsafe partial class Win32
     [LibraryImport("kernel32.dll")] public static partial int SetWaitableTimer(nint timer, long* dueTime, int period, nint completion, nint arg, int resume);
     [LibraryImport("kernel32.dll")] public static partial int CancelWaitableTimer(nint timer);
     [LibraryImport("kernel32.dll")] public static partial nint OpenProcess(uint access, int inherit, uint pid);
-    [LibraryImport("kernel32.dll")] public static partial int AllocConsole();
     [LibraryImport("kernel32.dll")] public static partial nint GetCurrentProcess();
     [LibraryImport("kernel32.dll")] public static partial int K32EmptyWorkingSet(nint process);
 
@@ -465,7 +456,7 @@ internal static unsafe partial class Win32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial int WriteFile(nint file, void* buffer, uint bytes, uint* written, nint overlapped);
     [LibraryImport("kernel32.dll")] public static partial uint WaitForSingleObject(nint handle, uint milliseconds);
-    public const uint GENERIC_WRITE = 0x40000000, WAIT_TIMEOUT = 0x102;
+    public const uint GENERIC_WRITE = 0x40000000;
     public const uint GENERIC_READ = 0x80000000, FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, OPEN_EXISTING = 3,
         FILE_FLAG_OVERLAPPED = 0x40000000;
     public const int ERROR_IO_INCOMPLETE = 996, ERROR_IO_PENDING = 997;

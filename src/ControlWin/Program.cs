@@ -23,38 +23,20 @@ internal static unsafe class Program
             return 0;
         }
 
-        bool debugInput = args.Contains("--debug-input", StringComparer.OrdinalIgnoreCase);
-
-        if (debugInput)
-        {
-            AllocConsole();
-            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
-            Log.ConsoleEnabled = true;
-            Console.WriteLine("ControlWin --debug-input: press buttons / move sticks on the Pro Controller. Ctrl+C to quit.");
-        }
-
         try
         {
             using var set = new ControllerSet();
             var window = new MainWindow(set);
             var controller = new AppController(set, window);
             window.Controller = controller;
-            Log.Info($"Started (elevated={IsElevated()}, hwnd=0x{window.Handle:X})");
+            Log.Info($"Started {typeof(Program).Assembly.GetName().Version?.ToString(3)} (elevated={IsElevated()}, hwnd=0x{window.Handle:X})");
 
-            // The controller updates the slot's state before any later subscriber (the debug printer) reads it.
             for (int i = 0; i < ControllerSet.Slots; i++)
             {
                 int slot = i;
                 set.Readers[slot].Report += (report, raw) => controller.OnReport(slot, report, raw);
                 set.Readers[slot].CalibrationRead += cal => controller.OnCalibration(slot, cal);
                 set.Readers[slot].ControllerRemoved += () => controller.OnControllerRemoved(slot);
-            }
-
-            if (debugInput)
-            {
-                var printer = new DebugInputPrinter(controller.StateOf(0));
-                set.Readers[0].Report += printer.OnReport;
-                set.Readers[0].UnknownReport += printer.OnUnknownReport;
             }
 
             set.TryOpen();

@@ -1,36 +1,39 @@
 # ControlWin
 
-A tiny background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads such as the 8BitDo in Switch mode): open a menu with the **Capture** button, drive the mouse with the sticks, launch Steam or games, expose a virtual Xbox 360 pad, connect a Bluetooth headset, sleep or shut down the PC, all from the couch.
+A background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads in Switch mode): open a menu with the **Capture** button, drive the mouse with the sticks, launch games, expose a virtual Xbox 360 or DualShock 4 pad, connect a Bluetooth headset, sleep or shut down the PC, all keyboard and mouse free!
 
-It is written in C# / .NET 10, compiled with **NativeAOT** to a single small exe (about 1 MB), and uses plain Win32 and GDI with no WinForms or WPF. Goal: a few MB of RAM and no CPU use while idle.
+Written in C# / .NET 10, compiled with **NativeAOT** and uses plain Win32 and GDI. It uses a few MB of RAM and no CPU while idle.
 
-> **Status: work in progress.** Controller input, the menu overlay, the virtual pad and the tray icon are built. Mouse mode, config, power, headset and the installer are not (see [Status](#status)).
+## Features
 
-## Status
-
-| Feature | State |
-|---|---|
-| Controller reading (Bluetooth and USB) + `--debug-input` | **Done** |
-| Menu overlay, Capture toggle, navigation (only Virtual pad and Quit are wired, other entries are stubs) | **Done** |
-| Virtual Xbox 360 pad via ViGEmBus (needs ViGEmBus; stop BetterJoy first) | **Done** (needs real-pad validation) |
-| Tray icon, single instance, `--quit`, full close | **Done** (tray look and explorer restart not yet checked by hand) |
-| Mouse mode (sticks = mouse, A/B = clicks, right stick = scroll) | Planned |
-| Config file + launching shortcuts without admin rights | Planned |
-| Power: sleep, restart, shut down | Planned |
-| Bluetooth headset connect/disconnect (name hardcoded to `WH-CH700N` until the config file) | **Done** |
-| Installer (scheduled task at logon, Start menu shortcut) | Planned |
-| Factory stick calibration | Planned (phase 2) |
+- **Menu on Capture**: a list or radial menu overlay, fully editable (nodes, folders, icons, colors, app shortcuts).
+- **Mouse mode**: sticks move the cursor and scroll, A / B click.
+- **Virtual pad**: each Pro Controller drives its own virtual Xbox 360 or DualShock 4 pad through ViGEmBus, with rumble forwarded to the controller. Replaces alternatives like BetterJoy.
+- **HidHide integration**: the physical controller is hidden from games while its virtual pad is on.
+- **Up to four controllers**, each with a name, picture, battery badge, player lights, stick calibration and deadzone.
+- **Shortcuts**: launch apps, URLs and Steam games (with a recently-played Steam picker).
+- **Power**: sleep, restart, shut down. **Bluetooth headset** connect / disconnect. **Pair** a new Pro Controller from the menu.
+- **Tray icon**, single instance, **Launch on startup**, settings window driven by the controller or the mouse.
 
 ## Requirements
 
 - Windows 10/11, x64
-- A Switch Pro Controller (VID `057E`, PID `2009`) paired over Bluetooth, or plugged in over USB
-- [ViGEmBus](https://github.com/nefarius/ViGEmBus) for the virtual pad (the rest works without it)
-- To build: .NET SDK 10 and the **C++ build tools** (NativeAOT links with the MSVC linker)
+- A Switch Pro Controller (VID `057E`, PID `2009`) paired over Bluetooth, or plugged in over USB (see [Known limitations](#known-limitations))
+- [ViGEmBus](https://github.com/nefarius/ViGEmBus) for the virtual pad (everything else works without it)
+- Optional: [HidHide](https://github.com/nefarius/HidHide), so games see only the virtual pad
 
-## Quick start
+## Install
 
-### Build
+1. Download `ControlWin-<version>-win-x64.zip` from the [Releases](../../releases) page and unzip it to any folder (for example `C:\Tools\ControlWin`). There is no installer: the exe is the whole app.
+2. Install ViGEmBus and HidHide.
+3. Start `ControlWin.exe`. The app runs invisibly apart from its [tray icon](#tray-icon). Press **Capture** to open the [menu](#menu-capture-button).
+4. To start it with Windows: Settings → **Other** → **Launch on startup**. When ControlWin runs as administrator this creates a scheduled task that starts it elevated at logon with no UAC prompt (needed to control elevated windows); otherwise it uses the per-user Run key and starts without administrator rights. To get the elevated task, run `ControlWin.exe` once as administrator and turn the setting on.
+
+To uninstall: turn Launch on startup off, quit ControlWin and delete its folder. Settings live in `%APPDATA%\ControlWin\` (delete it too to remove everything).
+
+## Build from source
+
+Needs the .NET SDK 10 and the **C++ build tools** (NativeAOT links with the MSVC linker).
 
 ```powershell
 # vswhere must be on PATH, otherwise the NativeAOT link step fails with VS 2019 Build Tools
@@ -38,190 +41,162 @@ $env:PATH += ";C:\Program Files (x86)\Microsoft Visual Studio\Installer"
 dotnet publish src/ControlWin -c Release -o dist
 ```
 
-The result is `dist\ControlWin.exe`. Stop any running instance first (`dist\ControlWin.exe --quit`), or the exe is locked.
-
-### Run
-
-Start `dist\ControlWin.exe`. The app runs invisibly apart from its [tray icon](#tray-icon). Press **Capture** to open the [menu](#menu-capture-button).
+The result is `dist\ControlWin.exe`. Stop any running instance first (`dist\ControlWin.exe --quit`), or the exe is locked. Run the tests with `dotnet test ControlWin.slnx`.
 
 ## Command line
 
 | Argument | What it does |
 |---|---|
 | *(none)* | Starts the app. If it is already running, opens the running instance's menu and exits. |
-| `--quit` | Asks the running instance to exit and waits up to 5 s for it to go. Works from a normal (non-elevated) prompt even when the app runs elevated. Exit code 0 when nothing is running or it exited, 1 on timeout. |
-| `--debug-input` | Opens a console that prints the decoded controller state (see below). |
-
-### `--debug-input`
-
-```powershell
-dist\ControlWin.exe --debug-input
-```
-
-The console prints the decoded state **only when it changes**:
-
-```
-[Full  ] Capture | raw L(2048,2047) R(2048,2048) | norm L(+0.00,+0.00) R(+0.00,+0.00) | 30-D2-40-00-20-00-00-F8-7F-00-08-80
-```
-
-That is: report format, held buttons, raw stick values, normalized sticks (-1..1, +Y = down) and the first bytes of the report. Lines tagged `[raw changed]` or `[unknown report]` show input the decoder does not understand, which is useful for unusual pads. Everything is also written to `%APPDATA%\ControlWin\log.txt`. Press Ctrl+C to quit.
+| `--quit` | Asks the running instance to exit and waits up to 5 s for it to go. Exit code 0 when nothing is running or it exited, 1 on timeout. |
 
 ## Menu (Capture button)
 
-Capture opens or closes an overlay that you navigate with the D-pad or left stick up/down (hold to repeat); **A** selects, **B** goes back or closes. Sleep / Restart / Shut down / Quit ask for a confirmation first. The overlay is topmost, never takes focus, ignores the mouse, and appears on the monitor under the cursor.
+Capture opens or closes the menu overlay. The overlay is topmost, never takes focus and appears on the monitor under the cursor. While it is open the game receives a neutral pad, and **Capture is never forwarded** to the game. Sleep / Restart / Shut down / Quit ask for a confirmation first.
 
-| Entry | State |
+Default entries (both layouts):
+
+| Entry | What it does |
 |---|---|
-| Mouse mode | stub (toast "not implemented yet") |
-| Shortcuts | stub (empty submenu) |
-| Virtual pad (shows On / Off / Unavailable) | **works** |
-| Headset | stub |
-| Power ▸ Sleep / Restart / Shut down | stub (confirmation works, no action yet) |
-| Quit ControlWin | **works** (same full close as the tray) |
+| Mouse mode | Turns the controller into a mouse (see [Mouse mode](#mouse-mode)) |
+| Shortcuts ▸ | Steam Big Picture, Steam, and anything you add |
+| Virtual pad (On / Off / Unavailable) | Plugs or unplugs the virtual pad |
+| Headset (Connected / Disconnected) | Connects or disconnects the Bluetooth headset |
+| Settings | Opens the [settings window](#settings) |
+| Power ▸ Sleep / Restart / Shut down | Power actions |
+| Quit ControlWin | Full exit (same as the tray) |
+| Close menu | Closes the menu (in the radial menu by default; B also closes) |
 
-While the menu is open the game receives a neutral pad, and **Capture is never forwarded** to the game.
+The connected controllers (picture and battery) can be shown in the menu: Settings → Layout → **Show controller in menu**.
+
+### List layout
+
+Navigate with the D-pad or left stick up / down (hold to repeat); **A** selects, **B** goes back or closes. The mouse hovers and clicks the rows too.
 
 ### Radial layout
 
-Settings → Layout → **Main menu** switches between the list and a radial menu (`"menuLayout": "list" | "radial"` in `config.json`, applied the next time the menu opens). In the radial menu, tilt the left stick towards a node to highlight it (its name appears under it) and **let go to run it**; moving the stick slowly back to the center only clears the highlight. D-pad left / right steps around the ring and **A** runs the highlighted node; **B** goes back (or closes at the root); the mouse hovers, left-clicks and right-clicks as in the list. A submenu opens a smaller ring around the node you picked, with a Back node on the way you came; confirmations need the same node selected twice. `radialReleaseMs` (default 100) is how fast the stick must return to the center to count as "let go".
+Settings → Layout → **Main menu** switches between List and Radial (applied the next time the menu opens). Tilt the left stick towards a node to highlight it (its name appears under it) and **let go to run it**; moving the stick slowly back to the center only clears the highlight. D-pad left / right steps around the ring and **A** runs the highlighted node; **B** goes back (or closes at the root); the mouse hovers, left-clicks and right-clicks. A folder opens a smaller ring around the node you picked, with a Back node on the way you came; confirmations need the same node selected twice. The root ring has 8 slots, a folder 7 (plus Back), and folders do not nest.
+
+### Editing the menu
+
+Settings → Layout → **Edit menu** opens the editor for the current layout (mouse driven). Drag nodes to move or swap them, **+** adds a node (app shortcut, folder, or any built-in action), double-click a folder to enter it. On the right: name, icon (default, a glyph from a grid, the program's own icon, or an image), color (HSV picker, hex, screen eyedropper), and for shortcuts the target, arguments, a recently-played **Steam games** picker and **Run as administrator**. **Save** / **Cancel** / **Reset to default**. A Settings node must stay somewhere in the menu (it is put back if it goes missing).
+
+Shortcuts start with **normal user rights** even when ControlWin runs elevated. With Run as administrator they start elevated instead, without a UAC prompt as long as ControlWin itself runs elevated. Steam games are started by Steam: for those, Steam itself has to run as administrator.
+
+## Mouse mode
+
+| Input | Action |
+|---|---|
+| Left stick | Moves the cursor (ZR held = faster, ZL held = more precise) |
+| Right stick | Scrolls (vertical and horizontal; ZR / ZL scale it too) |
+| A | Left click (hold to drag) |
+| B | Right click |
+| D-pad | Nudges the cursor 1 px per tap, glides after 0.3 s |
+| Capture | Leaves mouse mode |
+
+The virtual pad gets a neutral report while mouse mode is on. Speeds and the deadzone are in Settings → Mouse.
+
+## Settings
+
+Opened from the menu's Settings node or the tray. Drive it with the controller (L / R switch tabs, D-pad moves, A changes, B goes back) or with the mouse.
+
+| Tab | Contents |
+|---|---|
+| Controller | The four controller slots (see [Controllers](#controllers)), Add new Pro Controller (pairing) |
+| Layout | Main menu List / Radial, Edit menu, Show controller in menu |
+| Virtual Pad | None / Xbox / PS4, Swap A / B, Swap X / Y, Rumble strength, Pad off while running |
+| Mouse | Speed, fast / precise multipliers, stick deadzone, scroll speed, D-pad glide speed |
+| Headset | Device name, status, connect / disconnect, Bluetooth settings |
+| Other | Launch on startup, edit / reload the config file, open the log |
 
 ## Tray icon
 
 A controller glyph appears in the taskbar notification area while ControlWin runs. Windows 11 puts new tray icons in the overflow (the `^` menu): drag it onto the taskbar to keep it visible.
 
-- **Tooltip:** "ControlWin - controller connected" or "controller not found", kept up to date as the pad connects and disconnects.
 - **Left click:** opens the menu, or closes it if it is already open.
-- **Right click:** *Open menu*, *Virtual pad* (checked when on), *Open log* (in Notepad), *Quit ControlWin*.
+- **Right click:** *Open menu*, *Virtual pad* (checked when on), *Settings*, *Edit config file*, *Open log*, *Quit ControlWin*.
 - The icon is re-added automatically if explorer restarts.
 
 ### Opening and closing the app
 
 - **Single instance.** Launching the exe a second time does not start a second copy: it opens the menu of the running one. This also works when the running copy is elevated and the new one is not.
-- **Quit** (tray, menu, `--quit`, or Windows logoff / shutdown) is a full exit: the menu and toast are closed, the **virtual pad is unplugged** (it disappears from games), the controller handle is closed, the tray icon is deleted and the process ends. Quitting does not disable autostart (not built yet): the app comes back at the next logon.
+- **Quit** (tray, menu, `--quit`, or Windows logoff / shutdown) is a full exit: the menu and toast are closed, mouse buttons are released, the **virtual pad is unplugged** (it disappears from games), the controller is shown again to other apps, the tray icon is deleted and the process ends. Quitting does not turn off Launch on startup.
 
-## Virtual Xbox 360 pad
+## Virtual pad
 
-ControlWin plugs a virtual **Xbox 360 controller** into ViGEmBus, so XInput games see a standard pad with no BetterJoy running. It is plugged in when the first report arrives and unplugged when the controller disconnects, when you switch it off, or when the app quits. If the process is killed, Windows removes the pad on its own (closing the bus handle unplugs it).
+ControlWin plugs a virtual **Xbox 360** or **DualShock 4** controller (Settings → Virtual Pad) into ViGEmBus for each connected Pro Controller, so games see a standard pad with no BetterJoy running. It is plugged in when the first report arrives and unplugged when the controller disconnects, when you switch it off, or when the app quits. If the process is killed, Windows removes the pad on its own. Rumble from the game is forwarded to the Pro Controller (strength 0-100 %), and each controller's player lights show its slot.
 
-**Mapping** (by label, not by position: Switch **A** = Xbox A, B = B, X = X, Y = Y):
+**Mapping** (by label by default: Switch **A** = Xbox A, B = B, X = X, Y = Y; turn off Swap A / B and Swap X / Y to map by position):
 
-| Pro Controller | Xbox 360 |
-|---|---|
-| A / B / X / Y | A / B / X / Y (by label) |
-| D-pad | D-pad |
-| L / R | LB / RB |
-| ZL / ZR | LT / RT (digital: 0 or 255) |
-| Left / right stick (+ click) | Left / right stick (+ LS / RS) |
-| Plus / Minus | Start / Back |
-| Home | Guide |
-| Capture | never forwarded (opens the menu) |
+| Pro Controller | Xbox 360 | DualShock 4 |
+|---|---|---|
+| A / B / X / Y | A / B / X / Y | Cross / Circle / Square / Triangle |
+| D-pad | D-pad | D-pad |
+| L / R | LB / RB | L1 / R1 |
+| ZL / ZR | LT / RT (digital: 0 or 255) | L2 / R2 |
+| Left / right stick (+ click) | Left / right stick (+ LS / RS) | Left / right stick (+ L3 / R3) |
+| Plus / Minus | Start / Back | Options / Share |
+| Home | Guide | PS |
+| Capture | never forwarded (opens the menu) | never forwarded |
 
 **Behaviour**
 
 - A button still held (or a stick still tilted) when you close the menu stays hidden from the game until you release it, so closing the menu with B does not press B in the game.
 - Switch it on or off from the menu or the tray. If ViGEmBus is missing the menu shows "Unavailable" and a toast tells you; the rest of the app keeps working.
-- **Do not run BetterJoy at the same time**: games would see two pads. Stop it by hand.
-- Implementation note: no `ViGEmClient.dll` is shipped. The app talks to the bus driver directly with IOCTLs.
-
-## How it reads the controller
-
-ControlWin opens the controller's HID interface **directly** and reads it with an overlapped read driven by the message loop, so nothing polls and the app sleeps between reports.
-
-- **Why not Raw Input?** Raw Input is served by Windows itself, so [HidHide](https://github.com/nefarius/HidHide) hides the controller from it even for allowed apps. A direct open honours HidHide's application allow-list.
-- **Full mode.** In its default "simple" mode the controller does not send Capture (and, on some pads, Plus). ControlWin therefore sends the standard *set input report mode 0x30* command when it opens the device, the same one BetterJoy and Steam send, so they keep working alongside. The mode resets when the controller reconnects, and ControlWin re-sends it automatically.
-- **Hot-plug.** Connect and disconnect are detected through device notifications, so you can turn the controller on and off at any time.
+- **Pad off while running**: the pad is switched off while one of the listed processes runs (default `steam.exe`, since Steam Input reads the controller itself) and back on when it exits. A manual toggle wins.
+- **Do not run BetterJoy at the same time**: games would see two pads.
+- No `ViGEmClient.dll` is shipped: the app talks to the bus driver directly with IOCTLs.
 
 ## HidHide
 
-While the virtual pad is on, ControlWin hides each Pro Controller that drives a pad from every other app, so games only see the Xbox pad. It drives the installed [HidHide](https://github.com/nefarius/HidHide) driver itself: the controller goes on the blacklist, ControlWin's own exe on the application allow-list, and the cloak is switched on. When the pad turns off (or a controller disconnects) it is shown again. Controllers without a virtual pad are left alone.
+While the virtual pad is on, ControlWin hides each Pro Controller that drives a pad from every other app, so games only see the virtual pad. It drives the installed [HidHide](https://github.com/nefarius/HidHide) driver itself: the controller goes on the blacklist, ControlWin's own exe (wherever it is) on the application allow-list, and the cloak is switched on. When the pad turns off (or a controller disconnects) it is shown again. Controllers without a virtual pad are left alone.
 
 - Needs HidHide installed. Its control device is exclusive, so close the HidHide Configuration Client while the pad is on, or hiding fails (it is logged and a toast appears; it retries on the next change). Without HidHide the pad still works.
-- Switch it off with `VirtualPad.HidePhysical` in the config file.
+- Switch it off with `virtualPad.hidePhysical` in the config file.
 - ControlWin rewrites HidHide's blacklist and cloak state, so entries you added in the HidHide client (for BetterJoy for example) are replaced while it is hiding.
 - HidHide only blocks new opens: an app that already had the controller open (Steam, BetterJoy) keeps receiving it until it reconnects. Quit it first.
-- If ControlWin crashes while hiding, the controller stays hidden until you start ControlWin again (or turn the cloak off in the HidHide client).
 
 ## Controllers
 
-The **Controller** tab of the settings shows the four controller slots. Each connected controller has a tile with its picture (or a gamepad icon), its name and a small battery badge: four bars (green when full or medium, amber when low, red when critical or empty) and a plus while it charges. The Pro Controller only reports four levels, not a percentage.
+The **Controller** tab of the settings shows the four controller slots. Each connected controller has a tile with its picture (or a gamepad icon), its name and a small battery badge: four bars (green when full or medium, amber when low, red when critical or empty) and a lightning bolt while it charges. The Pro Controller only reports four levels, not a percentage.
 
-Click a tile (or press **A** on it) to open that controller's page: **Name**, **Test rumble** and **Back**, with the connected controllers kept on top and a ring around the one being edited. Click another tile, or press **ZL** / **ZR** for the previous / next one, to edit another controller. Only on that page can a picture be changed: hover the picture of the controller being edited, and a pencil appears on it (click it to choose a PNG, JPG or BMP in a standard Open dialog; the whole picture is kept, scaled down to 128 pixels, and shown with rounded corners) and, when it has a picture, a red cross at the top right that removes it. **B** or a right click goes back.
+Click a tile (or press **A** on it) to open that controller's page: **Name**, **Test rumble**, **Calibrate deadzone** and **Back**, with the connected controllers kept on top and a ring around the one being edited. Click another tile, or press **ZL** / **ZR** for the previous / next one, to edit another controller. Only on that page can a picture be changed: hover the picture of the controller being edited, and a pencil appears on it (click it to choose a PNG, JPG or BMP; the picture is scaled down to 128 pixels and shown with rounded corners) and, when it has a picture, a red cross at the top right that removes it. **B** or a right click goes back.
 
-Controllers are told apart by their Bluetooth MAC address, which ControlWin reads from the controller itself, so a profile follows the controller to any slot and over USB or Bluetooth. Until the MAC is known the Windows device id is used instead, and the profile moves to the MAC once it arrives. Names are stored in `config.json` under `controllers`; pictures are copied to `%APPDATA%\ControlWin\controllers\`, so the original file can move or vanish. A profile is kept while the controller is away; to forget one, delete its entry (and picture file) by hand.
+- **Stick calibration** is read from the controller's own flash (user calibration if present, otherwise factory), so the sticks reach their full range without a warm-up. **Calibrate deadzone** sets a per-stick deadzone for a stick that drifts.
+- **Add new Pro Controller** (in the Controller tab or as a menu node) pairs a controller over Bluetooth: hold its sync button while ControlWin searches.
+- Controllers are told apart by their Bluetooth MAC address, which ControlWin reads from the controller itself, so a profile follows the controller to any slot and over USB or Bluetooth. Names and deadzones are stored in `config.json` under `controllers`; pictures are copied to `%APPDATA%\ControlWin\controllers\`. A profile is kept while the controller is away; to forget one, delete its entry (and picture file) by hand.
 
-## Log
+## Configuration file
 
-`%APPDATA%\ControlWin\log.txt` (also reachable from the tray). Truncated when it grows past 256 KB. First place to look when "nothing happens": it says whether the controller was opened, whether the menu opened, and why the virtual pad failed.
-
-## Planned features
-
-### Mouse mode
-
-Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A** = left click (hold to drag), **B** = right click, **X** = on-screen keyboard, **Capture** = back to the menu. The virtual pad gets a neutral report while it is active.
-
-### Configuration
-
-`%APPDATA%\ControlWin\config.json` (created with defaults on first run, comments and trailing commas allowed). Shortcuts launch with normal user rights even though ControlWin itself runs elevated; a shortcut with `"runAsAdmin": true` (the "Run as administrator" switch in the radial editor) starts elevated instead, without a UAC prompt as long as ControlWin was started elevated (scheduled task / its shortcut). Steam games are started by Steam: for those, Steam itself has to run as administrator. Example of what is planned:
-
-```jsonc
-{
-  "headsetName": "WH-CH700N",
-  "virtualPad": { "enabled": true, "swapAB": true, "swapXY": true },
-  "mouse": { "speed": 1400, "fastMultiplier": 2.5, "slowMultiplier": 0.3, "deadzone": 0.15, "scrollSpeed": 12 },
-  // The two menus are node trees, edited from Settings > Layout > Edit menu (radial: nodes have a ring slot; list: array order).
-  "listMenu": [
-    { "type": "settings", "slot": 0 },
-    { "type": "shortcut", "slot": 1, "name": "My game", "target": "steam://rungameid/<AppID>" }
-  ]
-}
-```
-
-Until then the virtual pad settings are constants in the code (`enabled`, label-based face buttons).
-
-### Install
-
-`ControlWin.exe --install` copies the exe to `C:\Program Files\ControlWin\` and registers a scheduled task that starts it at logon with administrator rights (so it can control elevated windows), no UAC prompt, plus a Start menu shortcut (pinnable to the taskbar) that starts it without a UAC prompt. `--uninstall` removes both and keeps your config.
-
-Battery display and gyro are deliberately out of scope.
+`%APPDATA%\ControlWin\config.json`, created with defaults on first run. Comments and trailing commas are allowed, but saving from the settings rewrites the file without comments. Everything is editable from the settings; the file is reloaded when the menu opens if it changed (Settings → Other → Reload config file forces it).
 
 ## Known limitations
 
-- While the menu is open the virtual pad is neutral, so XInput games see nothing. The physical controller is hidden from games by HidHide (see above), so they only see the pad.
-- UAC prompts and the Ctrl+Alt+Del screen (secure desktop) cannot be controlled.
+- While the menu or mouse mode is open the virtual pad is neutral, so games see nothing.
 - Games in exclusive fullscreen can hide the overlay (borderless is fine).
-- If Steam (Steam Input) or BetterJoy maps Capture to a screenshot, set it to "none" there.
-- Over USB, the controller needs a handshake that ControlWin does not send: it only works if BetterJoy or Steam is running.
-- Some pads do not expose their extra buttons to the PC at all (for example the 8BitDo star / L4 / R4 in Switch mode). Remap them to a standard button in the pad's own software.
-- In full mode the controller streams about 100 reports per second, so CPU use is very small but not exactly zero while the controller is connected.
-- The virtual pad needs ViGEmBus (retired by its author, but working).
+- The virtual pad needs ViGEmBus.
+- Gyro is not supported.
 
 ## Project layout
 
 ```
 src/ControlWin/
-  Program.cs                 arguments, single-instance mutex, message loop
-  Log.cs                     %APPDATA%\ControlWin\log.txt
-  App/MainWindow.cs          hidden top-level window: device notifications, tray, app messages, session end
-  App/AppMessages.cs         registered messages (ShowMenu, Quit, TaskbarCreated), --quit
-  App/AppController.cs       Idle / Menu modes: consumes or forwards input, owns the virtual pad, Shutdown()
-  App/MenuModel.cs           menu tree and state machine (pure, tested)
-  Native/Win32.cs            all P/Invoke (hand-written, AOT friendly)
-  Native/NativeWindow.cs     window base class
-  Input/HidControllerReader.cs   direct HID read, full-mode request, hot-plug
-  Input/ProReportParser.cs   report decoding (pure, tested)
-  Input/ControllerState.cs   edges, deadzone, calibration (pure, tested)
-  Input/ProCommands.cs       output reports (pure, tested)
-  Input/XInputMapper.cs      Pro Controller state -> Xbox 360 report (pure, tested)
-  Input/DebugInputPrinter.cs --debug-input output
-  Actions/VirtualPad.cs      ViGEmBus client (direct IOCTLs)
-  UI/MenuOverlay.cs          the menu window (GDI, double buffered)
-  UI/Toast.cs                short messages
-  UI/TrayIcon.cs             tray icon, tooltip, context menu
-  UI/Gdi.cs                  palette, fonts per DPI, paint buffer
-tests/ControlWin.Tests/      xUnit
+  Program.cs                   arguments, single-instance mutex, message loop
+  Log.cs                       %APPDATA%\ControlWin\log.txt
+  App/                         MainWindow (hidden window, tray, device notifications), AppController (Idle / Menu /
+                               Mouse / Settings modes), AppMessages, MenuModel, MenuTree, RadialModel, MenuEditorModel,
+                               SettingsModel, MouseMode, ProcessWatch, DeadzoneCalibration (models are pure, tested)
+  Config/                      AppConfig (config.json, source-generated JSON), MenuRepair (defaults and repair)
+  Input/                       HidControllerReader (direct HID read), ControllerSet (four slots), ProReportParser,
+                               ControllerState, StickCalibration, ProCommands, XInputMapper, Ds4Mapper
+  Actions/                     VirtualPad (ViGEmBus IOCTLs), HidHide, UnelevatedLauncher, PowerActions,
+                               BluetoothHeadset, BluetoothPairing, SteamLibrary, SendInputMouse, ControllerPictures, FilePicker
+  Setup/Startup.cs             Launch on startup (scheduled task or Run key)
+  UI/                          MenuOverlay, RadialOverlay, MenuEditorWindow, SettingsWindow, ControllerTile, RadialIcons,
+                               Toast, TrayIcon, Gdi
+  Native/                      Win32 (all P/Invoke, hand-written, AOT friendly), NativeWindow, HighResTimer
+tests/ControlWin.Tests/        xUnit
 ```
-
-Run the tests with `dotnet test ControlWin.slnx`.
 
 ## Credits
 
@@ -231,4 +206,4 @@ Run the tests with `dotnet test ControlWin.slnx`.
 
 ## License
 
-Not chosen yet.
+MIT, see [LICENSE](LICENSE).

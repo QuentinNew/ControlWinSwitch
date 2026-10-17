@@ -136,7 +136,8 @@ internal static class MenuLayouts
 
 internal sealed class AppConfig
 {
-    public string HeadsetName { get; set; } = "WH-CH700N";
+    /// <summary>Part of the headset's audio endpoint name; empty = no headset set up.</summary>
+    public string HeadsetName { get; set; } = "";
 
     /// <summary>How the main menu is drawn: <see cref="MenuLayouts.List"/> or <see cref="MenuLayouts.Radial"/>.</summary>
     public string MenuLayout { get; set; } = MenuLayouts.List;

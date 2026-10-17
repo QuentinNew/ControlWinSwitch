@@ -481,7 +481,7 @@ public class SettingsModelTests
         m.SetTab(4); // Headset
         Assert.Equal(0, m.Selected); // device name is the first selectable row
         m.Activate();
-        Assert.Equal("WH-CH700N", host.Editing);
+        Assert.Equal("", host.Editing);
 
         host.Commit!("  My Headset ");
         Assert.Equal("My Headset", store.Current.HeadsetName);

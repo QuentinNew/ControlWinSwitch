@@ -12,7 +12,6 @@ internal enum CommandKind
     Restart,
     Shutdown,
     Quit,
-    OpenBluetoothSettings,
     OpenSettings,
     AddController,
     CloseMenu,

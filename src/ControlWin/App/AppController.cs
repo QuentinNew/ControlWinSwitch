@@ -132,8 +132,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     public void OnPadNotify(int slot) => _slots[slot].Pad.OnNotifySignaled();
 
-    public ControllerState StateOf(int slot) => _slots[slot].State;
-
     public nint MouseTimerHandle => _mouseOutput.TimerHandle;
 
     /// <summary>The mouse timer fired.</summary>
@@ -156,7 +154,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Mouse) ExitMouse(announce: false);
     }
 
-    /// <summary>Report handler: updates the shared state first, so later subscribers (the debug printer) see it.</summary>
+    /// <summary>Report handler: updates the slot's state, then drives the current mode.</summary>
     public void OnReport(int slot, ProReport report, ReadOnlyMemory<byte> raw)
     {
         _slots[slot].State.Update(report);
@@ -728,7 +726,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 break;
 
             default:
-                _toast.Show(entry.Glyph, $"{entry.Label}: not implemented");
+                Log.Error($"Unhandled menu command {command.Kind} ({entry.Label})");
                 break;
         }
     }
@@ -1392,7 +1390,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 case HeadsetState.Connected: _toast.Show(glyph, "Headset connected"); break;
                 case HeadsetState.Disconnected: _toast.Show(glyph, "Headset disconnected"); break;
                 case HeadsetState.Connecting: break; // no toast: the menu row shows it
-                case HeadsetState.NotFound: _toast.Show(glyph, "Headset not paired"); break;
+                case HeadsetState.NotFound:
+                    _toast.Show(glyph, string.IsNullOrWhiteSpace(Config.HeadsetName) ? "Set the headset name in Settings" : "Headset not paired");
+                    break;
                 default:
                     _toast.Show(glyph, "Headset failed - opening Bluetooth settings");
                     if (_mode == Mode.Settings) CloseSettings();
