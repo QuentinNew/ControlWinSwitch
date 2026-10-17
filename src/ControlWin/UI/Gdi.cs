@@ -91,11 +91,49 @@ internal static unsafe class Gdi
 
     public static void RoundedFill(nint dc, nint brush, int l, int t, int r, int b, int diameter)
     {
+        if (CircleCanvas.EnsureStarted() && TryAntialiasedFill(dc, brush, l, t, r, b, diameter)) return;
+
         var oldBrush = SelectObject(dc, brush);
         var oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
         RoundRect(dc, l, t, r, b, diameter, diameter);
         SelectObject(dc, oldPen);
         SelectObject(dc, oldBrush);
+    }
+
+    private struct LogBrush { public uint Style, Color; public nuint Hatch; }
+
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+    private static extern int GetObjectW(nint handle, int size, ref LogBrush buffer);
+
+    /// <summary>GDI's RoundRect has hard, jagged edges: fills the same shape with GDI+ antialiasing. False when it could not.</summary>
+    private static bool TryAntialiasedFill(nint dc, nint brush, int l, int t, int r, int b, int diameter)
+    {
+        var logBrush = new LogBrush();
+        if (GetObjectW(brush, sizeof(LogBrush), ref logBrush) == 0) return false;
+
+        nint g;
+        if (GdipCreateFromHDC(dc, &g) != 0) return false;
+        GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+
+        // COLORREF is 0x00BBGGRR, GDI+ wants 0xAARRGGBB.
+        uint rgb = logBrush.Color;
+        uint argb = 0xFF000000 | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
+        nint fill = 0, path = 0;
+        bool ok = GdipCreateSolidFill(argb, &fill) == 0 && GdipCreatePath(0, &path) == 0;
+        if (ok)
+        {
+            int w = r - l, h = b - t, d = Math.Min(diameter, Math.Min(w, h));
+            GdipAddPathArcI(path, l, t, d, d, 180, 90);
+            GdipAddPathArcI(path, r - d, t, d, d, 270, 90);
+            GdipAddPathArcI(path, r - d, b - d, d, d, 0, 90);
+            GdipAddPathArcI(path, l, b - d, d, d, 90, 90);
+            GdipClosePathFigure(path);
+            GdipFillPath(g, fill, path);
+        }
+        if (path != 0) GdipDeletePath(path);
+        if (fill != 0) GdipDeleteBrush(fill);
+        GdipDeleteGraphics(g);
+        return ok;
     }
 
     /// <summary>A lightning bolt centered on (<paramref name="cx"/>, <paramref name="cy"/>), <paramref name="height"/> pixels tall, with a thin outline in the background color.</summary>
