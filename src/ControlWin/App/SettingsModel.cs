@@ -368,6 +368,7 @@ internal static class SettingsPages
             SettingItem.Choice("Main menu", ["List", "Radial"],
                 () => cfg().MenuLayout == MenuLayouts.Radial ? 1 : 0,
                 i => { cfg().MenuLayout = i == 1 ? MenuLayouts.Radial : MenuLayouts.List; Changed(); }),
+            SettingItem.Toggle("Show controller in menu", () => cfg().MenuShowControllers, v => { cfg().MenuShowControllers = v; Changed(); }),
             SettingItem.Action("Edit radial menu", host.EditRadialMenu),
         ]);
 

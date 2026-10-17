@@ -141,6 +141,9 @@ internal sealed class AppConfig
     /// <summary>How the main menu is drawn: <see cref="MenuLayouts.List"/> or <see cref="MenuLayouts.Radial"/>.</summary>
     public string MenuLayout { get; set; } = MenuLayouts.List;
 
+    /// <summary>Show the connected controllers (picture and battery) in the menu: in the center of the radial ring, above the list's footer.</summary>
+    public bool MenuShowControllers { get; set; } = true;
+
     /// <summary>Radial menu: the stick must travel from "pushed" to "centered" within this time to count as a release.</summary>
     public int RadialReleaseMs { get; set; } = 100;
 

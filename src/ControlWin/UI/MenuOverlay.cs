@@ -1,3 +1,4 @@
+using ControlWin.Actions;
 using ControlWin.App;
 using ControlWin.Native;
 using static ControlWin.Native.Win32;
@@ -15,7 +16,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     // Layout in DIPs.
     private const int WidthDip = 520, HeaderDip = 64, RowDip = 60, FooterDip = 48, MaxRows = 7, ConfirmRows = 2;
-    private const int CloseDip = 48;
+    private const int CloseDip = 48, ControllersDip = 44, ControllerPicDip = 28;
     private const int SideDip = 12, GlyphXDip = 24, GlyphWidthDip = 32, LabelXDip = 72, DetailWidthDip = 150;
 
     private MenuModel? _model;
@@ -29,6 +30,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
     private uint _dpi = 96;
     private int _top; // first visible row when the page is longer than MaxRows
     private MenuPage? _topPage;
+    private IReadOnlyList<SlotTile> _controllers = [];
 
     public MenuOverlay()
     {
@@ -40,9 +42,10 @@ internal sealed unsafe class MenuOverlay : NativeWindow
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
 
-    public void Show(MenuModel model)
+    public void Show(MenuModel model, IReadOnlyList<SlotTile>? controllers = null)
     {
         _model = model;
+        _controllers = controllers ?? [];
         _lastMouseX = _lastMouseY = -1;
         _top = 0;
         _topPage = null;
@@ -159,10 +162,13 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         return _model.IsConfirming ? ConfirmRows : Math.Clamp(_model.Page.Entries.Count, 1, MaxRows);
     }
 
+    /// <summary>Height of the controller strip between the rows and the footer (0 = none): main page only.</summary>
+    private int StripHeight() => _controllers.Count > 0 && _model is { IsConfirming: false, Depth: 1 } ? Px(ControllersDip) : 0;
+
     private void Place()
     {
         int width = Px(WidthDip);
-        int height = Px(HeaderDip + VisibleRows() * RowDip + FooterDip);
+        int height = Px(HeaderDip + VisibleRows() * RowDip + FooterDip) + StripHeight();
         int x = _work.Left + (_work.Width - width) / 2;
         int y = _work.Top + (_work.Height - height) / 2;
         SetWindowPos(Handle, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -245,6 +251,26 @@ internal sealed unsafe class MenuOverlay : NativeWindow
             Gdi.Fill(dc, Gdi.DimBrush, width - Px(7), thumbTop, width - Px(4), thumbTop + thumbHeight);
         }
 
-        Gdi.Text(dc, fonts.Footer, Gdi.Dim, "A / click  Select     B / right click  Back     Capture  Close", 0, bodyBottom, width, bodyBottom + footerH, DT_CENTER | oneLine);
+        int stripH = StripHeight();
+        if (stripH > 0)
+        {
+            int picR = Px(ControllerPicDip) / 2, stripW = ControllerTile.StripLayout(_dpi, _controllers, picR, out var xs);
+            int left = (width - stripW) / 2, cy = bodyBottom + stripH / 2;
+            for (int i = 0; i < xs.Length; i++)
+            {
+                var c = _controllers[i];
+                int x = left + xs[i], top = cy - picR;
+                if (c.Image != 0)
+                    ControllerPictures.DrawRounded(dc, c.Image, x, top, picR * 2, picR * 2);
+                else
+                {
+                    Gdi.RoundedFill(dc, Gdi.OnBrush, x, top, x + picR * 2, top + picR * 2, picR * 2);
+                    Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ControllerTile.GamepadGlyph, x, top, x + picR * 2, top + picR * 2, DT_CENTER | oneLine);
+                }
+                ControllerTile.PaintBars(dc, _dpi, c, x + picR * 2 + Px(ControllerTile.PicGapDip), cy);
+            }
+        }
+
+        Gdi.Text(dc, fonts.Footer, Gdi.Dim, "A / click  Select     B / right click  Back     Capture  Close", 0, bodyBottom + stripH, width, bodyBottom + stripH + footerH, DT_CENTER | oneLine);
     }
 }

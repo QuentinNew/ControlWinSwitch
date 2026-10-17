@@ -17,13 +17,14 @@ internal sealed unsafe class RadialOverlay : NativeWindow
 
     // Layout in DIPs.
     private const int RingDip = 150, RingStepDip = 28, MinRingDip = 96;
-    private const int NodeDip = 34, SelectedNodeDip = 40, PillHeightDip = 34;
+    private const int NodeDip = 34, SelectedNodeDip = 40, PillHeightDip = 34, BarDip = 28;
 
     private static readonly uint NodeColor = Rgb(0x2A, 0x2A, 0x30);   // same as the list's panels
     private static readonly uint RimColor = Rgb(0x4A, 0x4A, 0x54);
     private static readonly uint SelectedColor = Gdi.Selection;       // same as the list's selection
 
     private RadialModel? _model;
+    private IReadOnlyList<SlotTile> _controllers = [];
     private RECT _work;
     private uint _dpi = 96;
     private (int X, int Y) _center;   // root ring center, screen coordinates
@@ -41,9 +42,11 @@ internal sealed unsafe class RadialOverlay : NativeWindow
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
 
-    public void Show(RadialModel model)
+    /// <summary>Shows the menu. <paramref name="controllers"/> are the connected controllers (a bar under the root ring).</summary>
+    public void Show(RadialModel model, IReadOnlyList<SlotTile>? controllers = null)
     {
         _model = model;
+        _controllers = controllers ?? [];
         _lastMouseX = _lastMouseY = -1;
         Gdi.GetMonitorUnderCursor(out _work, out _dpi);
         _center = (_work.Left + _work.Width / 2, _work.Top + _work.Height / 2);
@@ -241,6 +244,21 @@ internal sealed unsafe class RadialOverlay : NativeWindow
             b = Math.Max(b, positions[i].Y + pad);
         }
 
+        // The connected controllers: a capsule in the root ring's center.
+        int barH = Px(BarDip), barPad = Px(10), picR = Px(BarDip) / 2 - Px(4), picGap = Px(ControllerTile.PicGapDip);
+        int entriesW = ControllerTile.StripLayout(_dpi, _controllers, picR, out var entryX);
+        bool drawBar = top == 0 && _controllers.Count > 0;
+        int barW = barPad * 2 + entriesW;
+        int barL = center.X - barW / 2;
+        int barT = center.Y - barH / 2;
+        if (drawBar)
+        {
+            l = Math.Min(l, barL - Px(2));
+            r = Math.Max(r, barL + barW + Px(2));
+            t = Math.Min(t, barT - Px(2));
+            b = Math.Max(b, barT + barH + Px(2));
+        }
+
         // Name of the highlighted node, in a pill right under it.
         string? text = null;
         uint pillColor = Gdi.TextColor;
@@ -304,6 +322,26 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         bool hubPictured = false;
         using (var canvas = new CircleCanvas(bits, w, h))
         {
+            if (drawBar)
+            {
+                int rad = barH / 2, x0 = barL - l, y0 = barT - t;
+                void Capsule(int grow, uint color)
+                {
+                    canvas.Circle(x0 + rad, y0 + rad, rad + grow, color);
+                    canvas.Circle(x0 + barW - rad, y0 + rad, rad + grow, color);
+                    canvas.Rect(x0 + rad, y0 - grow, x0 + barW - rad, y0 + barH + grow, color);
+                }
+                Capsule(Px(2), RimColor);
+                Capsule(0, NodeColor);
+                for (int i = 0; i < _controllers.Count; i++)
+                {
+                    int cx = x0 + barPad + entryX[i] + picR, cy = y0 + rad;
+                    var c = _controllers[i];
+                    if (c.Image == 0) canvas.Circle(cx, cy, picR, Rgb(0x2E, 0x9E, 0x5B));
+                    else canvas.Image(c.Image, cx, cy, picR, cover: false, fitWidth: true);
+                }
+            }
+
             if (hub is not null)
             {
                 uint lit = Style(hub.Entry).Lit;
@@ -348,6 +386,15 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         if (hub is not null && !hubPictured)
             Gdi.Text(dc, fonts.Glyph, GlyphColor(Style(hub.Entry).Lit, true), hub.Glyph.ToString(),
                 center.X - l - half2, center.Y - t - half2, center.X - l + half2, center.Y - t + half2, DT_CENTER | oneLine);
+
+        if (drawBar)
+            for (int i = 0; i < _controllers.Count; i++)
+            {
+                int x = barL - l + barPad + entryX[i], cy = barT - t + barH / 2;
+                if (_controllers[i].Image == 0)
+                    Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ControllerTile.GamepadGlyph, x, cy - picR, x + picR * 2, cy + picR, DT_CENTER | oneLine);
+                ControllerTile.PaintBars(dc, _dpi, _controllers[i], x + picR * 2 + picGap, cy);
+            }
 
         for (int i = 0; i < positions.Length; i++)
         {

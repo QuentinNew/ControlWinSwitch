@@ -292,13 +292,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _radialStick.CardinalBias = Config.RadialCardinalBias * MathF.PI / 180f;
             _radialStick.Reset(); // a stick already tilted must come back to the center first
             _heldDirection = Dir.None;
-            _radialOverlay.Show(_radial);
+            _radialOverlay.Show(_radial, Config.MenuShowControllers ? ConnectedTiles() : null);
         }
         else
         {
             _menu.Reset(root);
             _heldDirection = ReadDirection(horizontal: false); // a stick already tilted must be released first, not scroll on open
-            _overlay.Show(_menu);
+            _overlay.Show(_menu, Config.MenuShowControllers ? ConnectedTiles() : null);
         }
         Log.Info(_radialShown ? "Menu opened (radial)" : "Menu opened");
         StartHeadsetWork(toggle: false); // refresh the status shown in the menu
@@ -1112,6 +1112,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
         var state = _slots[slot].State;
         return new SlotTile(true, name.Length > 0 ? name : $"Controller {slot + 1}", state.Battery, state.Charging,
             key is null ? 0 : ControllerPictures.Get(key));
+    }
+
+    /// <summary>The tiles of the connected controllers, in slot order.</summary>
+    private List<SlotTile> ConnectedTiles()
+    {
+        var tiles = new List<SlotTile>();
+        for (int slot = 0; slot < _slots.Length; slot++)
+            if (TileOf(slot) is { Connected: true } tile) tiles.Add(tile);
+        return tiles;
     }
 
     /// <summary>The profile of a controller (created when missing).</summary>

@@ -32,9 +32,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     private const int WidthDip = 760, HeaderDip = 60, TabsDip = 52, RowDip = 56, Rows = 6, FooterDip = 44;
     private const int SideDip = 16, ValueWidthDip = 300, ArrowDip = 40, CloseDip = 48, CrossBadgeDip = 24;
     // Connected-controller strip (Controller tab): tiles with the controller's name under each.
-    private const int StripDip = RowDip * 2, TileDip = 64, TileGapDip = 40, NameHeightDip = 28;
+    private const int StripDip = RowDip * 2, TileDip = ControllerTile.SizeDip, TileGapDip = 40, NameHeightDip = ControllerTile.NameHeightDip;
     private static readonly string PencilGlyph = ((char)0xE70F).ToString(); // Segoe icon "Edit"
-    private const string GamepadGlyph = "", NoneGlyph = "";
 
     private const string ChevronLeft = "", ChevronRight = "", Close = "";
 
@@ -426,14 +425,10 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     {
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
         bool on = info.Connected;
-        int tile = Px(TileDip), nameH = Px(NameHeightDip);
+        int tile = Px(TileDip);
         if (focused)
             Gdi.RoundedFill(dc, Gdi.SelectionBrush, l - Px(3), t - Px(3), l + tile + Px(3), t + tile + Px(3), Px(18));
-        Gdi.RoundedFill(dc, on && info.Image == 0 ? Gdi.OnBrush : Gdi.PanelBrush, l, t, l + tile, t + tile, Px(14));
-        if (on && info.Image != 0)
-            ControllerPictures.DrawRounded(dc, info.Image, l, t, tile, Px(14));
-        else
-            Gdi.Text(dc, fonts.Glyph, on ? Gdi.TextColor : Gdi.Dim, on ? GamepadGlyph : NoneGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+        ControllerTile.PaintFace(dc, fonts, _dpi, info, l, t);
         if (on && hovered)
         {
             // Hovering the picture: a pencil changes it, and (when there is one) a cross on the top right removes it.
@@ -441,18 +436,15 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, PencilGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
         }
         if (!on) return;
-        PaintBattery(dc, info, l + tile, t + tile);
+        ControllerTile.PaintBattery(dc, _dpi, info, l + tile, t + tile);
         if (hovered && info.Image != 0)
         {
             var badge = CrossBadge(l, t);
-            s_redBrush = s_redBrush != 0 ? s_redBrush : CreateSolidBrush(Rgb(0xD6, 0x3B, 0x3B));
-            s_redHotBrush = s_redHotBrush != 0 ? s_redHotBrush : CreateSolidBrush(Rgb(0xF2, 0x5C, 0x5C));
-            Gdi.RoundedFill(dc, crossHot ? s_redHotBrush : s_redBrush, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, badge.Size);
+            Gdi.RoundedFill(dc, crossHot ? ControllerTile.RedHotBrush : ControllerTile.RedBrush, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, badge.Size);
             Gdi.Text(dc, BadgeFont(), Gdi.TextColor, Close, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, DT_CENTER | oneLine);
         }
         int reach = Px(TileGapDip) / 2 - 1; // the name gets the tile's whole pitch, never more
-        Gdi.Text(dc, fonts.Detail, Gdi.TextColor, info.Name, l - reach, t + tile + Px(6),
-            l + tile + reach, t + tile + Px(6) + nameH, DT_CENTER | oneLine | DT_END_ELLIPSIS);
+        ControllerTile.PaintName(dc, fonts, _dpi, info, l, t, reach);
     }
 
     // ---- deadzone calibration screen -----------------------------------------------------------
@@ -527,7 +519,6 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     private void PaintCalibration(nint dc, FontSet fonts, DeadzoneCalibration cal, int top)
     {
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
-        s_amberBrush = s_amberBrush != 0 ? s_amberBrush : CreateSolidBrush(Rgb(0xE0, 0xA1, 0x2B));
         var (left, right) = cal.Sticks;
         string[] names = ["Left stick", "Right stick"];
 
@@ -542,7 +533,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             Disc(dc, selected ? Gdi.SelectionBrush : Gdi.DimBrush, cx, cy, r);
             Disc(dc, Gdi.PanelBrush, cx, cy, r - ring);
             int zoneR = (int)Math.Round((r - ring) * zone);
-            if (zoneR > 0) Disc(dc, s_amberBrush, cx, cy, zoneR);
+            if (zoneR > 0) Disc(dc, ControllerTile.AmberBrush, cx, cy, zoneR);
 
             int dot = Px(6), reach = r - ring - dot;
             int px = cx + (int)Math.Round(Math.Clamp(pos.X, -1f, 1f) * reach), py = cy + (int)Math.Round(Math.Clamp(pos.Y, -1f, 1f) * reach);
@@ -563,8 +554,6 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             width / 2 - Px(120), top + Px(150), width / 2 + Px(120), top + Px(190), DT_CENTER | DT_WORDBREAK);
     }
 
-    private static nint s_redBrush, s_redHotBrush, s_amberBrush;
-
     private nint _badgeFont;
     private uint _badgeFontDpi;
 
@@ -578,33 +567,6 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             _badgeFontDpi = _dpi;
         }
         return _badgeFont;
-    }
-
-    /// <summary>A small battery badge on the bottom-right corner of a tile: four bars, a plus while charging.</summary>
-    private void PaintBattery(nint dc, SlotTile info, int right, int bottom)
-    {
-        if (info.Battery < 0) return;
-        int w = Px(38), h = Px(18);
-        int l = right - w + Px(6), t = bottom - h + Px(4);
-        Gdi.RoundedFill(dc, Gdi.BackgroundBrush, l, t, l + w, t + h, Px(8));
-
-        s_redBrush = s_redBrush != 0 ? s_redBrush : CreateSolidBrush(Rgb(0xD6, 0x3B, 0x3B));
-        s_amberBrush = s_amberBrush != 0 ? s_amberBrush : CreateSolidBrush(Rgb(0xE0, 0xA1, 0x2B));
-        nint color = info.Battery <= 1 ? s_redBrush : info.Battery == 2 ? s_amberBrush : Gdi.OnBrush;
-
-        int barW = Px(5), gap = Px(2), barH = Px(10), x = l + Px(6), y = t + (h - barH) / 2;
-        int filled = Math.Max(info.Battery, info.Battery == 0 ? 1 : 0); // an empty battery still shows one (red) bar
-        for (int i = 0; i < 4; i++)
-        {
-            int bx = x + i * (barW + gap);
-            Gdi.Fill(dc, i < filled ? color : Gdi.DimBrush, bx, y, bx + barW, y + barH);
-        }
-        if (info.Charging)
-        {
-            int cx = x + 4 * (barW + gap) + Px(2), cy = t + h / 2, arm = Px(3), thick = Px(1);
-            Gdi.Fill(dc, Gdi.TextBrush, cx - arm, cy - thick, cx + arm + thick, cy + thick + 1);
-            Gdi.Fill(dc, Gdi.TextBrush, cx - thick, cy - arm, cx + thick + 1, cy + arm + thick);
-        }
     }
 
     private void Paint()
