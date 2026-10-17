@@ -1,3 +1,4 @@
+using ControlWin.Config;
 using ControlWin.App;
 
 namespace ControlWin.Tests;
@@ -171,7 +172,7 @@ public class MenuModelTests
     public void Root_menu_has_the_planned_entries()
     {
         var m = new MenuModel();
-        m.Reset(MenuPages.Root());
+        m.Reset(MenuTree.ToPage("ControlWin", MenuDefaults.Create(MenuLayouts.List), slotted: false));
 
         var labels = m.Page.Entries.Select(e => e.Label).ToArray();
         Assert.Equal(["Mouse mode", "Shortcuts", "Virtual pad", "Headset", "Settings", "Power", "Quit ControlWin"], labels);

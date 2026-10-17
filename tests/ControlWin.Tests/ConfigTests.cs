@@ -13,7 +13,6 @@ public class ConfigTests
         Assert.True(c.VirtualPad.SwapAB);
         Assert.True(c.VirtualPad.SwapXY);
         Assert.Equal(800f, c.Mouse.Speed);
-        Assert.Equal(["steam://open/bigpicture", "steam://open/main"], c.Shortcuts.Select(s => s.Target));
     }
 
     [Fact]
@@ -24,14 +23,11 @@ public class ConfigTests
               // my headset
               "headsetName": "Foo",
               "mouse": { "speed": 1000, },
-              "shortcuts": [ { "name": "Notepad", "target": "notepad.exe", }, ],
             }
             """);
         Assert.Equal("Foo", c.HeadsetName);
         Assert.Equal(1000f, c.Mouse.Speed);
         Assert.Equal(0.15f, c.Mouse.Deadzone); // missing field -> default
-        Assert.Single(c.Shortcuts);
-        Assert.Equal("Notepad", c.Shortcuts[0].Name);
     }
 
     [Fact]
@@ -39,17 +35,15 @@ public class ConfigTests
     {
         var c = ConfigStore.Parse("{}");
         Assert.Equal("WH-CH700N", c.HeadsetName);
-        Assert.Equal(2, c.Shortcuts.Count);
+        Assert.NotNull(c.ListMenu);
     }
 
     [Fact]
     public void Null_sections_and_bad_numbers_are_repaired()
     {
-        var c = ConfigStore.Parse("""{ "mouse": null, "virtualPad": null, "shortcuts": [ null, { "target": "" }, { "target": "a.exe" } ] }""");
+        var c = ConfigStore.Parse("""{ "mouse": null, "virtualPad": null, "shortcuts": [ null ] }""");
         Assert.NotNull(c.Mouse);
         Assert.NotNull(c.VirtualPad);
-        Assert.Single(c.Shortcuts);
-        Assert.Equal("a.exe", c.Shortcuts[0].Name); // name defaults to the target
 
         var wild = ConfigStore.Parse("""{ "mouse": { "speed": 99999999, "deadzone": -3 } }""");
         Assert.Equal(10000f, wild.Mouse.Speed);

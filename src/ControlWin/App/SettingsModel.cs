@@ -280,8 +280,8 @@ internal interface ISettingsHost
     /// <summary>Starts inline text editing; <paramref name="commit"/> receives the new text on Enter / A.</summary>
     void EditText(string current, Action<string> commit);
     void OpenBluetoothSettings();
-    /// <summary>Opens the radial menu editor (a mouse window).</summary>
-    void EditRadialMenu();
+    /// <summary>Opens the editor of the menu layout in use (a mouse window).</summary>
+    void EditMenu();
 
     /// <summary>ControlWin is registered to start when Windows starts.</summary>
     bool StartOnLogon { get; }
@@ -367,8 +367,8 @@ internal static class SettingsPages
             SettingItem.Choice("Main menu", ["List", "Radial"],
                 () => cfg().MenuLayout == MenuLayouts.Radial ? 1 : 0,
                 i => { cfg().MenuLayout = i == 1 ? MenuLayouts.Radial : MenuLayouts.List; Changed(); }),
+            SettingItem.Action("Edit menu", host.EditMenu),
             SettingItem.Toggle("Show controller in menu", () => cfg().MenuShowControllers, v => { cfg().MenuShowControllers = v; Changed(); }),
-            SettingItem.Action("Edit radial menu", host.EditRadialMenu),
         ]);
 
         var controller = new SettingsTab("Controller",

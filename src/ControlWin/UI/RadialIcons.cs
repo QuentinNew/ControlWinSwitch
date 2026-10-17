@@ -19,7 +19,7 @@ internal static unsafe class RadialIcons
     public static nint Get(MenuEntry entry, out bool cover) => Get(entry.Icon, entry.Launch?.Target, out cover);
 
     /// <summary>Same, for an icon setting and the shortcut target it belongs to (may be null).</summary>
-    public static nint Get(Config.RadialIconConfig? icon, string? target, out bool cover)
+    public static nint Get(Config.MenuIconConfig? icon, string? target, out bool cover)
     {
         cover = false;
         if (icon is null) return 0;

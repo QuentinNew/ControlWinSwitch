@@ -168,9 +168,10 @@ Left stick moves the cursor (ZR = fast, ZL = precise), right stick scrolls, **A*
   "headsetName": "WH-CH700N",
   "virtualPad": { "enabled": true, "swapAB": true, "swapXY": true },
   "mouse": { "speed": 1400, "fastMultiplier": 2.5, "slowMultiplier": 0.3, "deadzone": 0.15, "scrollSpeed": 12 },
-  "shortcuts": [
-    { "name": "Steam Big Picture", "target": "steam://open/bigpicture" },
-    { "name": "My game", "target": "steam://rungameid/<AppID>" }
+  // The two menus are node trees, edited from Settings > Layout > Edit menu (radial: nodes have a ring slot; list: array order).
+  "listMenu": [
+    { "type": "settings", "slot": 0 },
+    { "type": "shortcut", "slot": 1, "name": "My game", "target": "steam://rungameid/<AppID>" }
   ]
 }
 ```

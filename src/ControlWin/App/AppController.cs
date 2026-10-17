@@ -52,7 +52,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly MenuOverlay _overlay = new();
     private readonly RadialModel _radial = new();
     private readonly RadialOverlay _radialOverlay = new();
-    private readonly RadialEditorWindow _radialEditor = new();
+    private readonly MenuEditorWindow _menuEditor = new();
     private readonly RadialStick _radialStick = new(100);
     private bool _radialShown;   // the open menu is the radial one (layout is read when the menu opens)
     private readonly SettingsWindow _settingsWindow = new();
@@ -119,8 +119,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _settingsWindow.Refresh();
         };
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
-        _radialEditor.Saved += OnRadialEditorSaved;
-        _radialEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseRadialEditor(); };
+        _menuEditor.Saved += OnMenuEditorSaved;
+        _menuEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseMenuEditor(); };
     }
 
     private AppConfig Config => _store.Current;
@@ -189,7 +189,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 case Mode.Menu: CloseMenu(); break;
                 case Mode.Mouse: ExitMouse(announce: true); break;
                 case Mode.Settings: CloseSettings(); break;
-                case Mode.Editor: break; // the editor is mouse only
+                case Mode.Editor: CloseMenuEditor(); break; // Capture closes the editor without saving
                 default: OpenMenu(); break;
             }
             return;
@@ -281,13 +281,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) CloseSettings();
 
         ReloadConfigIfChanged();
-        var root = MenuPages.Root(PadDetail, HeadsetDetail, BuildShortcutsPage);
+        var statuses = new NodeStatuses(PadDetail, HeadsetDetail);
         _radialShown = Config.MenuLayout == MenuLayouts.Radial;
         _pad.SubmitNeutral(); // neutral pad while the menu owns the input
         _mode = Mode.Menu;
         if (_radialShown)
         {
-            _radial.Reset(RadialTree.ToPage("ControlWin", Config.RadialMenu ?? [], PadDetail, HeadsetDetail));
+            _radial.Reset(MenuTree.ToPage("ControlWin", Config.RadialMenu ?? [], statuses));
             _radialStick.ReleaseMs = Config.RadialReleaseMs;
             _radialStick.CardinalBias = Config.RadialCardinalBias * MathF.PI / 180f;
             _radialStick.Reset(); // a stick already tilted must come back to the center first
@@ -296,7 +296,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         else
         {
-            _menu.Reset(root);
+            _menu.Reset(MenuTree.ToPage("ControlWin", Config.ListMenu ?? [], statuses, slotted: false));
             _heldDirection = ReadDirection(horizontal: false); // a stick already tilted must be released first, not scroll on open
             _overlay.Show(_menu, Config.MenuShowControllers ? ConnectedTiles() : null);
         }
@@ -326,19 +326,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         if (_radialShown) _radialOverlay.Refresh();
         else _overlay.Refresh();
-    }
-
-    private MenuPage BuildShortcutsPage()
-    {
-        var list = Config.Shortcuts;
-        if (list.Count == 0)
-            return new MenuPage("Shortcuts",
-                [new MenuEntry { Label = "No shortcuts - edit config.json", Glyph = MenuPages.Play, Enabled = false }]);
-
-        var entries = new List<MenuEntry>(list.Count);
-        for (int i = 0; i < list.Count; i++)
-            entries.Add(new MenuEntry { Label = list[i].Name, Glyph = MenuPages.Play, Command = new(CommandKind.Shortcut, i) });
-        return new MenuPage("Shortcuts", entries);
     }
 
     private void HandleMenuInput()
@@ -717,10 +704,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 ((ISettingsHost)this).AddProController();
                 break;
 
-            case CommandKind.Shortcut:
-                LaunchShortcut(command.Arg);
-                break;
-
             case CommandKind.Launch:
                 if (entry.Launch is { } launch) LaunchTarget(launch);
                 break;
@@ -778,14 +761,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
     public void OnPowerFailed()
     {
         if (!_shutDown) _toast.Show(MenuPages.Power, "Power action failed - see log");
-    }
-
-    private void LaunchShortcut(int index)
-    {
-        var list = Config.Shortcuts;
-        if (index < 0 || index >= list.Count) return;
-
-        LaunchTarget(list[index]);
     }
 
     private void LaunchTarget(ShortcutConfig shortcut)
@@ -1225,7 +1200,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    void ISettingsHost.EditRadialMenu() => OpenRadialEditor();
+    void ISettingsHost.EditMenu() => OpenMenuEditor(Config.MenuLayout);
 
     bool ISettingsHost.StartOnLogon => Startup.IsEnabled;
 
@@ -1241,7 +1216,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _toast.Show(MenuPages.Gear, message);
     }
 
-    private void OpenRadialEditor()
+    private void OpenMenuEditor(string layout)
     {
         if (_shutDown || _mode == Mode.Editor) return;
         if (_mode == Mode.Mouse) _mouse.Deactivate();
@@ -1251,27 +1226,28 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _pad.SubmitNeutral(); // neutral pad while the editor is open
         _heldDirection = Dir.None;
         _mode = Mode.Editor;
-        _radialEditor.Show(Config.RadialMenu ?? [], Config.Shortcuts);
-        Log.Info("Radial editor opened");
+        _menuEditor.Show(layout, Config.RadialMenu ?? [], Config.ListMenu ?? []);
+        Log.Info($"Menu editor opened ({layout})");
     }
 
-    private void CloseRadialEditor()
+    private void CloseMenuEditor()
     {
-        _radialEditor.Hide();
+        _menuEditor.Hide();
         _mode = Mode.Idle;
         _ignoreMask = _state.Current;
         _ignoreSticks = true;
-        Log.Info("Radial editor closed");
+        Log.Info("Menu editor closed");
     }
 
-    private void OnRadialEditorSaved(List<RadialNodeConfig> tree)
+    private void OnMenuEditorSaved(string layout, List<MenuNodeConfig> tree)
     {
         if (_mode != Mode.Editor) return;
-        Config.RadialMenu = tree;
+        if (layout == MenuLayouts.Radial) Config.RadialMenu = tree;
+        else Config.ListMenu = tree;
         Config.Sanitize();
         ((ISettingsHost)this).ConfigChanged();
-        CloseRadialEditor();
-        _toast.Show(MenuPages.Gear, "Radial menu saved");
+        CloseMenuEditor();
+        _toast.Show(MenuPages.Gear, layout == MenuLayouts.Radial ? "Radial menu saved" : "List menu saved");
     }
 
     void ISettingsHost.ConfigChanged()
@@ -1458,7 +1434,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         StopRepeat();
         if (_mode == Mode.Menu) CloseMenu();
         if (_mode == Mode.Settings) CloseSettings();
-        if (_mode == Mode.Editor) CloseRadialEditor();
+        if (_mode == Mode.Editor) CloseMenuEditor();
         _mouse.Deactivate(); // releases held mouse buttons
         _mode = Mode.Idle;
         _toast.Hide();

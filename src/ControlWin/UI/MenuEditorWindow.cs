@@ -7,12 +7,12 @@ using static ControlWin.Native.Win32;
 namespace ControlWin.UI;
 
 /// <summary>
-/// The radial menu editor (mouse and keyboard only): the ring on the left, the selected node's properties on the
-/// right. Works on a draft (<see cref="RadialEditorModel"/>); Save hands it back, Cancel drops it.
+/// The menu editor (mouse and keyboard only): the ring (radial) or the list on the left, the selected node's properties
+/// on the right. Works on a draft (<see cref="MenuEditorModel"/>); Save hands it back, Cancel drops it.
 /// </summary>
-internal sealed unsafe class RadialEditorWindow : NativeWindow
+internal sealed unsafe class MenuEditorWindow : NativeWindow
 {
-    public const string ClassName = "ControlWin.RadialEditor";
+    public const string ClassName = "ControlWin.MenuEditor";
 
     // Layout in DIPs.
     private const int WidthDip = 1180, HeightDip = 640, HeaderDip = 56, FooterDip = 56;
@@ -33,14 +33,6 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         "E72C", "E72E", "E734", "E753", "E7C3", "E7C9", "E7EF", "E8AD", "E8F1", "EA8A",
     ];
 
-    private static readonly (string Type, string Label)[] AddTypes =
-    [
-        (RadialNodeTypes.Shortcut, "App shortcut"), (RadialNodeTypes.Folder, "Folder"), (RadialNodeTypes.Settings, "Settings"),
-        (RadialNodeTypes.MouseMode, "Mouse mode"), (RadialNodeTypes.VirtualPad, "Virtual pad"), (RadialNodeTypes.Headset, "Headset"), (RadialNodeTypes.AddController, "Add controller"),
-        (RadialNodeTypes.Sleep, "Sleep"), (RadialNodeTypes.Restart, "Restart"), (RadialNodeTypes.Shutdown, "Shut down"),
-        (RadialNodeTypes.Quit, "Quit ControlWin"), (RadialNodeTypes.Close, "Close menu"),
-    ];
-
     private enum Field { None, Name, ImagePath, Hex, Target, Args }
 
     private sealed class Hit
@@ -53,8 +45,11 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
 
     private readonly record struct TextOp(nint Font, uint Color, string Text, RECT Rc, uint Format);
 
-    private RadialEditorModel _model = new([]);
-    private IReadOnlyList<ShortcutConfig> _shortcuts = [];
+    private MenuEditorModel _model = new(MenuLayouts.Radial, []);
+    private List<MenuNodeConfig> _otherTree = [];   // the other layout's saved tree: what "Copy from" copies
+    private List<MenuNodeConfig>? _pendingCopy;     // converted copy waiting for the user's yes
+    private int _pendingDropped;
+    private int _listScroll;                        // list view: first visible row
     private RECT _work;
     private uint _dpi = 96;
 
@@ -63,10 +58,10 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private Hit? _active;
 
     // Drag of a node.
-    private RadialNodeConfig? _dragNode;
+    private MenuNodeConfig? _dragNode;
     private bool _dragging;
     private int _dragStartX, _dragStartY, _dragX, _dragY;
-    private RadialNodeConfig? _lastClickNode;
+    private MenuNodeConfig? _lastClickNode;
     private long _lastClickTick;
 
     // Text editing.
@@ -87,25 +82,24 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     private void* _bits;
     private int _w, _h;
 
-    public RadialEditorWindow()
+    public MenuEditorWindow()
     {
         Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW);
         int round = DWMWCP_ROUND;
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(int));
     }
 
-    /// <summary>Save pressed with a valid draft: the new root nodes.</summary>
-    public event Action<List<RadialNodeConfig>>? Saved;
+    /// <summary>Save pressed with a valid draft: the layout that was edited and its new root nodes.</summary>
+    public event Action<string, List<MenuNodeConfig>>? Saved;
 
     public event Action? Cancelled;
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
 
-    public void Show(IEnumerable<RadialNodeConfig> tree, IReadOnlyList<ShortcutConfig> shortcuts)
+    /// <param name="layout">The layout to edit: <see cref="MenuLayouts.Radial"/> or <see cref="MenuLayouts.List"/>.</param>
+    public void Show(string layout, IEnumerable<MenuNodeConfig> radialTree, IEnumerable<MenuNodeConfig> listTree)
     {
-        _model = new RadialEditorModel(tree);
-        _shortcuts = shortcuts;
-        _field = Field.None;
+        Init(layout, radialTree, listTree);
         _addSlot = -1;
         _error = null;
         _dragNode = null;
@@ -130,6 +124,16 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         InvalidateRect(Handle, null, 0);
     }
 
+    private void Init(string layout, IEnumerable<MenuNodeConfig> radialTree, IEnumerable<MenuNodeConfig> listTree)
+    {
+        bool list = layout == MenuLayouts.List;
+        _model = new MenuEditorModel(list ? MenuLayouts.List : MenuLayouts.Radial, list ? listTree : radialTree);
+        _otherTree = (list ? radialTree : listTree).Select(n => n.Clone()).ToList();
+        _pendingCopy = null;
+        _listScroll = 0;
+        _field = Field.None;
+    }
+
     public void Hide()
     {
         ReleaseCapture();
@@ -146,18 +150,18 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
 
     // ---- test hooks (no window is shown) ------------------------------------------------------
 
-    internal RadialEditorModel DebugModel => _model;
+    internal MenuEditorModel DebugModel => _model;
 
     internal string DebugBuffer => _buffer;
 
     internal bool DebugEditing => _field != Field.None;
 
-    internal void DebugInit(IEnumerable<RadialNodeConfig> tree, IReadOnlyList<ShortcutConfig> shortcuts)
-    {
-        _model = new RadialEditorModel(tree);
-        _shortcuts = shortcuts;
-        _field = Field.None;
-    }
+    internal void DebugInit(string layout, IEnumerable<MenuNodeConfig> radialTree, IEnumerable<MenuNodeConfig> listTree) =>
+        Init(layout, radialTree, listTree);
+
+    internal bool DebugCopyPending => _pendingCopy is not null;
+
+    internal int DebugCopyDropped => _pendingDropped;
 
     /// <summary>Builds the hit list the way a paint does, into a throw-away bitmap.</summary>
     internal void DebugRender()
@@ -233,6 +237,10 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                 active?.Up?.Invoke(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
             }
+            case WM_MOUSEWHEEL when _model.IsList:
+                _listScroll -= Math.Sign((short)((wParam >> 16) & 0xFFFF)) * 2;
+                Redraw();
+                return 0;
             case WM_CHAR:
                 OnChar((char)wParam);
                 return 0;
@@ -276,7 +284,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     {
         if (c == 27) // Esc
         {
-            if (_field != Field.None) { _field = Field.None; Redraw(); }
+            if (_pendingCopy is not null) { _pendingCopy = null; Redraw(); }
+            else if (_field != Field.None) { _field = Field.None; Redraw(); }
             else if (_steamOpen) { _steamOpen = false; Redraw(); }
             else if (_addSlot >= 0) { _addSlot = -1; Redraw(); }
             return;
@@ -419,7 +428,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                     else
                     {
                         if (!value.StartsWith('#')) value = "#" + value;
-                        if (RadialMenuRepair.IsColor(value)) SetColor(node, value.ToUpperInvariant());
+                        if (MenuRepair.IsColor(value)) SetColor(node, value.ToUpperInvariant());
                     }
                     break;
                 case Field.Target:
@@ -433,23 +442,23 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         Redraw();
     }
 
-    private void SelectNode(RadialNodeConfig? node)
+    private void SelectNode(MenuNodeConfig? node)
     {
         CommitField();
         _model.Select(node);
-        if (node?.Color is { } hex && RadialMenuRepair.ParseColor(hex) is { } colorref)
+        if (node?.Color is { } hex && MenuRepair.ParseColor(hex) is { } colorref)
             (_hue, _sat, _val) = ToHsv((int)(colorref & 0xFF), (int)((colorref >> 8) & 0xFF), (int)((colorref >> 16) & 0xFF));
         Redraw();
     }
 
-    private void SetColor(RadialNodeConfig node, string hex)
+    private void SetColor(MenuNodeConfig node, string hex)
     {
         node.Color = hex;
-        if (RadialMenuRepair.ParseColor(hex) is { } colorref)
+        if (MenuRepair.ParseColor(hex) is { } colorref)
             (_hue, _sat, _val) = ToHsv((int)(colorref & 0xFF), (int)((colorref >> 8) & 0xFF), (int)((colorref >> 16) & 0xFF));
     }
 
-    private void ApplyHsv(RadialNodeConfig node)
+    private void ApplyHsv(MenuNodeConfig node)
     {
         var (r, g, b) = FromHsv(_hue, _sat, _val);
         node.Color = $"#{r:X2}{g:X2}{b:X2}";
@@ -471,7 +480,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             Redraw();
             return;
         }
-        Saved?.Invoke(_model.Result());
+        Saved?.Invoke(_model.Layout, _model.Result());
     }
 
     // ---- geometry ----------------------------------------------------------------------------
@@ -589,14 +598,14 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     }
 
     private void Button(int l, int t, int r, int b, string label, Action onClick, bool primary = false, bool enabled = true,
-        bool active = false, uint? fill = null)
+        bool active = false, uint? fill = null, string? tag = null)
     {
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
         var fonts = Gdi.GetFonts(_dpi);
         uint color = fill ?? (primary ? Gdi.Selection : active ? Gdi.Selection : PanelLight);
         RoundRect(l, t, r, b, Px(8), enabled ? color : Panel);
         Text(fonts.Detail, enabled ? Gdi.TextColor : Gdi.Dim, label, l, t, r, b, DT_CENTER | oneLine | DT_END_ELLIPSIS);
-        if (enabled) AddHit(l, t, r, b, (_, _) => { onClick(); Redraw(); });
+        if (enabled) AddHit(l, t, r, b, (_, _) => { onClick(); Redraw(); }).Tag = tag;
     }
 
     private Hit TextField(Field field, string label, int l, int t, int r, string value, string placeholder = "")
@@ -647,12 +656,13 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         _canvas!.Rect(0, 0, w, h, Gdi.Background);
 
         // Header: title, breadcrumb, cancel.
-        Text(fonts.Title, Gdi.TextColor, "Radial menu editor", Px(24), 0, Px(560), Px(HeaderDip), DT_LEFT | oneLine);
+        Text(fonts.Title, Gdi.TextColor, _model.IsList ? "List menu editor" : "Radial menu editor", Px(24), 0, Px(560), Px(HeaderDip), DT_LEFT | oneLine);
         Text(fonts.Detail, Gdi.Dim,
             _model.Folder is { } folder ? $"ControlWin  >  {folder.Name ?? "Folder"}" : "ControlWin",
             Px(330), 0, Px(580), Px(HeaderDip), DT_LEFT | oneLine | DT_END_ELLIPSIS);
 
-        DrawRing();
+        if (_model.IsList) DrawList();
+        else DrawRing();
         DrawProperties();
         DrawFooter();
 
@@ -666,6 +676,11 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         if (_steamOpen)
         {
             DrawSteamPopup();
+            FlushTexts(dc);
+        }
+        if (_pendingCopy is not null)
+        {
+            DrawCopyPopup();
             FlushTexts(dc);
         }
     }
@@ -698,7 +713,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             AddHit(p.X - radius, p.Y - radius, p.X + radius, p.Y + radius, (_, _) => { CommitField(); _model.Up(); Redraw(); });
         }
 
-        var pictures = new List<(RadialNodeConfig Node, int X, int Y)>();
+        var pictures = new List<(MenuNodeConfig Node, int X, int Y)>();
         for (int slot = 0; slot < _model.Capacity; slot++)
         {
             var p = SlotPosition(SlotAngle(slot));
@@ -727,21 +742,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             DrawNode(node, p.X, p.Y, radius, ReferenceEquals(node, _model.Selected), dropTarget, pictures);
             var captured = node;
             var hit = AddHit(p.X - radius, p.Y - radius, p.X + radius, p.Y + radius);
-            hit.Down = (x, y) =>
-            {
-                _dragNode = captured;
-                _dragging = false;
-                _dragStartX = _dragX = x;
-                _dragStartY = _dragY = y;
-                SelectNode(captured);
-            };
-            hit.Drag = (x, y) =>
-            {
-                _dragX = x;
-                _dragY = y;
-                if (!_dragging && Math.Abs(x - _dragStartX) + Math.Abs(y - _dragStartY) > Px(6)) _dragging = true;
-                if (_dragging) Redraw();
-            };
+            hit.Down = (x, y) => BeginDrag(captured, x, y);
+            hit.Drag = ContinueDrag;
             hit.Up = (x, y) =>
             {
                 var dragged = _dragNode;
@@ -755,14 +757,8 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                     int target = SlotAt(x, y);
                     if (target >= 0) _model.Move(dragged, target);
                 }
-                else if (dragged.Type == RadialNodeTypes.Folder && ReferenceEquals(_lastClickNode, dragged)
-                         && Environment.TickCount64 - _lastClickTick < 450)
-                {
-                    CommitField();
-                    _model.Enter(dragged); // double click
-                }
-                _lastClickNode = moved ? null : dragged;
-                _lastClickTick = Environment.TickCount64;
+                else TryEnterOnDoubleClick(dragged);
+                RememberClick(dragged, moved);
                 Redraw();
             };
         }
@@ -772,18 +768,18 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             DrawNode(_dragNode, _dragX, _dragY, radius, true, false, pictures);
     }
 
-    private void DrawNode(RadialNodeConfig node, int x, int y, int radius, bool selected, bool dropTarget,
-        List<(RadialNodeConfig, int, int)> pictures)
+    private void DrawNode(MenuNodeConfig node, int x, int y, int radius, bool selected, bool dropTarget,
+        List<(MenuNodeConfig, int, int)> pictures)
     {
         var fonts = Gdi.GetFonts(_dpi);
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
-        uint? colorref = RadialMenuRepair.ParseColor(node.Color);
+        uint? colorref = MenuRepair.ParseColor(node.Color);
         var style = RadialOverlay.Style(colorref);
 
         _canvas!.Circle(x, y, radius + Px(selected ? 5 : 2), selected ? Gdi.TextColor : (dropTarget ? Gdi.Selection : style.IdleRim));
         _canvas.Circle(x, y, radius, selected ? style.Lit : style.Idle);
 
-        var icon = node.Icon ?? (node.Type == RadialNodeTypes.Shortcut ? new RadialIconConfig { Kind = "auto" } : null);
+        var icon = node.Icon ?? (node.Type == MenuNodeTypes.Shortcut ? new MenuIconConfig { Kind = "auto" } : null);
         nint image = RadialIcons.Get(icon, node.Target, out bool cover);
         if (image != 0)
         {
@@ -791,14 +787,269 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         }
         else
         {
-            char glyph = RadialTree.GlyphOf(node.Icon) ?? RadialTree.DefaultGlyph(node.Type);
+            char glyph = MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node.Type);
             Text(fonts.Glyph, RadialOverlay.GlyphColor(style.Lit, selected), glyph.ToString(),
                 x - radius, y - radius, x + radius, y + radius, DT_CENTER | oneLine);
         }
 
-        string name = node.Name ?? (node.Type == RadialNodeTypes.Shortcut && !string.IsNullOrEmpty(node.Target)
-            ? node.Target! : RadialTree.DefaultLabel(node.Type));
+        string name = node.Name ?? (node.Type == MenuNodeTypes.Shortcut && !string.IsNullOrEmpty(node.Target)
+            ? node.Target! : MenuTree.DefaultLabel(node.Type));
         Text(fonts.Footer, Gdi.Dim, name, x - Px(54), y + radius + Px(4), x + Px(54), y + radius + Px(24), DT_CENTER | oneLine | DT_END_ELLIPSIS);
+    }
+
+    // ---- shared by the ring and the list ------------------------------------------------------
+
+    private void BeginDrag(MenuNodeConfig node, int x, int y)
+    {
+        _dragNode = node;
+        _dragging = false;
+        _dragStartX = _dragX = x;
+        _dragStartY = _dragY = y;
+        SelectNode(node);
+    }
+
+    private void ContinueDrag(int x, int y)
+    {
+        _dragX = x;
+        _dragY = y;
+        if (!_dragging && Math.Abs(x - _dragStartX) + Math.Abs(y - _dragStartY) > Px(6)) _dragging = true;
+        if (_dragging) Redraw();
+    }
+
+    /// <summary>Double click on a folder of the root goes into it.</summary>
+    private void TryEnterOnDoubleClick(MenuNodeConfig node)
+    {
+        if (node.Type != MenuNodeTypes.Folder || !ReferenceEquals(_lastClickNode, node)
+            || Environment.TickCount64 - _lastClickTick >= 450) return;
+        CommitField();
+        if (_model.Enter(node)) _listScroll = 0;
+    }
+
+    private void RememberClick(MenuNodeConfig node, bool moved)
+    {
+        _lastClickNode = moved ? null : node;
+        _lastClickTick = Environment.TickCount64;
+    }
+
+    // ---- list view ---------------------------------------------------------------------------
+
+    private const int ListLeftDip = 24, ListRightDip = 560, RowDip = 46;
+
+    private int ListTop => Px(HeaderDip + 12) + Px(46);
+    private int ListBottom => Px(HeightDip - FooterDip) - Px(8);
+
+    /// <summary>Rows that fit under the list's top bar (the Back row takes one inside a folder).</summary>
+    private int VisibleRows => Math.Max(1, (ListBottom - ListTop) / Px(RowDip) - (_model.Folder is null ? 0 : 1));
+
+    private int FirstRowTop => ListTop + (_model.Folder is null ? 0 : Px(RowDip));
+
+    private int ClampScroll()
+    {
+        _listScroll = Math.Clamp(_listScroll, 0, Math.Max(0, _model.Nodes.Count - VisibleRows));
+        return _listScroll;
+    }
+
+    /// <summary>Where a dragged node would land: the index to insert at, or the root folder to drop it into.</summary>
+    private (int Index, MenuNodeConfig? Into) ListDrop(int y)
+    {
+        var nodes = _model.Nodes;
+        double position = (y - FirstRowTop) / (double)Px(RowDip);
+        int row = Math.Clamp((int)Math.Floor(position) + _listScroll, 0, nodes.Count);
+        if (row < nodes.Count)
+        {
+            var over = nodes[row];
+            double within = position - Math.Floor(position);
+            if (_model.Folder is null && over.Type == MenuNodeTypes.Folder && _dragNode is { } dragged
+                && dragged.Type != MenuNodeTypes.Folder && within is > 0.25 and < 0.75)
+                return (row, over);
+            if (within >= 0.5) row++;
+        }
+        return (Math.Min(row, nodes.Count), null);
+    }
+
+    private void DrawList()
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        int l = Px(ListLeftDip), r = Px(ListRightDip), rowH = Px(RowDip);
+        var nodes = _model.Nodes;
+        int visible = VisibleRows;
+        int scroll = ClampScroll();
+
+        // Top bar: hint and the Add button.
+        int barTop = Px(HeaderDip + 12);
+        Text(fonts.Footer, Gdi.Dim, "Drag a row to move it.\nDrop it on a folder to put it inside.", l, barTop, r - Px(140), barTop + Px(40),
+            DT_LEFT | DT_WORDBREAK);
+        Button(r - Px(130), barTop, r, barTop + Px(36), "+ Add a node", () =>
+        {
+            CommitField();
+            _addSlot = nodes.Count;
+        }, primary: true);
+
+        // Back row in a folder.
+        if (_model.Folder is not null)
+        {
+            int t = ListTop;
+            RoundRect(l, t + Px(2), r, t + rowH - Px(2), Px(10), Rgb(0x37, 0x47, 0x4F));
+            Text(fonts.Glyph, Gdi.TextColor, "", l, t, l + Px(52), t + rowH, DT_CENTER | oneLine);
+            Text(fonts.Detail, Gdi.TextColor, "Back", l + Px(56), t, r - Px(12), t + rowH, DT_LEFT | oneLine);
+            AddHit(l, t, r, t + rowH, (_, _) => { CommitField(); _model.Up(); _listScroll = 0; Redraw(); });
+        }
+
+        (int Index, MenuNodeConfig? Into) drop = _dragging && _dragNode is not null ? ListDrop(_dragY) : (-1, null);
+        for (int i = 0; i < visible && scroll + i < nodes.Count; i++)
+        {
+            var node = nodes[scroll + i];
+            int t = FirstRowTop + i * rowH;
+            bool hidden = _dragging && ReferenceEquals(node, _dragNode);
+            DrawListRow(node, l, t, r, t + rowH, ReferenceEquals(node, _model.Selected), ReferenceEquals(drop.Into, node), hidden);
+
+            var captured = node;
+            var hit = AddHit(l, t, r, t + rowH);
+            hit.Tag = $"row:{scroll + i}";
+            hit.Down = (x, y) => BeginDrag(captured, x, y);
+            hit.Drag = ContinueDrag;
+            hit.Up = (x, y) =>
+            {
+                var dragged = _dragNode;
+                bool moved = _dragging;
+                _dragNode = null;
+                _dragging = false;
+                if (dragged is null) return;
+
+                if (moved)
+                {
+                    var (index, into) = ListDrop(y);
+                    if (into is not null) _model.MoveInto(dragged, into);
+                    else
+                    {
+                        int from = _model.Nodes.IndexOf(dragged);
+                        _model.MoveTo(dragged, index > from ? index - 1 : index);
+                    }
+                }
+                else TryEnterOnDoubleClick(dragged);
+                RememberClick(dragged, moved);
+                Redraw();
+            };
+        }
+
+        // Drop indicator between rows.
+        if (_dragging && drop.Into is null && drop.Index >= 0)
+        {
+            int rowsAbove = Math.Clamp(drop.Index - scroll, 0, visible);
+            int y = FirstRowTop + rowsAbove * rowH;
+            _canvas!.Rect(l, y - Px(1), r, y + Px(2), Gdi.Selection);
+        }
+
+        // Scroll thumb.
+        if (nodes.Count > visible)
+        {
+            int trackH = visible * rowH;
+            int thumbH = Math.Max(Px(24), trackH * visible / nodes.Count);
+            int thumbTop = FirstRowTop + (trackH - thumbH) * scroll / (nodes.Count - visible);
+            _canvas!.Rect(r + Px(6), thumbTop, r + Px(9), thumbTop + thumbH, Rim);
+        }
+        else if (nodes.Count == 0)
+        {
+            Text(fonts.Detail, Gdi.Dim, "Empty. Add a node.", l, FirstRowTop, r, FirstRowTop + rowH, DT_CENTER | oneLine);
+        }
+
+        // The row being dragged follows the cursor, on top of everything.
+        if (_dragging && _dragNode is not null)
+        {
+            int top = Math.Clamp(_dragY - rowH / 2, ListTop, ListBottom - rowH);
+            DrawListRow(_dragNode, l, top, r, top + rowH, true, false, false);
+        }
+    }
+
+    private void DrawListRow(MenuNodeConfig node, int l, int t, int r, int b, bool selected, bool dropInto, bool hidden)
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        var style = RadialOverlay.Style(MenuRepair.ParseColor(node.Color));
+
+        if (hidden)
+        {
+            RoundRect(l, t + Px(2), r, b - Px(2), Px(10), Rim);
+            RoundRect(l + Px(2), t + Px(4), r - Px(2), b - Px(4), Px(9), Gdi.Background);
+            return;
+        }
+
+        uint fill = dropInto ? Gdi.Selection : selected ? style.Lit : Panel;
+        if (selected) RoundRect(l - Px(2), t, r + Px(2), b, Px(11), Gdi.TextColor);
+        RoundRect(l, t + Px(2), r, b - Px(2), Px(10), fill);
+
+        int iconR = Px(15), iconX = l + Px(26), iconY = (t + b) / 2;
+        var icon = node.Icon ?? (node.Type == MenuNodeTypes.Shortcut ? new MenuIconConfig { Kind = "auto" } : null);
+        nint image = RadialIcons.Get(icon, node.Target, out bool cover);
+        if (image != 0)
+        {
+            _canvas!.Image(image, iconX, iconY, iconR, cover);
+        }
+        else
+        {
+            char glyph = MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node.Type);
+            Text(fonts.Glyph, selected ? RadialOverlay.GlyphColor(style.Lit, true) : Gdi.TextColor, glyph.ToString(),
+                iconX - iconR, iconY - iconR, iconX + iconR, iconY + iconR, DT_CENTER | oneLine);
+        }
+
+        string name = node.Name ?? (node.Type == MenuNodeTypes.Shortcut && !string.IsNullOrEmpty(node.Target)
+            ? node.Target! : MenuTree.DefaultLabel(node.Type));
+        uint textColor = selected ? RadialOverlay.GlyphColor(style.Lit, true) : Gdi.TextColor;
+        int textRight = r - Px(12);
+        if (node.Type == MenuNodeTypes.Folder)
+        {
+            Text(fonts.GlyphSmall, textColor, "", r - Px(32), t, r - Px(12), b, DT_CENTER | oneLine);
+            Text(fonts.Footer, selected ? textColor : Gdi.Dim, $"{node.Children?.Count ?? 0}", r - Px(80), t, r - Px(36), b, DT_RIGHT | oneLine);
+            textRight = r - Px(84);
+        }
+        Text(fonts.Detail, textColor, name, l + Px(52), t, textRight, b, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+    }
+
+    // ---- copy from the other menu ------------------------------------------------------------
+
+    private void AskCopy()
+    {
+        CommitField();
+        _pendingCopy = MenuEditorModel.Convert(_otherTree, _model.Layout, out _pendingDropped);
+    }
+
+    private void DrawCopyPopup()
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        string mine = _model.IsList ? "list" : "radial", theirs = _model.IsList ? "radial" : "list";
+
+        // Everything behind the popup: a click anywhere else cancels.
+        AddHit(0, 0, _w, _h, (_, _) =>
+        {
+            _pendingCopy = null;
+            Redraw();
+        }, hand: false);
+
+        int width = Px(460), height = Px(_pendingDropped > 0 ? 250 : 210);
+        int l = (_w - width) / 2, t = (_h - height) / 2;
+        RoundRect(l - Px(2), t - Px(2), l + width + Px(2), t + height + Px(2), Px(14), Rim);
+        RoundRect(l, t, l + width, t + height, Px(12), Panel);
+        AddHit(l, t, l + width, t + height, null, hand: false);
+
+        Text(fonts.Label, Gdi.TextColor, $"Copy from {theirs} menu?", l, t + Px(12), l + width, t + Px(46), DT_CENTER | oneLine);
+        string message = $"This will replace all of your current {mine} menu layout with a copy of your {theirs} menu layout. "
+            + "Nothing is saved until you press Save.";
+        if (_pendingDropped > 0)
+            message += $"\n\n{_pendingDropped} node{(_pendingDropped == 1 ? " does" : "s do")} not fit on the ring and will be dropped.";
+        Text(fonts.Detail, _pendingDropped > 0 ? Warn : Gdi.Dim, message, l + Px(24), t + Px(54), l + width - Px(24), t + height - Px(64),
+            DT_CENTER | DT_WORDBREAK);
+
+        int by = t + height - Px(52);
+        Button(l + Px(24), by, l + width / 2 - Px(6), by + Px(36), "Replace", () =>
+        {
+            if (_pendingCopy is { } tree) _model.Replace(tree);
+            _pendingCopy = null;
+            _listScroll = 0;
+            _error = null;
+        }, fill: Danger, tag: "copy-yes");
+        Button(l + width / 2 + Px(6), by, l + width - Px(24), by + Px(36), "Cancel", () => _pendingCopy = null, tag: "copy-no");
     }
 
     private void DrawProperties()
@@ -817,14 +1068,14 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
 
         int ax = Px(ColAX), aw = Px(ColAW), bx = Px(ColBX), bw = Px(ColBW);
         int y = Px(HeaderDip + 24);
-        bool isShortcut = node.Type == RadialNodeTypes.Shortcut;
-        bool isFolder = node.Type == RadialNodeTypes.Folder;
+        bool isShortcut = node.Type == MenuNodeTypes.Shortcut;
+        bool isFolder = node.Type == MenuNodeTypes.Folder;
 
         // ---- column A: name, icon ----
-        Text(fonts.Label, Gdi.TextColor, RadialTree.DefaultLabel(node.Type), ax, y, ax + aw, y + Px(28), DT_LEFT | oneLine);
+        Text(fonts.Label, Gdi.TextColor, MenuTree.DefaultLabel(node.Type), ax, y, ax + aw, y + Px(28), DT_LEFT | oneLine);
         y += Px(36);
 
-        TextField(Field.Name, "Name", ax, y, ax + aw, node.Name ?? "", RadialTree.DefaultLabel(node.Type));
+        TextField(Field.Name, "Name", ax, y, ax + aw, node.Name ?? "", MenuTree.DefaultLabel(node.Type));
         y += Px(62);
 
         Text(fonts.Footer, Gdi.Dim, "Icon", ax, y, ax + aw, y + Px(18), DT_LEFT | oneLine);
@@ -838,9 +1089,9 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         }
         IconButton(0, "Default", "default", true, () => node.Icon = null);
         IconButton(1, "Glyph", "glyph", true, () =>
-            node.Icon = new RadialIconConfig { Kind = "glyph", Glyph = ((int)(RadialTree.GlyphOf(node.Icon) ?? RadialTree.DefaultGlyph(node.Type))).ToString("X4") });
-        IconButton(2, "Program", "auto", isShortcut, () => node.Icon = new RadialIconConfig { Kind = "auto" });
-        IconButton(3, "Image", "image", true, () => node.Icon = new RadialIconConfig { Kind = "image", Path = "" });
+            node.Icon = new MenuIconConfig { Kind = "glyph", Glyph = ((int)(MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node.Type))).ToString("X4") });
+        IconButton(2, "Program", "auto", isShortcut, () => node.Icon = new MenuIconConfig { Kind = "auto" });
+        IconButton(3, "Image", "image", true, () => node.Icon = new MenuIconConfig { Kind = "image", Path = "" });
         y += Px(42);
 
         if (kind == "glyph")
@@ -856,7 +1107,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
                 string code = Glyphs[i];
                 AddHit(l, t, l + cell, t + cell, (_, _) =>
                 {
-                    node.Icon = new RadialIconConfig { Kind = "glyph", Glyph = code };
+                    node.Icon = new MenuIconConfig { Kind = "glyph", Glyph = code };
                     Redraw();
                 });
             }
@@ -924,7 +1175,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
     /// Eyedropper: press it and drag onto any pixel of the screen (the mouse stays captured while the button is
     /// held); the node's color follows the pixel under the cursor and is kept on release.
     /// </summary>
-    private void DrawPipette(RadialNodeConfig node, int l, int t, int r, int b)
+    private void DrawPipette(MenuNodeConfig node, int l, int t, int r, int b)
     {
         var fonts = Gdi.GetFonts(_dpi);
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
@@ -948,7 +1199,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         };
     }
 
-    private void SampleScreen(RadialNodeConfig node)
+    private void SampleScreen(MenuNodeConfig node)
     {
         POINT pt;
         GetCursorPos(&pt);
@@ -961,7 +1212,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         Redraw();
     }
 
-    private void DrawColorPicker(RadialNodeConfig node, int l, int t, int w, int h, int hueW)
+    private void DrawColorPicker(MenuNodeConfig node, int l, int t, int w, int h, int hueW)
     {
         var uBits = (uint*)_bits;
         int hueL = l + w + Px(10);
@@ -1027,12 +1278,13 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
         Button(Px(24), top, Px(24) + Px(170), bottom, "Reset to default", () =>
         {
             CommitField();
-            _model.Reset(_shortcuts);
+            _model.Reset();
             _error = null;
         });
+        Button(Px(204), top, Px(204) + Px(220), bottom, _model.IsList ? "Copy from radial menu" : "Copy from list menu", AskCopy, tag: "copy");
 
         if (_error is not null)
-            Text(fonts.Detail, Warn, _error, Px(214), top, right - Px(246), bottom, DT_LEFT | oneLine | DT_END_ELLIPSIS);
+            Text(fonts.Detail, Warn, _error, Px(444), top, right - Px(246), bottom, DT_LEFT | oneLine | DT_END_ELLIPSIS);
     }
 
     private void OpenSteamPicker()
@@ -1049,7 +1301,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
 
         node.Target = game.LaunchTarget;
         node.Name = game.Name;
-        if (game.CoverPath is not null) node.Icon = new RadialIconConfig { Kind = "image", Path = game.CoverPath };
+        if (game.CoverPath is not null) node.Icon = new MenuIconConfig { Kind = "image", Path = game.CoverPath };
     }
 
     private void DrawSteamPopup()
@@ -1106,7 +1358,7 @@ internal sealed unsafe class RadialEditorWindow : NativeWindow
             Redraw();
         }, hand: false);
 
-        var types = AddTypes.Where(t => RadialEditorModel.CanHold(t.Type, _model.Folder is not null)).ToArray();
+        var types = NodeKinds.All.Where(t => MenuEditorModel.CanHold(t.Type, _model.Folder is not null)).ToArray();
         int rowH = Px(34), width = Px(220), height = rowH * types.Length + Px(48);
         var center = RingCenter;
         int l = center.X - width / 2, t = center.Y - height / 2;

@@ -49,6 +49,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
         _lastMouseX = _lastMouseY = -1;
         _top = 0;
         _topPage = null;
+        RadialIcons.Clear(); // pictures are read again each time the menu opens
         Gdi.GetMonitorUnderCursor(out _work, out _dpi);
         Place();
         InvalidateRect(Handle, null, 0);
@@ -219,11 +220,26 @@ internal sealed unsafe class MenuOverlay : NativeWindow
             int y = headerH + i * rowH;
             int right = width - Px(24);
 
+            // A node's own color only shows while it is selected; every other row uses the default colors.
+            uint? own = selected ? entry.Color : null;
             if (selected)
-                Gdi.RoundedFill(dc, Gdi.SelectionBrush, Px(SideDip), y + Px(4), width - Px(SideDip), y + rowH - Px(4), Px(20));
+            {
+                nint brush = own is { } picked ? CreateSolidBrush(picked) : Gdi.SelectionBrush;
+                Gdi.RoundedFill(dc, brush, Px(SideDip), y + Px(4), width - Px(SideDip), y + rowH - Px(4), Px(20));
+                if (own is not null) DeleteObject(brush);
+            }
 
-            uint color = entry.Enabled ? Gdi.TextColor : Gdi.Dim;
-            Gdi.Text(dc, fonts.Glyph, color, entry.Glyph.ToString(), Px(GlyphXDip), y, Px(GlyphXDip + GlyphWidthDip), y + rowH, DT_CENTER | oneLine);
+            uint color = entry.Enabled ? (own is { } lit ? RadialOverlay.GlyphColor(lit, true) : Gdi.TextColor) : Gdi.Dim;
+            nint image = RadialIcons.Get(entry, out _);
+            if (image != 0)
+            {
+                int size = Px(GlyphWidthDip);
+                ControllerPictures.DrawRounded(dc, image, Px(GlyphXDip), y + (rowH - size) / 2, size, Px(8));
+            }
+            else
+            {
+                Gdi.Text(dc, fonts.Glyph, color, entry.Glyph.ToString(), Px(GlyphXDip), y, Px(GlyphXDip + GlyphWidthDip), y + rowH, DT_CENTER | oneLine);
+            }
 
             if (entry.Submenu is not null)
             {
@@ -235,7 +251,7 @@ internal sealed unsafe class MenuOverlay : NativeWindow
             int labelRight = right;
             if (!string.IsNullOrEmpty(detail))
             {
-                uint detailColor = selected ? Gdi.DimOnSelection : Gdi.Dim;
+                uint detailColor = own is not null ? color : selected ? Gdi.DimOnSelection : Gdi.Dim;
                 Gdi.Text(dc, fonts.Detail, detailColor, detail, right - Px(DetailWidthDip), y, right, y + rowH, DT_RIGHT | oneLine | DT_END_ELLIPSIS);
                 labelRight = right - Px(DetailWidthDip) - Px(8);
             }

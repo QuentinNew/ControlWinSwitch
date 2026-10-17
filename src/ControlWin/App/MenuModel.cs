@@ -6,7 +6,6 @@ internal enum CommandKind
 {
     None,
     MouseMode,
-    Shortcut,
     ToggleVirtualPad,
     ToggleHeadset,
     Sleep,
@@ -32,7 +31,7 @@ internal sealed class MenuEntry
     /// <summary>Right-aligned status text (evaluated on every paint), or null.</summary>
     public Func<string?>? Detail { get; init; }
 
-    /// <summary>Radial menu only: when it returns true, a small green dot is drawn on the node (evaluated on every paint).</summary>
+    /// <summary>When it returns true, a small green dot is drawn on the node (evaluated on every paint).</summary>
     public Func<bool>? Active { get; init; }
 
     public MenuCommand Command { get; init; }
@@ -45,17 +44,17 @@ internal sealed class MenuEntry
 
     public bool Enabled { get; init; } = true;
 
-    /// <summary>Radial menu only: slot on the ring (0-7 on the root, 0-6 in a folder), -1 when not placed.</summary>
+    /// <summary>Radial menu: slot on the ring (0-7 on the root, 0-6 in a folder), -1 when not placed.</summary>
     public int Slot { get; init; } = -1;
 
     /// <summary>App shortcut entries (<see cref="CommandKind.Launch"/>): what to start.</summary>
     public ShortcutConfig? Launch { get; init; }
 
-    /// <summary>Radial menu only: the node's own color (COLORREF) as shown when highlighted; null = theme colors.</summary>
+    /// <summary>The node's own color (COLORREF) as shown when highlighted; null = theme colors.</summary>
     public uint? Color { get; init; }
 
-    /// <summary>Radial menu only: configured icon (glyph / auto / image); the glyph above is the fallback.</summary>
-    public RadialIconConfig? Icon { get; init; }
+    /// <summary>Configured icon (glyph / auto / image); the glyph above is the fallback.</summary>
+    public MenuIconConfig? Icon { get; init; }
 }
 
 internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries, bool slotted = false)
@@ -63,7 +62,7 @@ internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries, b
     public string Title { get; } = title;
     public IReadOnlyList<MenuEntry> Entries { get; } = entries;
 
-    /// <summary>The radial menu places entries by <see cref="MenuEntry.Slot"/> instead of spreading them evenly.</summary>
+    /// <summary>The radial menu places entries by <see cref="MenuEntry.Slot"/> instead of spreading them evenly; the list keeps their order.</summary>
     public bool Slotted { get; } = slotted;
 }
 
@@ -179,7 +178,7 @@ internal sealed class MenuModel
     }
 }
 
-/// <summary>The pages of the menu tree. Status details and the shortcut list are filled in by F4, F5 and F7.</summary>
+/// <summary>Icon code points shared by the menus and the node kinds.</summary>
 internal static class MenuPages
 {
     // Segoe Fluent Icons code points.
@@ -187,44 +186,4 @@ internal static class MenuPages
     internal const char Folder = '', Close = '';
     internal const char Gear ='', Mouse = '', Play = '', Game = '', Headphone = '',
         Power = '', Sleep = '', Restart = '', Quit = '';
-
-    public static MenuPage Root(Func<string?>? virtualPadDetail = null, Func<string?>? headsetDetail = null,
-        Func<MenuPage>? shortcuts = null) => new("ControlWin",
-    [
-        new MenuEntry { Label = "Mouse mode", Glyph = Mouse, Command = new(CommandKind.MouseMode) },
-        new MenuEntry { Label = "Shortcuts", Glyph = Play, Submenu = shortcuts ?? Shortcuts },
-        new MenuEntry { Label = "Virtual pad", Glyph = Game, Detail = virtualPadDetail, Command = new(CommandKind.ToggleVirtualPad) },
-        new MenuEntry { Label = "Headset", Glyph = Headphone, Detail = headsetDetail, Command = new(CommandKind.ToggleHeadset) },
-        new MenuEntry { Label = "Settings", Glyph = Gear, Command = new(CommandKind.OpenSettings) },
-        new MenuEntry { Label = "Power", Glyph = Power, Submenu = PowerPage },
-        new MenuEntry
-        {
-            Label = "Quit ControlWin", Glyph = Quit, Command = new(CommandKind.Quit),
-            ConfirmPrompt = "Quit ControlWin?",
-        },
-    ]);
-
-    private static MenuPage Shortcuts() => new("Shortcuts",
-    [
-        new MenuEntry { Label = "No shortcuts - edit config.json", Glyph = Play, Enabled = false },
-    ]);
-
-    private static MenuPage PowerPage() => new("Power",
-    [
-        new MenuEntry
-        {
-            Label = "Sleep", Glyph = Sleep, Command = new(CommandKind.Sleep),
-            ConfirmPrompt = "Put the PC to sleep?",
-        },
-        new MenuEntry
-        {
-            Label = "Restart", Glyph = Restart, Command = new(CommandKind.Restart),
-            ConfirmPrompt = "Restart the PC?",
-        },
-        new MenuEntry
-        {
-            Label = "Shut down", Glyph = Power, Command = new(CommandKind.Shutdown),
-            ConfirmPrompt = "Shut down the PC?",
-        },
-    ]);
 }

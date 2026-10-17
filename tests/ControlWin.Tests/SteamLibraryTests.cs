@@ -63,11 +63,11 @@ public class SteamLibraryTests
 [Collection("native windows")]
 public class RadialEditorSteamTests
 {
-    private static (RadialEditorWindow Window, RadialNodeConfig Node) Open(string name)
+    private static (MenuEditorWindow Window, MenuNodeConfig Node) Open(string name)
     {
-        var shortcut = new RadialNodeConfig { Type = "shortcut", Slot = 0, Name = name, Target = "" };
-        var window = new RadialEditorWindow();
-        window.DebugInit([shortcut, new RadialNodeConfig { Type = "settings", Slot = 1 }], []);
+        var shortcut = new MenuNodeConfig { Type = "shortcut", Slot = 0, Name = name, Target = "" };
+        var window = new MenuEditorWindow();
+        window.DebugInit(MenuLayouts.Radial, [shortcut, new MenuNodeConfig { Type = "settings", Slot = 1 }], []);
         var draft = window.DebugModel.Nodes[0]; // the editor works on a copy
         window.DebugModel.Select(draft);
         return (window, draft);

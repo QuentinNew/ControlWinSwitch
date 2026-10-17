@@ -63,8 +63,8 @@ internal sealed class ShortcutConfig
     public bool? RunAsAdmin { get; set; }
 }
 
-/// <summary>Values of <see cref="RadialNodeConfig.Type"/>.</summary>
-internal static class RadialNodeTypes
+/// <summary>Values of <see cref="MenuNodeConfig.Type"/>.</summary>
+internal static class MenuNodeTypes
 {
     public const string Close = "close", Quit = "quit", Sleep = "sleep", Restart = "restart", Shutdown = "shutdown",
         Settings = "settings", Headset = "headset", MouseMode = "mouseMode", VirtualPad = "virtualPad",
@@ -75,7 +75,7 @@ internal static class RadialNodeTypes
 }
 
 /// <summary>Icon of a radial node. Only "glyph" is drawn for now; "auto" and "image" are kept as written.</summary>
-internal sealed class RadialIconConfig
+internal sealed class MenuIconConfig
 {
     public string Kind { get; set; } = "glyph";
 
@@ -86,12 +86,12 @@ internal sealed class RadialIconConfig
     public string? Path { get; set; }
 }
 
-/// <summary>One node of the radial menu tree: a built-in action, a folder or an app shortcut.</summary>
-internal sealed class RadialNodeConfig
+/// <summary>One node of a menu tree (radial or list): a built-in action, a folder or an app shortcut.</summary>
+internal sealed class MenuNodeConfig
 {
     public string Type { get; set; } = "";
 
-    /// <summary>Position on the ring: 0-7 on the root, 0-6 in a folder (clockwise after the Back node).</summary>
+    /// <summary>Radial: position on the ring, 0-7 on the root, 0-6 in a folder (clockwise after the Back node). List: index in the list.</summary>
     public int Slot { get; set; } = -1;
 
     /// <summary>Overrides the default label.</summary>
@@ -100,7 +100,7 @@ internal sealed class RadialNodeConfig
     /// <summary>"#RRGGBB".</summary>
     public string? Color { get; set; }
 
-    public RadialIconConfig? Icon { get; set; }
+    public MenuIconConfig? Icon { get; set; }
 
     // Shortcuts.
     public string? Target { get; set; }
@@ -111,15 +111,15 @@ internal sealed class RadialNodeConfig
     public bool? RunAsAdmin { get; set; }
 
     /// <summary>Folders only; folders do not nest.</summary>
-    public List<RadialNodeConfig>? Children { get; set; }
+    public List<MenuNodeConfig>? Children { get; set; }
 
-    public RadialNodeConfig Clone() => new()
+    public MenuNodeConfig Clone() => new()
     {
         Type = Type,
         Slot = Slot,
         Name = Name,
         Color = Color,
-        Icon = Icon is null ? null : new RadialIconConfig { Kind = Icon.Kind, Glyph = Icon.Glyph, Path = Icon.Path },
+        Icon = Icon is null ? null : new MenuIconConfig { Kind = Icon.Kind, Glyph = Icon.Glyph, Path = Icon.Path },
         Target = Target,
         Args = Args,
         WorkingDir = WorkingDir,
@@ -155,23 +155,18 @@ internal sealed class AppConfig
 
     public VirtualPadConfig VirtualPad { get; set; } = new();
     public MouseConfig Mouse { get; set; } = new();
-    /// <summary>
-    /// The radial menu tree (root nodes). Missing in the file = seeded from the defaults and <see cref="Shortcuts"/>.
-    /// </summary>
-    public List<RadialNodeConfig>? RadialMenu { get; set; }
+    /// <summary>The radial menu tree (root nodes). Missing in the file = seeded from the defaults.</summary>
+    public List<MenuNodeConfig>? RadialMenu { get; set; }
 
-    /// <summary>What <see cref="Sanitize"/> had to repair in <see cref="RadialMenu"/> (logged by the store).</summary>
+    /// <summary>The list menu tree (root nodes, in display order). Missing in the file = seeded from the defaults.</summary>
+    public List<MenuNodeConfig>? ListMenu { get; set; }
+
+    /// <summary>What <see cref="Sanitize"/> had to repair in <see cref="RadialMenu"/> and <see cref="ListMenu"/> (logged by the store).</summary>
     [JsonIgnore]
     public List<string> RepairNotes { get; } = [];
 
     /// <summary>Per-controller name, by controller id. The picture lives in %APPDATA%\ControlWin\controllers\.</summary>
     public Dictionary<string, ControllerProfile> Controllers { get; set; } = [];
-
-    public List<ShortcutConfig> Shortcuts { get; set; } =
-    [
-        new() { Name = "Steam Big Picture", Target = "steam://open/bigpicture" },
-        new() { Name = "Steam", Target = "steam://open/main" },
-    ];
 
     /// <summary>Repairs what a hand-edited file can get wrong: nulls and out-of-range numbers.</summary>
     public AppConfig Sanitize()
@@ -197,13 +192,9 @@ internal sealed class AppConfig
             profile.LeftDeadzone = Clamp(profile.LeftDeadzone, 0f, 0.5f, 0f);
             profile.RightDeadzone = Clamp(profile.RightDeadzone, 0f, 0.5f, 0f);
         }
-        Shortcuts ??= [];
-        Shortcuts.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Target));
-        foreach (var s in Shortcuts)
-            if (string.IsNullOrWhiteSpace(s.Name)) s.Name = s.Target;
-
         RepairNotes.Clear();
-        RadialMenu = RadialMenuRepair.Run(RadialMenu, Shortcuts, RepairNotes);
+        RadialMenu = MenuRepair.Run(RadialMenu, MenuLayouts.Radial, RepairNotes, "Radial menu");
+        ListMenu = MenuRepair.Run(ListMenu, MenuLayouts.List, RepairNotes, "List menu");
 
         Mouse.Speed = Clamp(Mouse.Speed, 50f, 10000f, 800f);
         Mouse.FastMultiplier = Clamp(Mouse.FastMultiplier, 1f, 10f, 2.5f);
@@ -263,7 +254,7 @@ internal sealed class ConfigStore
             var parsed = Parse(File.ReadAllText(Path));
             _stamp = stamp;
             Current = parsed;
-            foreach (var note in parsed.RepairNotes) Log.Info("Radial menu repaired: " + note);
+            foreach (var note in parsed.RepairNotes) Log.Info("Menu repaired: " + note);
             return null;
         }
         catch (Exception ex)

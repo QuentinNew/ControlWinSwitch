@@ -23,7 +23,7 @@ public class SettingsModelTests
         public void OpenLog() { }
         public void ToggleHeadset() { }
         public void OpenBluetoothSettings() { }
-        public void EditRadialMenu() { }
+        public void EditMenu() { }
         public HashSet<int> Connected = [0];
         public bool ControllerConnected(int slot) => Connected.Contains(slot);
         public List<int> Rumbled = [];
