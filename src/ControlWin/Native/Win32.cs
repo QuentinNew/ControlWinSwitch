@@ -482,6 +482,7 @@ internal static unsafe partial class Win32
     public const uint DBT_DEVTYP_DEVICEINTERFACE = 5, DEVICE_NOTIFY_WINDOW_HANDLE = 0;
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial nint CreateEventW(nint attributes, int manualReset, int initialState, char* name);
     [LibraryImport("kernel32.dll")] public static partial int SetEvent(nint handle);
+    [LibraryImport("kernel32.dll")] public static partial int ResetEvent(nint handle);
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial int GetOverlappedResult(nint file, OVERLAPPED* overlapped, uint* transferred, int wait);
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial int CancelIoEx(nint file, OVERLAPPED* overlapped);
     [LibraryImport("user32.dll", SetLastError = true)] public static partial nint RegisterDeviceNotificationW(nint recipient, void* filter, uint flags);

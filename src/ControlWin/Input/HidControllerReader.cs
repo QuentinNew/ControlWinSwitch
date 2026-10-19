@@ -458,6 +458,9 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         }
         CloseHandle(_file);
         _file = 0;
+        // The failed read left the (manual reset) event signaled: the message loop would wake on it forever, and since it
+        // serves the first signaled handle, the other controllers' reports would never be read.
+        ResetEvent(_event);
         _calStep = CalStep.None;
         _path = null;
         _mac = null;
