@@ -246,19 +246,33 @@ internal sealed unsafe class RadialOverlay : NativeWindow
             b = Math.Max(b, positions[i].Y + pad);
         }
 
-        // The connected controllers: a capsule in the root ring's center.
+        // The connected controllers: a capsule in the root ring's center; four of them on two rows of two.
         int barH = Px(BarDip), barPad = Px(10), picR = Px(BarDip) / 2 - Px(4), picGap = Px(ControllerTile.PicGapDip);
-        int entriesW = ControllerTile.StripLayout(_dpi, _controllers, picR, out var entryX);
         bool drawBar = top == 0 && _controllers.Count > 0;
-        int barW = barPad * 2 + entriesW;
+        int perRow = _controllers.Count >= 4 ? (_controllers.Count + 1) / 2 : _controllers.Count;
+        var rows = new List<(int First, int[] Xs, int Width)>();
+        for (int first = 0; first < _controllers.Count; first += perRow)
+        {
+            var row = _controllers.Skip(first).Take(perRow).ToList();
+            int entriesW = ControllerTile.StripLayout(_dpi, row, picR, out var xs);
+            rows.Add((first, xs, barPad * 2 + entriesW));
+        }
+        int barW = rows.Count == 0 ? 0 : rows.Max(row => row.Width), barTotalH = barH * rows.Count;
         int barL = center.X - barW / 2;
-        int barT = center.Y - barH / 2;
+        int barT = center.Y - barTotalH / 2;
         if (drawBar)
         {
             l = Math.Min(l, barL - Px(2));
             r = Math.Max(r, barL + barW + Px(2));
             t = Math.Min(t, barT - Px(2));
-            b = Math.Max(b, barT + barH + Px(2));
+            b = Math.Max(b, barT + barTotalH + Px(2));
+        }
+
+        // Where a controller's entry starts (x) and its row's center line (y), in screen coordinates.
+        (int X, int Cy) EntryAt(int i)
+        {
+            var row = rows[i / perRow];
+            return (center.X - row.Width / 2 + barPad + row.Xs[i - row.First], barT + (i / perRow) * barH + barH / 2);
         }
 
         // Name of the highlighted node, in a pill right under it.
@@ -327,17 +341,22 @@ internal sealed unsafe class RadialOverlay : NativeWindow
             if (drawBar)
             {
                 int rad = barH / 2, x0 = barL - l, y0 = barT - t;
+                // A capsule, or for two rows a rounded rectangle with the same corner radius.
                 void Capsule(int grow, uint color)
                 {
                     canvas.Circle(x0 + rad, y0 + rad, rad + grow, color);
                     canvas.Circle(x0 + barW - rad, y0 + rad, rad + grow, color);
-                    canvas.Rect(x0 + rad, y0 - grow, x0 + barW - rad, y0 + barH + grow, color);
+                    canvas.Circle(x0 + rad, y0 + barTotalH - rad, rad + grow, color);
+                    canvas.Circle(x0 + barW - rad, y0 + barTotalH - rad, rad + grow, color);
+                    canvas.Rect(x0 + rad, y0 - grow, x0 + barW - rad, y0 + barTotalH + grow, color);
+                    canvas.Rect(x0 - grow, y0 + rad, x0 + barW + grow, y0 + barTotalH - rad, color);
                 }
                 Capsule(Px(2), RimColor);
                 Capsule(0, NodeColor);
                 for (int i = 0; i < _controllers.Count; i++)
                 {
-                    int cx = x0 + barPad + entryX[i] + picR, cy = y0 + rad;
+                    var (ex, ey) = EntryAt(i);
+                    int cx = ex - l + picR, cy = ey - t;
                     var c = _controllers[i];
                     foreach (bool second in c.Pair ? (ReadOnlySpan<bool>)[false, true] : [false])
                     {
@@ -396,7 +415,8 @@ internal sealed unsafe class RadialOverlay : NativeWindow
         if (drawBar)
             for (int i = 0; i < _controllers.Count; i++)
             {
-                int x = barL - l + barPad + entryX[i], cy = barT - t + barH / 2;
+                var (ex, ey) = EntryAt(i);
+                int x = ex - l, cy = ey - t;
                 var c = _controllers[i];
                 foreach (bool second in c.Pair ? (ReadOnlySpan<bool>)[false, true] : [false])
                 {
