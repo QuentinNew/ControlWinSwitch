@@ -99,6 +99,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _watchRunning = ProbeProcesses();
         _padEnabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
         UpdateWatchTimer();
+        ApplyMenuHotkey();
 
         _overlay.RowHovered += OnMenuRowHovered;
         _overlay.RowClicked += OnMenuRowClicked;
@@ -1012,6 +1013,20 @@ internal sealed class AppController : IDisposable, ISettingsHost
         else if (_padEnabled && _slots.Any(s => s.Pad.IsAttached && s.Pad.PluggedKind != ConfiguredKind)) SetPadEnabled(true); // the kind changed
         else SyncHiding(); // the Hide setting may have changed
         for (int i = 0; i < _slots.Length; i++) ApplyGameRumble(i, restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
+        ApplyMenuHotkey();
+    }
+
+    private string? _menuHotkey; // the shortcut registered last (null = not yet)
+
+    /// <summary>(Re-)registers the keyboard shortcut of the menu when it changed.</summary>
+    private void ApplyMenuHotkey()
+    {
+        string text = Config.MenuHotkey;
+        if (text == _menuHotkey) return;
+        _menuHotkey = text;
+        Hotkey? hotkey = Hotkey.TryParse(text, out var parsed) ? parsed : null;
+        if (_window.SetMenuHotkey(hotkey)) Log.Info($"Menu shortcut: {(text.Length == 0 ? "none" : text)}");
+        else _toast.Show(MenuPages.Gear, $"{text} is already used by another app");
     }
 
     /// <summary>A game set a virtual pad's motors: forward them to its Pro Controller, scaled by the Rumble setting.</summary>
@@ -1215,6 +1230,18 @@ internal sealed class AppController : IDisposable, ISettingsHost
     }
 
     void ISettingsHost.EditMenu() => OpenMenuEditor(Config.MenuLayout);
+
+    void ISettingsHost.SetMenuHotkey(string text)
+    {
+        if (text.Trim().Length == 0) Config.MenuHotkey = "";
+        else if (Hotkey.TryParse(text, out var hotkey)) Config.MenuHotkey = hotkey.ToString();
+        else
+        {
+            _toast.Show(MenuPages.Gear, $"Unknown shortcut \"{text.Trim()}\" - try Ctrl+Alt+M");
+            return;
+        }
+        ((ISettingsHost)this).ConfigChanged();
+    }
 
     bool ISettingsHost.StartOnLogon => Startup.IsEnabled;
 

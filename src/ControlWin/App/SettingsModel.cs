@@ -302,6 +302,8 @@ internal interface ISettingsHost
     void OpenBluetoothSettings();
     /// <summary>Opens the editor of the menu layout in use (a mouse window).</summary>
     void EditMenu();
+    /// <summary>Sets the keyboard shortcut of the menu from typed text ("Ctrl+Alt+M", empty = none); reports text it cannot read.</summary>
+    void SetMenuHotkey(string text);
 
     /// <summary>ControlWin is registered to start when Windows starts.</summary>
     bool StartOnLogon { get; }
@@ -389,6 +391,9 @@ internal static class SettingsPages
                 i => { cfg().MenuLayout = i == 1 ? MenuLayouts.Radial : MenuLayouts.List; Changed(); }),
             SettingItem.Action("Edit menu", host.EditMenu),
             SettingItem.Toggle("Show controller in menu", () => cfg().MenuShowControllers, v => { cfg().MenuShowControllers = v; Changed(); }),
+            SettingItem.Text("Keyboard shortcut",
+                () => cfg().MenuHotkey.Length == 0 ? "(none)" : cfg().MenuHotkey,
+                () => host.EditText(cfg().MenuHotkey, host.SetMenuHotkey)),
         ]);
 
         var controller = new SettingsTab("Controller",

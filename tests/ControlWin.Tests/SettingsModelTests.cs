@@ -26,6 +26,8 @@ public class SettingsModelTests
         public void ToggleHeadset() { }
         public void OpenBluetoothSettings() { }
         public void EditMenu() { }
+        public string? Hotkey;
+        public void SetMenuHotkey(string text) => Hotkey = text;
         public HashSet<int> Connected = [0];
         public bool ControllerConnected(int slot) => Connected.Contains(slot);
         public List<int> Rumbled = [];

@@ -145,6 +145,9 @@ internal sealed class AppConfig
     /// <summary>Show the connected controllers (picture and battery) in the menu: in the center of the radial ring, above the list's footer.</summary>
     public bool MenuShowControllers { get; set; } = true;
 
+    /// <summary>Global keyboard shortcut that opens / closes the menu, as <see cref="Hotkey"/> text ("Ctrl+Alt+M"); empty = none.</summary>
+    public string MenuHotkey { get; set; } = "Ctrl+Alt+M";
+
     /// <summary>Radial menu: the stick must travel from "pushed" to "centered" within this time to count as a release.</summary>
     public int RadialReleaseMs { get; set; } = 100;
 
@@ -175,6 +178,7 @@ internal sealed class AppConfig
         HeadsetName ??= "";
         MenuLayout = string.Equals(MenuLayout?.Trim(), MenuLayouts.Radial, StringComparison.OrdinalIgnoreCase)
             ? MenuLayouts.Radial : MenuLayouts.List;
+        MenuHotkey = Hotkey.TryParse(MenuHotkey, out var hotkey) ? hotkey.ToString() : "";
         RadialReleaseMs = Math.Clamp(RadialReleaseMs, 20, 500);
         RadialCardinalBias = Math.Clamp(RadialCardinalBias, 0, 25);
         VirtualPad ??= new();

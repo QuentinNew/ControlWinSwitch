@@ -371,6 +371,9 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial short GetKeyState(int virtualKey);
     [LibraryImport("user32.dll")] public static partial uint GetDoubleClickTime();
     public const int VK_SHIFT = 0x10, VK_CONTROL = 0x11;
+    [LibraryImport("user32.dll", SetLastError = true)] public static partial int RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
+    [LibraryImport("user32.dll")] public static partial int UnregisterHotKey(nint hwnd, int id);
+    public const uint WM_HOTKEY = 0x0312, MOD_NOREPEAT = 0x4000;
     [LibraryImport("kernel32.dll")] public static partial nint GlobalAlloc(uint flags, nuint bytes);
     [LibraryImport("kernel32.dll")] public static partial nint GlobalFree(nint handle);
     public const uint GMEM_MOVEABLE = 0x0002;

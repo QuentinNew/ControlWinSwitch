@@ -47,6 +47,19 @@ internal sealed unsafe class MainWindow : NativeWindow
 
     public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_set.OpenCount));
 
+    private const int MenuHotkeyId = 1;
+    private bool _hotkeyRegistered;
+
+    /// <summary>Registers the global shortcut that toggles the menu (null = none). Returns false when another app owns it.</summary>
+    public bool SetMenuHotkey(Config.Hotkey? hotkey)
+    {
+        if (_hotkeyRegistered) UnregisterHotKey(Handle, MenuHotkeyId);
+        _hotkeyRegistered = hotkey is { } h && RegisterHotKey(Handle, MenuHotkeyId, h.Modifiers | MOD_NOREPEAT, h.Key) != 0;
+        if (hotkey is not null && !_hotkeyRegistered)
+            Log.Error($"RegisterHotKey {hotkey} failed ({System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+        return hotkey is null || _hotkeyRegistered;
+    }
+
     /// <summary>Removes the tray icon right away (shutdown).</summary>
     public void RemoveTray() => _tray.Dispose();
 
@@ -136,6 +149,10 @@ internal sealed unsafe class MainWindow : NativeWindow
                 Controller?.OnTimer(wParam);
                 return 0;
 
+            case WM_HOTKEY:
+                if ((int)wParam == MenuHotkeyId) Controller?.ToggleMenu();
+                return 0;
+
             case AppMessages.HeadsetDone:
                 Controller?.OnHeadsetDone((HeadsetState)(int)wParam, lParam != 0);
                 return 0;
@@ -155,6 +172,7 @@ internal sealed unsafe class MainWindow : NativeWindow
 
             case WM_DESTROY:
                 _tray.Dispose();
+                SetMenuHotkey(null);
                 if (_deviceNotification != 0) UnregisterDeviceNotification(_deviceNotification);
                 _deviceNotification = 0;
                 PostQuitMessage(0);
