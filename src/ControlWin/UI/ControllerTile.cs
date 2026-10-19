@@ -18,7 +18,21 @@ internal static class ControllerTile
     public static nint RedHotBrush => s_redHotBrush != 0 ? s_redHotBrush : s_redHotBrush = CreateSolidBrush(Rgb(0xF2, 0x5C, 0x5C));
     public static nint AmberBrush => s_amberBrush != 0 ? s_amberBrush : s_amberBrush = CreateSolidBrush(Rgb(0xE0, 0xA1, 0x2B));
 
-    public const int PicGapDip = 6, EntryGapDip = 18;
+    public const int PicGapDip = 6, EntryGapDip = 18, PairGapDip = 3;
+
+    /// <summary>Width of an entry's pictures in a strip: one circle, or two side by side for a Joy-Con pair.</summary>
+    public static int PicturesWidth(uint dpi, SlotTile info, int picRadius) =>
+        info.Pair ? picRadius * 4 + Px(dpi, PairGapDip) : picRadius * 2;
+
+    /// <summary>Left edge of the second picture of a pair in a strip entry starting at <paramref name="x"/>.</summary>
+    public static int SecondPictureX(uint dpi, int x, int picRadius) => x + picRadius * 2 + Px(dpi, PairGapDip);
+
+    /// <summary>One half of a pair's tile: its left edge and width.</summary>
+    public static (int Left, int Width) Half(uint dpi, int l, bool second)
+    {
+        int tile = Px(dpi, SizeDip), w = (tile - Px(dpi, PairGapDip)) / 2;
+        return (second ? l + tile - w : l, w);
+    }
 
     /// <summary>
     /// Layout of the controller strip (picture, gap, battery bars per controller, a bigger gap between controllers):
@@ -31,19 +45,35 @@ internal static class ControllerTile
         for (int i = 0; i < xs.Length; i++)
         {
             xs[i] = x;
-            x += picRadius * 2 + Px(dpi, PicGapDip) + barsW +(i < xs.Length - 1 ? Px(dpi, EntryGapDip) : 0);
+            x += PicturesWidth(dpi, controllers[i], picRadius) + Px(dpi, PicGapDip) + barsW + (i < xs.Length - 1 ? Px(dpi, EntryGapDip) : 0);
         }
         return x;
     }
 
     private static int Px(uint dpi, int dip) => (int)Math.Round(dip * dpi / 96.0);
 
-    /// <summary>The rounded square: picture, or gamepad icon (none icon when nothing is connected).</summary>
+    /// <summary>The rounded square: picture, or gamepad icon (none icon when nothing is connected). A pair: two halves.</summary>
     public static void PaintFace(nint dc, FontSet fonts, uint dpi, SlotTile info, int l, int t)
     {
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;
         bool on = info.Connected;
         int tile = Px(dpi, SizeDip);
+        if (on && info.Pair)
+        {
+            foreach (bool second in (ReadOnlySpan<bool>)[false, true])
+            {
+                var (hl, hw) = Half(dpi, l, second);
+                nint image = info.ImageOf(second);
+                if (image != 0)
+                    ControllerPictures.DrawRounded(dc, image, hl, t, hw, tile, Px(dpi, 10));
+                else
+                {
+                    Gdi.RoundedFill(dc, Gdi.OnBrush, hl, t, hl + hw, t + tile, Px(dpi, 10));
+                    Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, GamepadGlyph, hl, t, hl + hw, t + tile, DT_CENTER | oneLine);
+                }
+            }
+            return;
+        }
         Gdi.RoundedFill(dc, on && info.Image == 0 ? Gdi.OnBrush : Gdi.PanelBrush, l, t, l + tile, t + tile, Px(dpi, 14));
         if (on && info.Image != 0)
             ControllerPictures.DrawRounded(dc, info.Image, l, t, tile, Px(dpi, 14));

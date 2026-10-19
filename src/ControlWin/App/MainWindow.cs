@@ -39,11 +39,11 @@ internal sealed unsafe class MainWindow : NativeWindow
     }
 
     /// <summary>Call after the controller (dis)connected.</summary>
-    public bool ControllerConnected(int slot) => _set.Readers[slot].IsOpen;
+    public bool ControllerConnected(int slot) => _set.Source(slot).IsOpen;
 
-    public bool SetRumble(int slot, bool on) => _set.Readers[slot].SetRumble(on);
+    public bool SetRumble(int slot, bool on) => _set.Source(slot).SetRumble(on);
 
-    public bool SetRumbleMotors(int slot, byte large, byte small, int percent) => _set.Readers[slot].SetRumbleMotors(large, small, percent);
+    public bool SetRumbleMotors(int slot, byte large, byte small, int percent) => _set.Source(slot).SetRumbleMotors(large, small, percent);
 
     public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_set.OpenCount));
 

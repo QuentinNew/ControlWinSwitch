@@ -5,9 +5,16 @@ using static ControlWin.Native.Win32;
 
 namespace ControlWin.UI;
 
-/// <summary>What a controller tile shows: the controller's name, battery (0..4, -1 unknown) and its picture (a GDI+ image, or 0).</summary>
-internal readonly record struct SlotTile(bool Connected, string Name, int Battery, bool Charging, nint Image)
+/// <summary>
+/// What a controller tile shows: the controller's name, battery (0..4, -1 unknown) and its picture (a GDI+ image, or 0).
+/// A Joy-Con pair (<paramref name="Pair"/>) shows two pictures side by side: the left Joy-Con's <paramref name="Image"/>
+/// and the right one's <paramref name="Image2"/>.
+/// </summary>
+internal readonly record struct SlotTile(bool Connected, string Name, int Battery, bool Charging, nint Image, bool Pair = false, nint Image2 = 0)
 {
+    /// <summary>The picture of one half (the only one unless <see cref="Pair"/>).</summary>
+    public nint ImageOf(bool second) => second ? Image2 : Image;
+
     /// <summary>"Full", "Low, charging", ... ("Unknown" until the controller reported it).</summary>
     public string BatteryText => (Battery switch
     {
@@ -70,13 +77,15 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     private bool Connected(int slot) => Tile?.Invoke(slot).Connected == true;
 
     /// <summary>The user clicked the pencil on a controller's picture / the cross that removes it.</summary>
-    public event Action<int>? PictureEditRequested;
-    public event Action<int>? PictureRemoveRequested;
+    /// <summary>The picture of a slot is to be changed / removed; true: the second one of a Joy-Con pair (the right Joy-Con).</summary>
+    public event Action<int, bool>? PictureEditRequested;
+    public event Action<int, bool>? PictureRemoveRequested;
 
     private enum StripPart { None, Picture, Cross, Name }
 
     private int _hoverSlot = -1;     // the controller whose picture the mouse is over (pencil / cross shown)
     private bool _hoverCross;
+    private bool _hoverSecond;       // on a Joy-Con pair: the mouse is over the right Joy-Con's half
     private bool _trackingLeave;
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
@@ -197,7 +206,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 if (_hoverSlot >= 0)
                 {
                     _hoverSlot = -1;
-                    _hoverCross = false;
+                    _hoverCross = _hoverSecond = false;
                     Refresh();
                 }
                 return 0;
@@ -234,14 +243,21 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     /// <summary>Left edge of a row of <paramref name="count"/> tiles centered in the window.</summary>
     private int TilesLeftFor(int count) => (Px(WidthDip) - (count * Px(TileDip) + (count - 1) * Px(TileGapDip))) / 2;
 
-    /// <summary>The cross badge sits on the top right corner of a tile, poking out a little.</summary>
-    private (int X, int Y, int Size) CrossBadge(int tileLeft, int tileTop) =>
-        (tileLeft + Px(TileDip) - Px(CrossBadgeDip) + Px(8), tileTop - Px(8), Px(CrossBadgeDip));
+    /// <summary>
+    /// The cross badge sits on the top right corner of a tile, poking out a little; on the left half of a Joy-Con pair,
+    /// on its top left corner.
+    /// </summary>
+    private (int X, int Y, int Size) CrossBadge(int tileLeft, int tileTop, bool leftCorner = false) =>
+        (leftCorner ? tileLeft - Px(8) : tileLeft + Px(TileDip) - Px(CrossBadgeDip) + Px(8), tileTop - Px(8), Px(CrossBadgeDip));
 
     /// <summary>The connected slot whose tile is at the point (and which part of it), or -1.</summary>
-    private int HitAt(int x, int y, out StripPart part)
+    private int HitAt(int x, int y, out StripPart part) => HitAt(x, y, out part, out _);
+
+    /// <summary>The same, and for a Joy-Con pair whether the point is on the right Joy-Con's half.</summary>
+    private int HitAt(int x, int y, out StripPart part, out bool second)
     {
         part = StripPart.None;
+        second = false;
         if (_model?.Tab.ControllerStrip != true || y < StripTop || y >= RowsTop) return -1;
         var slots = ConnectedSlots();
         int tile = Px(TileDip), pitch = tile + Px(TileGapDip), top = StripTop + Px(8), left = TilesLeftFor(slots.Length);
@@ -249,8 +265,10 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         for (int j = 0; j < slots.Length; j++)
         {
             int l = left + j * pitch;
-            var badge = CrossBadge(l, top);
-            if (Tile?.Invoke(slots[j]).Image != 0 && x >= badge.X && x < badge.X + badge.Size && y >= badge.Y && y < badge.Y + badge.Size)
+            var info = Tile?.Invoke(slots[j]) ?? default;
+            second = info.Pair && x >= l + tile / 2;
+            var badge = CrossBadge(l, top, leftCorner: info.Pair && !second);
+            if (info.ImageOf(second) != 0 && x >= badge.X && x < badge.X + badge.Size && y >= badge.Y && y < badge.Y + badge.Size)
                 part = StripPart.Cross;
             else if (x >= l && x < l + tile && y >= top && y < top + tile)
                 part = StripPart.Picture;
@@ -351,13 +369,15 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     /// </summary>
     private void UpdateHover(int x, int y)
     {
-        int hit = HitAt(x, y, out var over);
+        int hit = HitAt(x, y, out var over, out bool second);
         bool onPicture = _model?.InSubPage == true && over is StripPart.Picture or StripPart.Cross && hit == SelectedSlot;
         int hover = onPicture ? hit : -1;
         bool cross = onPicture && over == StripPart.Cross;
-        if (hover == _hoverSlot && cross == _hoverCross) return;
+        second &= onPicture;
+        if (hover == _hoverSlot && cross == _hoverCross && second == _hoverSecond) return;
         _hoverSlot = hover;
         _hoverCross = cross;
+        _hoverSecond = second;
         Refresh();
     }
 
@@ -386,7 +406,7 @@ internal sealed unsafe class SettingsWindow : NativeWindow
 
         if (y >= StripTop && y < RowsTop)
         {
-            int slot = HitAt(x, y, out var part);
+            int slot = HitAt(x, y, out var part, out bool second);
             if (slot < 0 || part == StripPart.None) return;
             var strip = _model.Tab.Items[0];
             if (!_model.InSubPage)
@@ -403,11 +423,11 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             }
             else if (part == StripPart.Cross)
             {
-                PictureRemoveRequested?.Invoke(slot);
+                PictureRemoveRequested?.Invoke(slot, second);
             }
             else
             {
-                PictureEditRequested?.Invoke(slot);
+                PictureEditRequested?.Invoke(slot, second);
             }
             Refresh();
             return;
@@ -463,17 +483,19 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (focused)
             Gdi.RoundedFill(dc, Gdi.SelectionBrush, l - Px(3), t - Px(3), l + tile + Px(3), t + tile + Px(3), Px(18));
         ControllerTile.PaintFace(dc, fonts, _dpi, info, l, t);
+        // A Joy-Con pair: only the hovered half (one Joy-Con's picture) is edited.
+        var (hl, hw) = info.Pair ? ControllerTile.Half(_dpi, l, _hoverSecond) : (l, tile);
         if (on && hovered)
         {
             // Hovering the picture: a pencil changes it, and (when there is one) a cross on the top right removes it.
-            ControllerPictures.DrawDim(dc, l, t, tile, Px(14));
-            Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, PencilGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+            ControllerPictures.DrawDim(dc, hl, t, hw, tile, Px(info.Pair ? 10 : 14));
+            Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, PencilGlyph, hl, t, hl + hw, t + tile, DT_CENTER | oneLine);
         }
         if (!on) return;
         ControllerTile.PaintBattery(dc, _dpi, info, l + tile, t + tile);
-        if (hovered && info.Image != 0)
+        if (hovered && info.ImageOf(info.Pair && _hoverSecond) != 0)
         {
-            var badge = CrossBadge(l, t);
+            var badge = CrossBadge(l, t, leftCorner: info.Pair && !_hoverSecond);
             Gdi.RoundedFill(dc, crossHot ? ControllerTile.RedHotBrush : ControllerTile.RedBrush, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, badge.Size);
             Gdi.Text(dc, BadgeFont(), Gdi.TextColor, Close, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, DT_CENTER | oneLine);
         }

@@ -417,6 +417,9 @@ internal static unsafe partial class Win32
     [LibraryImport("gdiplus.dll")] public static partial int GdipCreateBitmapFromScan0(int width, int height, int stride, int format, byte* scan0, nint* bitmap);
     [LibraryImport("gdiplus.dll")] public static partial int GdipGetImageGraphicsContext(nint image, nint* graphics);
     [LibraryImport("gdiplus.dll")] public static partial int GdipDisposeImage(nint image);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCloneImage(nint image, nint* clone);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipImageRotateFlip(nint image, int rotateFlipType);
+    public const int Rotate90FlipNone = 1, Rotate270FlipNone = 3; // clockwise / counterclockwise quarter turn
     public const int PixelFormat32bppPARGB = 0x000E200B;
     [LibraryImport("gdiplus.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial int GdipCreateBitmapFromFile(string file, nint* bitmap);
     [LibraryImport("gdiplus.dll")] public static partial int GdipCreateBitmapFromHICON(nint icon, nint* bitmap);
@@ -478,6 +481,7 @@ internal static unsafe partial class Win32
     public const nuint DBT_DEVICEARRIVAL = 0x8000, DBT_DEVICEREMOVECOMPLETE = 0x8004;
     public const uint DBT_DEVTYP_DEVICEINTERFACE = 5, DEVICE_NOTIFY_WINDOW_HANDLE = 0;
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial nint CreateEventW(nint attributes, int manualReset, int initialState, char* name);
+    [LibraryImport("kernel32.dll")] public static partial int SetEvent(nint handle);
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial int GetOverlappedResult(nint file, OVERLAPPED* overlapped, uint* transferred, int wait);
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial int CancelIoEx(nint file, OVERLAPPED* overlapped);
     [LibraryImport("user32.dll", SetLastError = true)] public static partial nint RegisterDeviceNotificationW(nint recipient, void* filter, uint flags);

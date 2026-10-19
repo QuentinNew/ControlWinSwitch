@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Switch 2 Joy-Cons** over Bluetooth Low Energy (no pairing in Windows): a left and a right Joy-Con act as one controller, a lone one is held sideways (hold SL / SR while it connects to keep it alone). Paired from **Add new controller**, then reconnected with any button. C and Capture open the menu. Stick calibration, player lights, rumble and battery badge; a lone Joy-Con scrolls in mouse mode with SL / SR held.
+- The exe now uses the Windows SDK projection (`net10.0-windows10.0.22621.0`, still running on Windows 10) for the Bluetooth LE APIs, and is about 2 MB larger.
+
 ## 1.0.0 - 2026-10-17
 
 First release. A portable exe that lets you control a Windows PC from a Nintendo Switch Pro Controller.

@@ -31,16 +31,14 @@ internal static unsafe class Program
             window.Controller = controller;
             Log.Info($"Started {typeof(Program).Assembly.GetName().Version?.ToString(3)} (elevated={IsElevated()}, hwnd=0x{window.Handle:X})");
 
-            for (int i = 0; i < ControllerSet.Slots; i++)
-            {
-                int slot = i;
-                set.Readers[slot].Report += (report, raw) => controller.OnReport(slot, report, raw);
-                set.Readers[slot].CalibrationRead += cal => controller.OnCalibration(slot, cal);
-                set.Readers[slot].ControllerRemoved += () => controller.OnControllerRemoved(slot);
-            }
+            set.Report += controller.OnReport;
+            set.CalibrationRead += controller.OnCalibration;
+            set.ControllerRemoved += controller.OnControllerRemoved;
+            set.JoyConsChanged += controller.OnJoyConsChanged;
+            set.Hub.DevicePaired += controller.OnJoyConPaired;
 
             set.TryOpen();
-            if (!set.AnyOpen) Log.Info("Pro Controller not connected yet (waiting for it)");
+            if (!set.AnyOpen) Log.Info("No controller connected yet (waiting for one)");
             window.UpdateTray();
 
             RunMessageLoop(set, controller);
@@ -58,12 +56,12 @@ internal static unsafe class Program
     /// <summary>Event-driven loop: blocks until a message or a controller report arrives (~0% CPU idle).</summary>
     private static void RunMessageLoop(ControllerSet set, AppController controller)
     {
-        // Wait set: the controllers' reports, the virtual pads' rumble requests, the mouse timer (signalled only while
-        // a stick moves the cursor) and the watched process (signalled when it exits). Pads, mouse and process
-        // change at run time, so the set is rebuilt on every iteration.
-        const int Slots = ControllerSet.Slots, MouseId = 2 * Slots, WatchId = 2 * Slots + 1;
-        nint* handles = stackalloc nint[2 * Slots + 2];
-        int* ids = stackalloc int[2 * Slots + 2]; // 0..3 reader, 4..7 pad rumble, then mouse, watch
+        // Wait set: the Pro Controllers' reports, the Joy-Con 2 queue, the virtual pads' rumble requests, the mouse timer
+        // (signalled only while a stick moves the cursor) and the watched process (signalled when it exits). Pads, mouse
+        // and process change at run time, so the set is rebuilt on every iteration.
+        const int Slots = ControllerSet.Slots, MouseId = 2 * Slots, WatchId = 2 * Slots + 1, JoyConId = 2 * Slots + 2;
+        nint* handles = stackalloc nint[2 * Slots + 3];
+        int* ids = stackalloc int[2 * Slots + 3]; // 0..3 reader, 4..7 pad rumble, then mouse, watch, Joy-Cons
         MSG msg;
         while (true)
         {
@@ -71,8 +69,10 @@ internal static unsafe class Program
             for (int i = 0; i < Slots; i++)
             {
                 ids[count] = i;
-                handles[count++] = set.Readers[i].EventHandle;
+                handles[count++] = set.HidEventHandle(i);
             }
+            ids[count] = JoyConId;
+            handles[count++] = set.Hub.EventHandle;
             for (int i = 0; i < Slots; i++)
             {
                 nint pad = controller.PadNotifyHandle(i);
@@ -96,9 +96,10 @@ internal static unsafe class Program
             if (r < WAIT_OBJECT_0 + count)
             {
                 int id = ids[r - WAIT_OBJECT_0];
-                if (id < Slots) set.Readers[id].OnSignaled();
+                if (id < Slots) set.OnHidSignaled(id);
                 else if (id < MouseId) controller.OnPadNotify(id - Slots);
                 else if (id == MouseId) controller.OnMouseTick();
+                else if (id == JoyConId) set.Hub.OnSignaled();
                 else controller.OnWatchedProcessExited();
             }
 

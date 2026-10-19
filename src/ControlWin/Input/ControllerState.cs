@@ -85,6 +85,9 @@ internal sealed class ControllerState
     public int Battery { get; private set; } = -1;
     public bool Charging { get; private set; }
 
+    /// <summary>A lone Joy-Con: only <see cref="Left"/> is a real stick.</summary>
+    public bool SingleStick { get; private set; }
+
     public bool Pressed(Buttons b) => (Current & b) != 0 && (Previous & b) == 0;
     public bool Released(Buttons b) => (Current & b) == 0 && (Previous & b) != 0;
     public bool Held(Buttons b) => (Current & b) != 0;
@@ -93,6 +96,7 @@ internal sealed class ControllerState
     {
         Previous = Current;
         Current = r.Buttons;
+        SingleStick = r.SingleStick;
         if (r.Battery >= 0)
         {
             Battery = r.Battery;
@@ -116,6 +120,7 @@ internal sealed class ControllerState
     {
         Previous = Current = Buttons.None;
         Left = Right = default;
+        SingleStick = false;
         Battery = -1;
         Charging = false;
     }

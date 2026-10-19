@@ -238,9 +238,11 @@ internal sealed unsafe class CircleCanvas : IDisposable
 
     /// <summary>
     /// Draws a GDI+ image centered on a point. <paramref name="cover"/>: fills the whole circle of
-    /// <paramref name="radius"/> (cropped to it); with <paramref name="fitWidth"/> its whole width spans the circle (clipped to it); otherwise it is fitted in a square inside the circle.
+    /// <paramref name="radius"/> (cropped to it); with <paramref name="fitWidth"/> its whole width spans the circle (clipped to it);
+    /// with <paramref name="whole"/> the whole picture fits the circle's diameter (nothing cut off, not clipped); otherwise it
+    /// is fitted in a square inside the circle.
     /// </summary>
-    public void Image(nint image, int cx, int cy, int radius, bool cover, bool fitWidth = false)
+    public void Image(nint image, int cx, int cy, int radius, bool cover, bool fitWidth = false, bool whole = false)
     {
         if (_graphics == 0 || image == 0) return;
 
@@ -248,7 +250,7 @@ internal sealed unsafe class CircleCanvas : IDisposable
         if (GdipGetImageWidth(image, &iw) != 0 || GdipGetImageHeight(image, &ih) != 0 || iw == 0 || ih == 0) return;
 
         double diameter = radius * 2;
-        double box = cover || fitWidth ? diameter : diameter * 0.62;
+        double box = cover || fitWidth || whole ? diameter : diameter * 0.62;
         // cover: the short side fills the box; otherwise the long side fits it.
         double scale = fitWidth ? box / iw : cover ? box / Math.Min(iw, ih) : box / Math.Max(iw, ih);
         int w = (int)Math.Round(iw * scale), h = (int)Math.Round(ih * scale);

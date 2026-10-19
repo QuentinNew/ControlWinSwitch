@@ -21,10 +21,10 @@ internal enum ReportFormat : byte
 
 /// <summary>
 /// One decoded input report. <paramref name="Battery"/> is 0 (empty) to 4 (full), or -1 when the report format does not
-/// carry it (the simple 0x3F reports).
+/// carry it (the simple 0x3F reports). <paramref name="SingleStick"/>: a lone Joy-Con, only the left stick exists.
 /// </summary>
 internal readonly record struct ProReport(ReportFormat Format, Buttons Buttons, int LX, int LY, int RX, int RY,
-    int Battery = -1, bool Charging = false);
+    int Battery = -1, bool Charging = false, bool SingleStick = false);
 
 /// <summary>Decodes Switch Pro Controller HID input reports (report ID in byte 0).</summary>
 internal static class ProReportParser

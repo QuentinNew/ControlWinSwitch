@@ -1,6 +1,6 @@
 # ControlWin
 
-A background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads in Switch mode): open a menu with the **Capture** button, drive the mouse with the sticks, launch games, expose a virtual Xbox 360 or DualShock 4 pad, connect a Bluetooth headset, sleep or shut down the PC, all keyboard and mouse free!
+A background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads in Switch mode) or **Switch 2 Joy-Cons**: open a menu with the **Capture** button, drive the mouse with the sticks, launch games, expose a virtual Xbox 360 or DualShock 4 pad, connect a Bluetooth headset, sleep or shut down the PC, all keyboard and mouse free!
 
 Written in C# / .NET 10, compiled with **NativeAOT** and uses plain Win32 and GDI. It uses a few MB of RAM and no CPU while idle.
 
@@ -8,17 +8,18 @@ Written in C# / .NET 10, compiled with **NativeAOT** and uses plain Win32 and GD
 
 - **Menu on Capture**: a list or radial menu overlay, fully editable (nodes, folders, icons, colors, app shortcuts).
 - **Mouse mode**: sticks move the cursor and scroll, A / B click.
-- **Virtual pad**: each Pro Controller drives its own virtual Xbox 360 or DualShock 4 pad through ViGEmBus, with rumble forwarded to the controller. Replaces alternatives like BetterJoy.
+- **Joy-Con 2**: a left and a right Joy-Con 2 act as one controller, or one alone held sideways (see [Joy-Con 2](#joy-con-2)).
+- **Virtual pad**: each controller drives its own virtual Xbox 360 or DualShock 4 pad through ViGEmBus, with rumble forwarded to the controller. Replaces alternatives like BetterJoy.
 - **HidHide integration**: the physical controller is hidden from games while its virtual pad is on.
 - **Up to four controllers**, each with a name, picture, battery badge, player lights, stick calibration and deadzone.
 - **Shortcuts**: launch apps, URLs and Steam games (with a recently-played Steam picker).
-- **Power**: sleep, restart, shut down. **Bluetooth headset** connect / disconnect. **Pair** a new Pro Controller from the menu.
+- **Power**: sleep, restart, shut down. **Bluetooth headset** connect / disconnect. **Pair** a new Pro Controller or Joy-Con 2 from the menu.
 - **Tray icon**, single instance, **Launch on startup**, settings window driven by the controller or the mouse.
 
 ## Requirements
 
 - Windows 10/11, x64
-- A Switch Pro Controller (VID `057E`, PID `2009`) paired over Bluetooth, or plugged in over USB (see [Known limitations](#known-limitations))
+- A Switch Pro Controller (VID `057E`, PID `2009`) paired over Bluetooth, or plugged in over USB (see [Known limitations](#known-limitations)), and / or Switch 2 Joy-Cons with a Bluetooth adapter that supports Bluetooth Low Energy
 - [ViGEmBus](https://github.com/nefarius/ViGEmBus) for the virtual pad (everything else works without it)
 - Optional: [HidHide](https://github.com/nefarius/HidHide), so games see only the virtual pad
 
@@ -88,7 +89,7 @@ Shortcuts start with **normal user rights** even when ControlWin runs elevated. 
 | Input | Action |
 |---|---|
 | Left stick | Moves the cursor (ZR held = faster, ZL held = more precise) |
-| Right stick | Scrolls (vertical and horizontal; ZR / ZL scale it too) |
+| Right stick | Scrolls (vertical and horizontal; ZR / ZL scale it too). A lone Joy-Con: its stick scrolls while L or R (SL / SR) is held |
 | A | Left click (hold to drag) |
 | B | Right click |
 | D-pad | Nudges the cursor 1 px per tap, glides after 0.3 s |
@@ -102,7 +103,7 @@ Opened from the menu's Settings node or the tray. Drive it with the controller (
 
 | Tab | Contents |
 |---|---|
-| Controller | The four controller slots (see [Controllers](#controllers)), Add new Pro Controller (pairing) |
+| Controller | The four controller slots (see [Controllers](#controllers)), Add new controller (pairing), how to keep a Joy-Con alone |
 | Layout | Main menu List / Radial, Edit menu, Show controller in menu |
 | Virtual Pad | None / Xbox / PS4, Swap A / B, Swap X / Y, Rumble strength, Pad off while running |
 | Mouse | Speed, fast / precise multipliers, stick deadzone, scroll speed, D-pad glide speed |
@@ -163,8 +164,20 @@ The **Controller** tab of the settings shows the four controller slots. Each con
 Click a tile (or press **A** on it) to open that controller's page: **Name**, **Test rumble**, **Calibrate deadzone** and **Back**, with the connected controllers kept on top and a ring around the one being edited. Click another tile, or press **ZL** / **ZR** for the previous / next one, to edit another controller. Only on that page can a picture be changed: hover the picture of the controller being edited, and a pencil appears on it (click it to choose a PNG, JPG or BMP; the picture is scaled down to 128 pixels and shown with rounded corners) and, when it has a picture, a red cross at the top right that removes it. **B** or a right click goes back.
 
 - **Stick calibration** is read from the controller's own flash (user calibration if present, otherwise factory), so the sticks reach their full range without a warm-up. **Calibrate deadzone** sets a per-stick deadzone for a stick that drifts.
-- **Add new Pro Controller** (in the Controller tab or as a menu node) pairs a controller over Bluetooth: hold its sync button while ControlWin searches.
+- **Add new controller** (in the Controller tab or as a menu node) pairs a Pro Controller or a Joy-Con 2 over Bluetooth: hold its sync button while ControlWin searches.
 - Controllers are told apart by their Bluetooth MAC address, which ControlWin reads from the controller itself, so a profile follows the controller to any slot and over USB or Bluetooth. Names and deadzones are stored in `config.json` under `controllers`; pictures are copied to `%APPDATA%\ControlWin\controllers\`. A profile is kept while the controller is away; to forget one, delete its entry (and picture file) by hand.
+
+## Joy-Con 2
+
+Switch 2 Joy-Cons talk Bluetooth Low Energy, not HID, so ControlWin connects to them itself (protocol from [switch2-controllers](https://github.com/Nadeflore/switch2-controllers)). **Do not pair them in Windows' Bluetooth settings**; if you already did, remove them there first.
+
+- **Pairing**: choose **Add new controller**, then hold the Joy-Con's sync button. ControlWin writes this PC's address into it, so from then on pressing any button on it reconnects it (no search needed). Attaching it to the Switch 2 pairs it back to the console.
+- **A pair**: a left and a right Joy-Con join into one controller slot, mapped like a Pro Controller. Both **Capture** and **C** open the menu.
+- **Alone, sideways**: a Joy-Con alone is held sideways (stick on the left, SL / SR on top). Its buttons are turned so A / B / X / Y sit where they do on a Pro Controller, SL / SR are L / R, its shoulder buttons are ZL / ZR, and its stick is the left stick. On the left one Minus is Plus; Capture (left) or C (right) opens the menu.
+- Hold **SL / SR** while a Joy-Con connects to keep it alone even when its partner is around; otherwise a Joy-Con joins a lone Joy-Con of the other side. When half of a pair disconnects, the other carries on alone, sideways, in the same slot, and the partner rejoins when it comes back.
+- Each Joy-Con keeps its own profile (by its address): its stick's deadzone stays with it whichever Joy-Con it is paired with; a pair's name is the left Joy-Con's.
+- Stick calibration, player lights, rumble and the battery badge (the emptier Joy-Con of a pair; estimated from its voltage) work like on the Pro Controller. A pair's tile shows both Joy-Cons' pictures side by side, turned upright (the left one a quarter clockwise, the right one a quarter counterclockwise, for pictures of Joy-Cons held sideways); on its controller page, hover one half to change that Joy-Con's picture. They are not HID devices, so HidHide has nothing to hide.
+- The low-latency connection is requested on Windows 11 only.
 
 ## Configuration file
 
@@ -175,7 +188,8 @@ Click a tile (or press **A** on it) to open that controller's page: **Name**, **
 - While the menu or mouse mode is open the virtual pad is neutral, so games see nothing.
 - Games in exclusive fullscreen can hide the overlay (borderless is fine).
 - The virtual pad needs ViGEmBus.
-- Gyro is not supported.
+- Gyro is not supported, nor the Joy-Con 2 mouse sensor.
+- Pro Controller 2 and the GameCube controller for Switch 2 are not supported yet.
 
 ## Project layout
 
@@ -188,7 +202,8 @@ src/ControlWin/
                                SettingsModel, MouseMode, ProcessWatch, DeadzoneCalibration (models are pure, tested)
   Config/                      AppConfig (config.json, source-generated JSON), MenuRepair (defaults and repair)
   Input/                       HidControllerReader (direct HID read), ControllerSet (four slots), ProReportParser,
-                               ControllerState, StickCalibration, ProCommands, XInputMapper, Ds4Mapper
+                               ControllerState, StickCalibration, ProCommands, XInputMapper, Ds4Mapper,
+                               JoyCon2Hub / JoyCon2Device (Bluetooth LE), JoyConSlot, JoyCon2Protocol, JoyCon2Mapper
   Actions/                     VirtualPad (ViGEmBus IOCTLs), HidHide, UnelevatedLauncher, PowerActions,
                                BluetoothHeadset, BluetoothPairing, SteamLibrary, SendInputMouse, ControllerPictures, FilePicker
   Setup/Startup.cs             Launch on startup (scheduled task or Run key)
@@ -202,6 +217,7 @@ tests/ControlWin.Tests/        xUnit
 
 - [BetterJoy](https://github.com/Davidobot/BetterJoy) (MIT), the reference for what this app replaces.
 - [dekuNukem's Nintendo Switch reverse engineering notes](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) for the HID report formats.
+- [switch2-controllers](https://github.com/Nadeflore/switch2-controllers) by Nadeflore for the Joy-Con 2 Bluetooth LE protocol.
 - [HidHide](https://github.com/nefarius/HidHide) and [ViGEmBus](https://github.com/nefarius/ViGEmBus) by Nefarius.
 
 ## License

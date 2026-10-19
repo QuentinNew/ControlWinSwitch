@@ -321,8 +321,8 @@ internal interface ISettingsHost
     void OpenDeadzoneCalibration();
     /// <summary>The controller's sticks as normalized positions (before any deadzone).</summary>
     (ControlWin.Input.Stick Left, ControlWin.Input.Stick Right) ControllerSticks(int slot);
-    /// <summary>Pairs a Pro Controller that Windows does not know yet (Bluetooth).</summary>
-    void AddProController();
+    /// <summary>Pairs a new controller over Bluetooth: a Pro Controller Windows does not know yet, or a Joy-Con 2 in sync mode.</summary>
+    void AddController();
     /// <summary>"Searching..." while a pairing runs, otherwise empty.</summary>
     string PairingStatus { get; }
 
@@ -333,8 +333,9 @@ internal interface ISettingsHost
     string ControllerName(int slot);
     void SetControllerName(int slot, string name);
     /// <summary>Asks for a picture file (Windows dialog) and sets it as the controller's picture.</summary>
-    void ChooseControllerPicture(int slot);
-    void RemoveControllerPicture(int slot);
+    /// <summary><paramref name="second"/>: the right Joy-Con's picture of a pair.</summary>
+    void ChooseControllerPicture(int slot, bool second = false);
+    void RemoveControllerPicture(int slot, bool second = false);
 }
 
 internal static class SettingsPages
@@ -399,7 +400,8 @@ internal static class SettingsPages
         var controller = new SettingsTab("Controller",
         [
             SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, host.OpenControllerPage, host.ControllerConnected),
-            SettingItem.Action("Add new Pro Controller", host.AddProController, () => host.PairingStatus),
+            SettingItem.Action("Add new controller", host.AddController, () => host.PairingStatus),
+            SettingItem.Info("Single Joy-Con", () => "Hold SL + SR while it connects"),
         ], controllerStrip: true);
 
         var virtualPad = new SettingsTab("Virtual Pad",

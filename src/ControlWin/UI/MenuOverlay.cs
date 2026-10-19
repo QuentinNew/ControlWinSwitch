@@ -332,14 +332,18 @@ internal sealed unsafe class MenuOverlay : NativeWindow
             {
                 var c = _controllers[i];
                 int x = left + xs[i], top = cy - picR;
-                if (c.Image != 0)
-                    ControllerPictures.DrawRounded(dc, c.Image, x, top, picR * 2, picR * 2);
-                else
+                foreach (bool second in c.Pair ? (ReadOnlySpan<bool>)[false, true] : [false])
                 {
-                    Gdi.RoundedFill(dc, Gdi.OnBrush, x, top, x + picR * 2, top + picR * 2, picR * 2);
-                    Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ControllerTile.GamepadGlyph, x, top, x + picR * 2, top + picR * 2, DT_CENTER | oneLine);
+                    int px = second ? ControllerTile.SecondPictureX(_dpi, x, picR) : x;
+                    if (c.ImageOf(second) is var image and not 0)
+                        ControllerPictures.DrawRounded(dc, image, px, top, picR * 2, picR * 2);
+                    else
+                    {
+                        Gdi.RoundedFill(dc, Gdi.OnBrush, px, top, px + picR * 2, top + picR * 2, picR * 2);
+                        Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ControllerTile.GamepadGlyph, px, top, px + picR * 2, top + picR * 2, DT_CENTER | oneLine);
+                    }
                 }
-                ControllerTile.PaintBars(dc, _dpi, c, x + picR * 2 + Px(ControllerTile.PicGapDip), cy);
+                ControllerTile.PaintBars(dc, _dpi, c, x + ControllerTile.PicturesWidth(_dpi, c, picR) + Px(ControllerTile.PicGapDip), cy);
             }
         }
 

@@ -339,8 +339,12 @@ internal sealed unsafe class RadialOverlay : NativeWindow
                 {
                     int cx = x0 + barPad + entryX[i] + picR, cy = y0 + rad;
                     var c = _controllers[i];
-                    if (c.Image == 0) canvas.Circle(cx, cy, picR, Rgb(0x2E, 0x9E, 0x5B));
-                    else canvas.Image(c.Image, cx, cy, picR, cover: false, fitWidth: true);
+                    foreach (bool second in c.Pair ? (ReadOnlySpan<bool>)[false, true] : [false])
+                    {
+                        int pcx = second ? ControllerTile.SecondPictureX(_dpi, cx - picR, picR) + picR : cx;
+                        if (c.ImageOf(second) is var image and not 0) canvas.Image(image, pcx, cy, picR, cover: false, whole: true);
+                        else canvas.Circle(pcx, cy, picR, Rgb(0x2E, 0x9E, 0x5B));
+                    }
                 }
             }
 
@@ -393,9 +397,14 @@ internal sealed unsafe class RadialOverlay : NativeWindow
             for (int i = 0; i < _controllers.Count; i++)
             {
                 int x = barL - l + barPad + entryX[i], cy = barT - t + barH / 2;
-                if (_controllers[i].Image == 0)
-                    Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ControllerTile.GamepadGlyph, x, cy - picR, x + picR * 2, cy + picR, DT_CENTER | oneLine);
-                ControllerTile.PaintBars(dc, _dpi, _controllers[i], x + picR * 2 + picGap, cy);
+                var c = _controllers[i];
+                foreach (bool second in c.Pair ? (ReadOnlySpan<bool>)[false, true] : [false])
+                {
+                    int px = second ? ControllerTile.SecondPictureX(_dpi, x, picR) : x;
+                    if (c.ImageOf(second) == 0)
+                        Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ControllerTile.GamepadGlyph, px, cy - picR, px + picR * 2, cy + picR, DT_CENTER | oneLine);
+                }
+                ControllerTile.PaintBars(dc, _dpi, c, x + ControllerTile.PicturesWidth(_dpi, c, picR) + picGap, cy);
             }
 
         for (int i = 0; i < positions.Length; i++)

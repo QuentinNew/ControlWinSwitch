@@ -124,9 +124,12 @@ internal sealed class MouseMode
         dt = Math.Clamp(dt, 0, 0.05); // a stalled loop must not teleport the cursor
 
         var cfg = _config();
+        var live = _state.Current & ~_ignoreMask;
         var move = _state.Left.WithDeadzone(cfg.Deadzone);
         var scroll = _state.Right.WithDeadzone(cfg.Deadzone);
-        var (dpx, dpy) = DpadVector(_state.Current & ~_ignoreMask);
+        // A lone Joy-Con has one stick: it scrolls while L or R (SL / SR) is held.
+        if (_state.SingleStick && (live & (Buttons.L | Buttons.R)) != 0) (move, scroll) = (default, move);
+        var (dpx, dpy) = DpadVector(live);
         bool dpad = dpx != 0 || dpy != 0;
         if (move == default && scroll == default && !dpad)
         {
@@ -135,7 +138,6 @@ internal sealed class MouseMode
         }
 
         float multiplier = 1f;
-        var live = _state.Current & ~_ignoreMask;
         if ((live & Buttons.ZR) != 0) multiplier *= cfg.FastMultiplier;
         if ((live & Buttons.ZL) != 0) multiplier *= cfg.SlowMultiplier;
 

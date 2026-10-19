@@ -17,7 +17,7 @@ namespace ControlWin.Input;
 /// Event-driven: <see cref="EventHandle"/> is signaled when a read completes and must be one of the handles the
 /// message loop waits on; call <see cref="OnSignaled"/> when it fires. Everything runs on the UI thread.
 /// </remarks>
-internal sealed unsafe class HidControllerReader : IDisposable
+internal sealed unsafe class HidControllerReader : IControllerSource, IDisposable
 {
     public const ushort NintendoVid = 0x057E;
     public const ushort ProControllerPid = 0x2009;
@@ -75,6 +75,12 @@ internal sealed unsafe class HidControllerReader : IDisposable
 
     /// <summary>Device path of the open controller (null when closed).</summary>
     public string? Path => _path;
+
+    public string? HidPath => _path;
+
+    public string? PartnerId => null;
+
+    public (string Id, bool RightField)? StickProfile(bool right) => Id is { } id ? (id, right) : null;
 
     /// <summary>
     /// Stable identity of the open controller: its Bluetooth MAC address once the controller has answered, until then

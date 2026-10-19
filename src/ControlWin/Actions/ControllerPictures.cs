@@ -45,6 +45,25 @@ internal static unsafe class ControllerPictures
         return image;
     }
 
+    /// <summary>
+    /// The picture turned a quarter clockwise (or counterclockwise): a Joy-Con pictured held sideways, shown upright in a
+    /// pair. 0 when there is none. Owned by this class: do not dispose.
+    /// </summary>
+    public static nint GetRotated(string id, bool clockwise)
+    {
+        string key = id + (clockwise ? "|cw" : "|ccw");
+        if (s_images.TryGetValue(key, out var cached)) return cached;
+        nint source = Get(id), image = 0;
+        if (source != 0 && GdipCloneImage(source, &image) == 0 && image != 0
+            && GdipImageRotateFlip(image, clockwise ? Rotate90FlipNone : Rotate270FlipNone) != 0)
+        {
+            GdipDisposeImage(image);
+            image = 0;
+        }
+        s_images[key] = image;
+        return image;
+    }
+
     /// <summary>Imports <paramref name="source"/> as the picture of <paramref name="id"/>. Returns null, or why it failed.</summary>
     public static string? Import(string source, string id)
     {
@@ -109,13 +128,18 @@ internal static unsafe class ControllerPictures
         }
     }
 
+    /// <summary>Forgets the loaded picture of <paramref name="id"/> and its rotated copies.</summary>
     private static void Release(string id)
     {
-        if (s_images.Remove(id, out var image) && image != 0) GdipDisposeImage(image);
+        foreach (var key in new[] { id, id + "|cw", id + "|ccw" })
+            if (s_images.Remove(key, out var image) && image != 0) GdipDisposeImage(image);
     }
 
     /// <summary>A translucent dark rounded square over a tile (the hover state of a picture).</summary>
-    public static void DrawDim(nint dc, int x, int y, int size, int diameter)
+    public static void DrawDim(nint dc, int x, int y, int size, int diameter) => DrawDim(dc, x, y, size, size, diameter);
+
+    /// <summary>The same over a <paramref name="width"/> x <paramref name="height"/> box (half a tile).</summary>
+    public static void DrawDim(nint dc, int x, int y, int width, int height, int diameter)
     {
         nint graphics, path = 0, brush = 0;
         if (GdipCreateFromHDC(dc, &graphics) != 0) return;
@@ -123,11 +147,11 @@ internal static unsafe class ControllerPictures
         {
             GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
             if (GdipCreatePath(0, &path) != 0 || GdipCreateSolidFill(0x99000000, &brush) != 0) return;
-            int d = Math.Clamp(diameter, 2, size);
+            int d = Math.Clamp(diameter, 2, Math.Min(width, height));
             GdipAddPathArcI(path, x, y, d, d, 180f, 90f);
-            GdipAddPathArcI(path, x + size - d, y, d, d, 270f, 90f);
-            GdipAddPathArcI(path, x + size - d, y + size - d, d, d, 0f, 90f);
-            GdipAddPathArcI(path, x, y + size - d, d, d, 90f, 90f);
+            GdipAddPathArcI(path, x + width - d, y, d, d, 270f, 90f);
+            GdipAddPathArcI(path, x + width - d, y + height - d, d, d, 0f, 90f);
+            GdipAddPathArcI(path, x, y + height - d, d, d, 90f, 90f);
             GdipClosePathFigure(path);
             GdipFillPath(graphics, brush, path);
         }
@@ -143,13 +167,17 @@ internal static unsafe class ControllerPictures
     /// Draws the whole picture, centered and as large as fits the <paramref name="size"/> square (proportions kept),
     /// with rounded corners of <paramref name="diameter"/>.
     /// </summary>
-    public static void DrawRounded(nint dc, nint image, int x, int y, int size, int diameter)
+    public static void DrawRounded(nint dc, nint image, int x, int y, int size, int diameter) =>
+        DrawRounded(dc, image, x, y, size, size, diameter);
+
+    /// <summary>The same, fitted in a <paramref name="width"/> x <paramref name="height"/> box (half a tile).</summary>
+    public static void DrawRounded(nint dc, nint image, int x, int y, int width, int height, int diameter)
     {
         uint iw, ih;
         if (GdipGetImageWidth(image, &iw) != 0 || GdipGetImageHeight(image, &ih) != 0 || iw == 0 || ih == 0) return;
-        double scale = size / (double)Math.Max(iw, ih);
+        double scale = Math.Min(width / (double)iw, height / (double)ih);
         int w = Math.Max(1, (int)Math.Round(iw * scale)), h = Math.Max(1, (int)Math.Round(ih * scale));
-        int left = x + (size - w) / 2, top = y + (size - h) / 2;
+        int left = x + (width - w) / 2, top = y + (height - h) / 2;
         int d = Math.Clamp(diameter, 2, Math.Min(w, h));
 
         nint graphics, path = 0;

@@ -181,6 +181,23 @@ public class MouseModeTests
     }
 
     [Fact]
+    public void Lone_joycon_stick_scrolls_while_L_or_R_is_held()
+    {
+        var (state, output, mouse) = Create();
+        mouse.Activate(Buttons.None);
+        state.Update(new ProReport(ReportFormat.Full, Buttons.R, 2048, 2048 + 1300, 2048, 2048, SingleStick: true));
+        mouse.OnReport();
+        mouse.Tick(0.05);
+        mouse.Tick(0.05);
+        Assert.Equal(120, output.WheelTotal);
+        Assert.Equal(0, output.MoveY); // the stick scrolls instead of moving the cursor
+
+        state.Update(new ProReport(ReportFormat.Full, Buttons.None, 2048, 2048 + 1300, 2048, 2048, SingleStick: true));
+        mouse.Tick(0.05);
+        Assert.NotEqual(0, output.MoveY); // released: it moves again
+    }
+
+    [Fact]
     public void Dpad_tap_moves_exactly_one_pixel()
     {
         var (state, output, mouse) = Create();

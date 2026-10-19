@@ -111,14 +111,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _radialOverlay.NodeClicked += OnRadialNodeClicked;
         _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
         _settingsWindow.Tile = TileOf;
-        _settingsWindow.PictureEditRequested += slot =>
+        _settingsWindow.PictureEditRequested += (slot, second) =>
         {
-            ((ISettingsHost)this).ChooseControllerPicture(slot);
+            ((ISettingsHost)this).ChooseControllerPicture(slot, second);
             _settingsWindow.Refresh();
         };
-        _settingsWindow.PictureRemoveRequested += slot =>
+        _settingsWindow.PictureRemoveRequested += (slot, second) =>
         {
-            ((ISettingsHost)this).RemoveControllerPicture(slot);
+            ((ISettingsHost)this).RemoveControllerPicture(slot, second);
             _settingsWindow.Refresh();
         };
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
@@ -708,7 +708,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 break;
 
             case CommandKind.AddController:
-                ((ISettingsHost)this).AddProController();
+                ((ISettingsHost)this).AddController();
                 break;
 
             case CommandKind.Launch:
@@ -916,7 +916,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             if (pad.IsAttached && pad.PluggedKind != kind) pad.Detach();
             pad.Kind = kind;
             if (!enabled) _slots[i].Pad.Detach();
-            else if (_set.Readers[i].IsOpen && !_slots[i].Pad.Attach()) _padFailed = true;
+            else if (_set.Source(i).IsOpen && !_slots[i].Pad.Attach()) _padFailed = true;
         }
         SyncHiding();
     }
@@ -933,7 +933,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_padEnabled && !_padFailed && !_shutDown && Config.VirtualPad.HidePhysical)
         {
             for (int i = 0; i < _slots.Length; i++)
-                if (_set.Readers[i].Path is { } path && _slots[i].Pad.IsAttached) wanted.Add(path);
+                if (_set.Source(i).HidPath is { } path && _slots[i].Pad.IsAttached) wanted.Add(path);
         }
         wanted.Sort(StringComparer.OrdinalIgnoreCase);
         string key = string.Join('|', wanted);
@@ -963,7 +963,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
             return;
         }
-        if (_set.Readers[index].Path is { } path && !_hiddenKey.Contains(path, StringComparison.OrdinalIgnoreCase)) SyncHiding(); // just attached
+        if (_set.Source(index).HidPath is { } path && !_hiddenKey.Contains(path, StringComparison.OrdinalIgnoreCase)) SyncHiding(); // just attached
 
         var state = slot.State;
         slot.IgnoreMask &= state.Current;
@@ -975,11 +975,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
             else left = right = default;
         }
 
-        if (_set.Readers[index].Id is { } id && Config.Controllers.TryGetValue(id, out var profile))
-        {
-            left = left.WithDeadzone(profile.LeftDeadzone);
-            right = right.WithDeadzone(profile.RightDeadzone);
-        }
+        left = left.WithDeadzone(StickDeadzone(index, right: false));
+        right = right.WithDeadzone(StickDeadzone(index, right: true));
 
         var held = state.Current & ~slot.IgnoreMask;
         var pad = Config.VirtualPad;
@@ -1094,10 +1091,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// </summary>
     private string? ControllerKey(int slot)
     {
-        var reader = _set.Readers[slot];
-        var id = reader.Id;
+        var source = _set.Source(slot);
+        var id = source.Id;
         if (id is null) return null;
-        if (reader.HasMac && reader.FallbackId is { } old && old != id)
+        if (source.HasMac && source.FallbackId is { } old && old != id)
         {
             bool moved = false;
             if (Config.Controllers.Remove(old, out var profile) && !Config.Controllers.ContainsKey(id))
@@ -1118,8 +1115,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
         var key = ControllerKey(slot);
         string name = key is not null && Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
         var state = _slots[slot].State;
+        // A Joy-Con pair: each Joy-Con shows its own picture, turned upright (pictured sideways, the left one is turned a
+        // quarter clockwise, the right one a quarter counterclockwise).
+        var partner = _set.Source(slot).PartnerId;
+        nint image = key is null ? 0 : partner is null ? ControllerPictures.Get(key) : ControllerPictures.GetRotated(key, clockwise: true);
+        nint image2 = partner is null ? 0 : ControllerPictures.GetRotated(partner, clockwise: false);
         return new SlotTile(true, name.Length > 0 ? name : $"Controller {slot + 1}", state.Battery, state.Charging,
-            key is null ? 0 : ControllerPictures.Get(key));
+            image, partner is not null, image2);
     }
 
     /// <summary>The tiles of the connected controllers, in slot order.</summary>
@@ -1145,16 +1147,26 @@ internal sealed class AppController : IDisposable, ISettingsHost
             Config.Controllers.Remove(key);
     }
 
-    float ISettingsHost.ControllerDeadzone(int slot, bool right) =>
-        ControllerKey(slot) is { } key && Config.Controllers.TryGetValue(key, out var profile)
-            ? (right ? profile.RightDeadzone : profile.LeftDeadzone) : 0f;
+    /// <summary>
+    /// The deadzone of a slot's stick. A Joy-Con keeps its own stick's deadzone (the left one in its left field, the right
+    /// one in its right field), whichever Joy-Con it is paired with.
+    /// </summary>
+    private float StickDeadzone(int slot, bool right)
+    {
+        ControllerKey(slot); // moves a profile saved under the temporary id
+        return _set.Source(slot).StickProfile(right) is ({ } key, var rightField) && Config.Controllers.TryGetValue(key, out var profile)
+            ? (rightField ? profile.RightDeadzone : profile.LeftDeadzone) : 0f;
+    }
+
+    float ISettingsHost.ControllerDeadzone(int slot, bool right) => StickDeadzone(slot, right);
 
     void ISettingsHost.SetControllerDeadzone(int slot, bool right, float value)
     {
-        if (ControllerKey(slot) is not { } key) return;
+        ControllerKey(slot);
+        if (_set.Source(slot).StickProfile(right) is not ({ } key, var rightField)) return;
         var profile = ProfileOf(key);
         value = Math.Clamp(value, 0f, 0.5f);
-        if (right) profile.RightDeadzone = value; else profile.LeftDeadzone = value;
+        if (rightField) profile.RightDeadzone = value; else profile.LeftDeadzone = value;
         PruneProfile(key);
         _store.Save();
     }
@@ -1172,18 +1184,21 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _store.Save();
     }
 
-    void ISettingsHost.ChooseControllerPicture(int slot)
+    /// <summary>The id a picture is stored under: the slot's, or the right Joy-Con's of a pair.</summary>
+    private string? PictureKey(int slot, bool second) => second ? _set.Source(slot).PartnerId : ControllerKey(slot);
+
+    void ISettingsHost.ChooseControllerPicture(int slot, bool second)
     {
-        if (ControllerKey(slot) is not { } key) return;
+        if (PictureKey(slot, second) is not { } key) return;
         var file = FilePicker.Pick(_settingsWindow.Handle, "Choose a picture for this controller", FilePicker.PictureFilter);
         if (file is null) return;
         var error = ControllerPictures.Import(file, key);
         if (error is not null) _toast.Show(MenuPages.Gear, error);
     }
 
-    void ISettingsHost.RemoveControllerPicture(int slot)
+    void ISettingsHost.RemoveControllerPicture(int slot, bool second)
     {
-        if (ControllerKey(slot) is { } key) ControllerPictures.Remove(key);
+        if (PictureKey(slot, second) is { } key) ControllerPictures.Remove(key);
     }
 
     void ISettingsHost.OpenControllerPage(int slot)
@@ -1201,11 +1216,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.CloseControllerPage() => CloseControllerPage();
 
-    void ISettingsHost.AddProController()
+    void ISettingsHost.AddController()
     {
         if (_pairing || _shutDown) return;
         _pairing = true;
+        _pairedJoyCons = 0;
         _toast.Show(MenuPages.Game, "Searching... Please hold sync button");
+        _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
         nint hwnd = _window.Handle;
         new Thread(() =>
         {
@@ -1218,8 +1235,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
     public void OnPairDone(PairResult result)
     {
         _pairing = false;
+        _set.Hub.StopPairing();
         if (_shutDown) return;
         Log.Info($"Pairing: {result}");
+        if (result == PairResult.NotFound && _pairedJoyCons > 0)
+        {
+            if (_mode == Mode.Settings) _settingsWindow.Refresh();
+            return; // the Joy-Con toast said it already
+        }
         _toast.Show(MenuPages.Game, result switch
         {
             PairResult.Paired => "Pro Controller paired",
@@ -1227,6 +1250,23 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _ => "Pairing failed - try Windows Bluetooth settings",
         });
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    private const int PairWindowMs = 60_000; // longer than the Pro Controller search: it ends the window
+    private int _pairedJoyCons;
+
+    /// <summary>A Joy-Con 2 in sync mode was paired with this PC (UI thread).</summary>
+    public void OnJoyConPaired(JoyCon2Device device)
+    {
+        _pairedJoyCons++;
+        if (!_shutDown) _toast.Show(MenuPages.Game, $"{device.Name} paired");
+    }
+
+    /// <summary>Joy-Cons joined a slot: a new controller, or the partner of a lone Joy-Con.</summary>
+    public void OnJoyConsChanged(int slot)
+    {
+        _window.UpdateTray();
+        if (!_shutDown && _mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
     void ISettingsHost.EditMenu() => OpenMenuEditor(Config.MenuLayout);

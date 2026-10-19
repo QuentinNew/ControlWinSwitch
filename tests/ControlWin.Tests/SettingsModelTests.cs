@@ -40,7 +40,7 @@ public class SettingsModelTests
         public (ControlWin.Input.Stick Left, ControlWin.Input.Stick Right) Sticks;
         public (ControlWin.Input.Stick Left, ControlWin.Input.Stick Right) ControllerSticks(int slot) => Sticks;
         public int Added;
-        public void AddProController() => Added++;
+        public void AddController() => Added++;
         public string PairingStatus => "";
         public List<int> Pages = [];
         public int PageClosed;
@@ -51,8 +51,8 @@ public class SettingsModelTests
         public int NamedSlot = -1;
         public void SetControllerName(int slot, string name) { Name = name; NamedSlot = slot; }
         public int Chosen, Removed;
-        public void ChooseControllerPicture(int slot) => Chosen++;
-        public void RemoveControllerPicture(int slot) => Removed++;
+        public void ChooseControllerPicture(int slot, bool second) => Chosen++;
+        public void RemoveControllerPicture(int slot, bool second) => Removed++;
         public bool StartOnLogon { get; private set; }
         public void SetStartOnLogon(bool enabled) => StartOnLogon = enabled;
         public Action<string>? Commit;
@@ -92,7 +92,7 @@ public class SettingsModelTests
 
         Assert.False(m.InSubPage);
         Assert.NotEqual(SettingKind.Strip, m.CurrentItem!.Kind);
-        Assert.Equal("Add new Pro Controller", m.CurrentItem.Label);
+        Assert.Equal("Add new controller", m.CurrentItem.Label);
     }
 
     [Fact]
@@ -296,12 +296,27 @@ public class SettingsModelTests
     }
 
     [Fact]
+    public void Controller_tab_tells_how_to_keep_a_joycon_alone()
+    {
+        var (m, _, _) = Create();
+        m.SetTab(0);
+        var hint = m.Tab.Items.Single(i => i.Label == "Single Joy-Con");
+
+        Assert.Equal(SettingKind.Info, hint.Kind);
+        Assert.Equal("Hold SL + SR while it connects", hint.Value());
+        m.Move(1);
+        Assert.Equal("Add new controller", m.CurrentItem!.Label);
+        m.Move(1);
+        Assert.Equal(SettingKind.Strip, m.CurrentItem!.Kind); // the hint is skipped: back to the strip
+    }
+
+    [Fact]
     public void Controller_tab_adds_a_pro_controller()
     {
         var (m, _, host) = Create();
         m.SetTab(0);
         m.Move(1);
-        Assert.Equal("Add new Pro Controller", m.CurrentItem!.Label);
+        Assert.Equal("Add new controller", m.CurrentItem!.Label);
 
         m.Activate();
 
