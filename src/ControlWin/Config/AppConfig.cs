@@ -171,6 +171,12 @@ internal sealed class AppConfig
     /// <summary>Show the connected controllers (picture and battery) in the menu: in the center of the radial ring, above the list's footer.</summary>
     public bool MenuShowControllers { get; set; } = true;
 
+    /// <summary>
+    /// Every connected controller can drive the open menu and the settings, not only the one that opened them: the last
+    /// one to press a button or tilt a stick has them.
+    /// </summary>
+    public bool MenuAnyController { get; set; }
+
     /// <summary>Global keyboard shortcut that opens / closes the menu, as <see cref="Hotkey"/> text ("Ctrl+Alt+M"); empty = none.</summary>
     public string MenuHotkey { get; set; } = "Ctrl+Alt+M";
 

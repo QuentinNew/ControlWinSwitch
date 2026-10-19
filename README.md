@@ -70,6 +70,8 @@ Default entries (both layouts):
 
 The connected controllers (picture and battery) can be shown in the menu: Settings → Layout → **Show controller in menu**.
 
+By default the menu and the settings answer only the controller that opened them. With Settings → Layout → **All controllers control menu**, any connected controller can drive them: the last one to press a button or tilt a stick has them (mouse mode stays with the controller that started it).
+
 ### List layout
 
 Navigate with the D-pad or left stick up / down (hold to repeat); **A** selects, **B** goes back or closes. The mouse hovers and clicks the rows too.
@@ -104,7 +106,7 @@ Opened from the menu's Settings node or the tray. Drive it with the controller (
 | Tab | Contents |
 |---|---|
 | Controller | The four controller slots (see [Controllers](#controllers)), Add new controller (pairing), how to keep a Joy-Con alone, the paired controllers that are not connected |
-| Layout | Main menu List / Radial, Edit menu, Show controller in menu |
+| Layout | Main menu List / Radial, Edit menu, Show controller in menu, All controllers control menu, Keyboard shortcut |
 | Virtual Pad | None / Xbox / PS4, Swap A / B, Swap X / Y, Rumble strength, Pad off while running |
 | Mouse | Speed, fast / precise multipliers, stick deadzone, scroll speed, D-pad glide speed |
 | Headset | Device name, status, connect / disconnect, Bluetooth settings |

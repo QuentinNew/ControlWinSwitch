@@ -492,6 +492,7 @@ internal static class SettingsPages
                 i => { cfg().MenuLayout = i == 1 ? MenuLayouts.Radial : MenuLayouts.List; Changed(); }),
             SettingItem.Action("Edit menu", host.EditMenu),
             SettingItem.Toggle("Show controller in menu", () => cfg().MenuShowControllers, v => { cfg().MenuShowControllers = v; Changed(); }),
+            SettingItem.Toggle("All controllers control menu", () => cfg().MenuAnyController, v => { cfg().MenuAnyController = v; Changed(); }),
             SettingItem.Text("Keyboard shortcut",
                 () => cfg().MenuHotkey.Length == 0 ? "(none)" : cfg().MenuHotkey,
                 () => host.EditText(cfg().MenuHotkey, host.SetMenuHotkey)),

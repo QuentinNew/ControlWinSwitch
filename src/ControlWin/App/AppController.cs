@@ -188,7 +188,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         // The menu, settings and mouse mode belong to one controller; the others keep playing.
         if (_mode == Mode.Idle) _owner = slot;
-        else if (slot != _owner)
+        else if (slot != _owner && !TakeOverMenu(slot))
         {
             Forward(slot);
             return;
@@ -227,6 +227,28 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
     }
 
+    /// <summary>
+    /// With "All controllers control menu", another controller takes the open menu or settings over as soon as it presses
+    /// a button or tilts a stick. The one that had them goes back to its game, its held buttons and sticks hidden until
+    /// released. Mouse mode stays with the controller that started it.
+    /// </summary>
+    private bool TakeOverMenu(int slot)
+    {
+        if (!Config.MenuAnyController || _mode is not (Mode.Menu or Mode.Settings)) return false;
+        var state = _slots[slot].State;
+        bool active = (state.Current & ~state.Previous) != 0
+            || state.Left.Magnitude > StickEngage || state.Right.Magnitude > StickEngage;
+        if (!active) return false;
+
+        _ignoreMask = _state.Current;
+        _ignoreSticks = true;
+        StopRepeat();
+        _heldDirection = Dir.None;
+        _owner = slot;
+        _pad.SubmitNeutral(); // neutral pad while the menu owns the input
+        return true;
+    }
+
     public void OnControllerRemoved(int slot)
     {
         var gone = _slots[slot];
@@ -237,7 +259,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
         gone.Pad.Detach(); // re-plugged on the next report
         SyncHiding();
         if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Strip } strip && strip.Slot == slot) CloseControllerPage();
-        if (slot == _owner)
+        int heir = Config.MenuAnyController && _mode is Mode.Menu or Mode.Settings
+            ? Enumerable.Range(0, _slots.Length).FirstOrDefault(i => i != slot && _window.ControllerConnected(i), -1) : -1;
+        if (slot == _owner && heir >= 0)
+        {
+            // Every controller drives the menu: another one keeps it open.
+            StopRepeat();
+            _heldDirection = Dir.None;
+            _owner = heir;
+            _pad.SubmitNeutral();
+        }
+        else if (slot == _owner)
         {
             if (_mode == Mode.Menu) CloseMenu();
             else if (_mode == Mode.Settings) CloseSettings();
