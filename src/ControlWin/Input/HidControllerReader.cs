@@ -49,9 +49,11 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     private bool _lightsAcked;
     private int _lightAttempts;
     private long _lastLightAttempt;
+    private long _lastLightCheck;
     private const int MaxModeAttempts = 5;
     private const int MaxLightAttempts = 8;
     private const long ModeRetryMs = 1000;
+    private const long LightCheckMs = 2000;
 
     public HidControllerReader(int slot = 0)
     {
@@ -158,6 +160,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         _lightsAcked = false;
         _lightAttempts = 0;
         _lastLightAttempt = 0;
+        _lastLightCheck = 0;
         var instance = HidHide.InstanceId(path);
         _fallbackId = instance is null ? null : "dev:" + instance;
         Log.Info($"Pro Controller opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
@@ -189,6 +192,13 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
             new ReadOnlySpan<byte>(_buffer, (int)transferred).CopyTo(_managed);
             var bytes = new ReadOnlyMemory<byte>(_managed, 0, (int)transferred);
             if (IsPlayerLightsAck(bytes.Span)) _lightsAcked = true;
+            else if (ProCommands.TryParsePlayerLights(bytes.Span, out var lights) && lights != ProCommands.PlayerLightMask(_slot))
+            {
+                // Something else (Windows' GameInput service, a game) set the controller's LEDs: light ours again.
+                Log.Info($"Player light {_slot + 1} was changed to 0x{lights:X2} by another app: setting it again");
+                _lightsAcked = false;
+                _lightAttempts = 0;
+            }
             if (ProCommands.TryParseDeviceInfo(bytes.Span, out var mac))
             {
                 if (_mac != mac) Log.Info($"Pro Controller {_slot + 1} identified ({mac})");
@@ -201,6 +211,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
                 if (_mac is null) RequestDeviceInfo(); // rate limited; the reply may have been lost
                 RetryCalibration();
                 SetPlayerLights();
+                CheckPlayerLights();
                 // Still in simple mode (e.g. the first reports after connecting, or the mode got reset): ask again.
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
                 Report?.Invoke(report, bytes);
@@ -357,6 +368,19 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         _lightAttempts++;
         if (Write(ProCommands.SetPlayerLights(_packetCounter++, ProCommands.PlayerLightMask(_slot), (int)_outputLength)))
             Log.Info($"Player light {_slot + 1} set (attempt {_lightAttempts})");
+    }
+
+    /// <summary>
+    /// Once the LED is set, reads it back every couple of seconds: another app talking to the controller may change it
+    /// (it then shows LED 1), and <see cref="OnSignaled"/> sets ours again.
+    /// </summary>
+    private void CheckPlayerLights()
+    {
+        if (_file == 0 || !_canWrite || !_lightsAcked) return;
+        long now = Environment.TickCount64;
+        if (now - _lastLightCheck < LightCheckMs) return;
+        _lastLightCheck = now;
+        Write(ProCommands.GetPlayerLights(_packetCounter++, (int)_outputLength));
     }
 
     /// <summary>A subcommand reply (input report 0x21): ack with bit 7 set at byte 13, subcommand id at byte 14.</summary>

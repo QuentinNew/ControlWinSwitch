@@ -89,6 +89,26 @@ internal static class ProCommands
         return report;
     }
 
+    public const byte SubcommandGetPlayerLights = 0x31;
+
+    /// <summary>Output report 0x01 carrying "get player lights" (the reply holds the LED mask: solid in the low nibble, flashing in the high one).</summary>
+    public static byte[] GetPlayerLights(byte packetCounter, int reportLength)
+    {
+        var report = SetInputMode(packetCounter, 0, reportLength);
+        report[10] = SubcommandGetPlayerLights;
+        report[11] = 0;
+        return report;
+    }
+
+    /// <summary>The reply to "get player lights" (input report 0x21, ack at byte 13, subcommand at 14, the mask at 15).</summary>
+    public static bool TryParsePlayerLights(ReadOnlySpan<byte> r, out byte mask)
+    {
+        mask = 0;
+        if (r.Length < 16 || r[0] != 0x21 || (r[13] & 0x80) == 0 || r[14] != SubcommandGetPlayerLights) return false;
+        mask = r[15];
+        return true;
+    }
+
     /// <summary>LED mask for a zero-based slot: slot 0 lights LED 1, slot 1 LED 2, ...</summary>
     public static byte PlayerLightMask(int slot) => (byte)(1 << Math.Clamp(slot, 0, 3));
     public const byte ReportRumbleOnly = 0x10;
