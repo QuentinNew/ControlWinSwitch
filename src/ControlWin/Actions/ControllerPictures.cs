@@ -139,14 +139,14 @@ internal static unsafe class ControllerPictures
     public static void DrawDim(nint dc, int x, int y, int size, int diameter) => DrawDim(dc, x, y, size, size, diameter);
 
     /// <summary>The same over a <paramref name="width"/> x <paramref name="height"/> box (half a tile).</summary>
-    public static void DrawDim(nint dc, int x, int y, int width, int height, int diameter)
+    public static void DrawDim(nint dc, int x, int y, int width, int height, int diameter, uint argb = 0x99000000)
     {
         nint graphics, path = 0, brush = 0;
         if (GdipCreateFromHDC(dc, &graphics) != 0) return;
         try
         {
             GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
-            if (GdipCreatePath(0, &path) != 0 || GdipCreateSolidFill(0x99000000, &brush) != 0) return;
+            if (GdipCreatePath(0, &path) != 0 || GdipCreateSolidFill(argb, &brush) != 0) return;
             int d = Math.Clamp(diameter, 2, Math.Min(width, height));
             GdipAddPathArcI(path, x, y, d, d, 180f, 90f);
             GdipAddPathArcI(path, x + width - d, y, d, d, 270f, 90f);

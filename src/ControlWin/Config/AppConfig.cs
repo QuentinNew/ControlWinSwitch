@@ -42,6 +42,32 @@ internal sealed class ControllerProfile
     public bool IsDefault => Name.Length == 0 && LeftDeadzone <= 0f && RightDeadzone <= 0f;
 }
 
+internal static class ControllerKinds
+{
+    public const string Pro = "pro", JoyConLeft = "joyConL", JoyConRight = "joyConR";
+
+    /// <summary>The name shown for a controller the user did not name.</summary>
+    public static string DefaultName(string kind) => kind switch
+    {
+        JoyConLeft => "Joy-Con (L)",
+        JoyConRight => "Joy-Con (R)",
+        _ => "Pro Controller",
+    };
+}
+
+/// <summary>
+/// A controller that connected to this PC, keyed by its MAC address in <see cref="AppConfig.KnownControllers"/>: the
+/// Controller tab lists the ones not connected, last connected first.
+/// </summary>
+internal sealed class KnownController
+{
+    /// <summary>One of <see cref="ControllerKinds"/>.</summary>
+    public string Kind { get; set; } = ControllerKinds.Pro;
+
+    /// <summary>When it was last connected (UTC): the time it disconnected, or for one still connected, when it connected.</summary>
+    public DateTime LastSeen { get; set; }
+}
+
 internal sealed class MouseConfig
 {
     public float Speed { get; set; } = 800f;           // px/s at full deflection
@@ -172,6 +198,9 @@ internal sealed class AppConfig
     /// <summary>Per-controller name, by controller id. The picture lives in %APPDATA%\ControlWin\controllers\.</summary>
     public Dictionary<string, ControllerProfile> Controllers { get; set; } = [];
 
+    /// <summary>The controllers that connected to this PC, by MAC address (the paired list of the Controller tab).</summary>
+    public Dictionary<string, KnownController> KnownControllers { get; set; } = [];
+
     /// <summary>Repairs what a hand-edited file can get wrong: nulls and out-of-range numbers.</summary>
     public AppConfig Sanitize()
     {
@@ -197,6 +226,10 @@ internal sealed class AppConfig
             profile.LeftDeadzone = Clamp(profile.LeftDeadzone, 0f, 0.5f, 0f);
             profile.RightDeadzone = Clamp(profile.RightDeadzone, 0f, 0.5f, 0f);
         }
+        KnownControllers ??= [];
+        foreach (var key in KnownControllers.Where(c => c.Value is null).Select(c => c.Key).ToList()) KnownControllers.Remove(key);
+        foreach (var known in KnownControllers.Values)
+            if (known.Kind is not (ControllerKinds.JoyConLeft or ControllerKinds.JoyConRight)) known.Kind = ControllerKinds.Pro;
         RepairNotes.Clear();
         RadialMenu = MenuRepair.Run(RadialMenu, MenuLayouts.Radial, RepairNotes, "Radial menu");
         ListMenu = MenuRepair.Run(ListMenu, MenuLayouts.List, RepairNotes, "List menu");

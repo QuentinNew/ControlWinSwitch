@@ -8,9 +8,11 @@ namespace ControlWin.UI;
 /// <summary>
 /// What a controller tile shows: the controller's name, battery (0..4, -1 unknown) and its picture (a GDI+ image, or 0).
 /// A Joy-Con pair (<paramref name="Pair"/>) shows two pictures side by side: the left Joy-Con's <paramref name="Image"/>
-/// and the right one's <paramref name="Image2"/>.
+/// and the right one's <paramref name="Image2"/>. A paired controller (not connected) shows how long ago it was last
+/// connected (<paramref name="Ago"/>) instead of its battery.
 /// </summary>
-internal readonly record struct SlotTile(bool Connected, string Name, int Battery, bool Charging, nint Image, bool Pair = false, nint Image2 = 0)
+internal readonly record struct SlotTile(bool Connected, string Name, int Battery, bool Charging, nint Image, bool Pair = false, nint Image2 = 0,
+    string? Ago = null)
 {
     /// <summary>The picture of one half (the only one unless <see cref="Pair"/>).</summary>
     public nint ImageOf(bool second) => second ? Image2 : Image;
@@ -81,11 +83,22 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     public event Action<int, bool>? PictureEditRequested;
     public event Action<int, bool>? PictureRemoveRequested;
 
-    private enum StripPart { None, Picture, Cross, Name }
+    /// <summary>What a paired controller's tile shows, by key.</summary>
+    public Func<string, SlotTile>? PairedTile { get; set; }
+
+    /// <summary>On a paired controller's page: its picture is to be changed / removed.</summary>
+    public event Action<string>? PairedPictureEditRequested;
+    public event Action<string>? PairedPictureRemoveRequested;
+
+    private enum StripPart { None, Picture, Cross, Name, ScrollLeft, ScrollRight }
 
     private int _hoverSlot = -1;     // the controller whose picture the mouse is over (pencil / cross shown)
     private bool _hoverCross;
     private bool _hoverSecond;       // on a Joy-Con pair: the mouse is over the right Joy-Con's half
+    private string? _hoverKey;       // the paired controller whose picture the mouse is over
+    private StripPart _hoverPart;    // and which part of it (picture or cross badge)
+    private int _pairedFirst;        // first paired tile shown: the row scrolls sideways when they don't all fit
+    private int _pairedFocusSeen = -1;
     private bool _trackingLeave;
 
     public bool IsShown => IsWindowVisible(Handle) != 0;
@@ -203,10 +216,12 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 return 0;
             case WM_MOUSELEAVE:
                 _trackingLeave = false;
-                if (_hoverSlot >= 0)
+                if (_hoverSlot >= 0 || _hoverKey is not null)
                 {
                     _hoverSlot = -1;
                     _hoverCross = _hoverSecond = false;
+                    _hoverKey = null;
+                    _hoverPart = StripPart.None;
                     Refresh();
                 }
                 return 0;
@@ -225,7 +240,13 @@ internal sealed unsafe class SettingsWindow : NativeWindow
                 if (_model is not null)
                 {
                     int delta = (short)((wParam >> 16) & 0xFFFF);
-                    _model.Move(delta > 0 ? -1 : 1);
+                    POINT pt = new() { X = (short)(lParam & 0xFFFF), Y = (short)((lParam >> 16) & 0xFFFF) }; // screen coordinates
+                    ScreenToClient(Handle, &pt);
+                    int row = RowAt(pt.Y);
+                    if (row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Kind == SettingKind.Paired)
+                        _pairedFirst += delta > 0 ? -1 : 1; // the paired row scrolls sideways
+                    else
+                        _model.Move(delta > 0 ? -1 : 1);
                     Refresh();
                 }
                 return 0;
@@ -279,13 +300,97 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         return -1;
     }
 
+    /// <summary>A row of tiles (the connected strip, the paired row) is as tall as two rows.</summary>
+    private int ItemHeight(SettingItem item) => Px(item.Kind is SettingKind.Strip or SettingKind.Paired ? StripDip : RowDip);
+
+    private int ItemTop(int index)
+    {
+        int top = StripTop;
+        var items = _model?.Tab.Items ?? [];
+        for (int i = 0; i < index && i < items.Count; i++) top += ItemHeight(items[i]);
+        return top;
+    }
+
+    /// <summary>The row at <paramref name="y"/> (an index past the rows below them), or -1 above them.</summary>
     private int RowAt(int y)
     {
         int top = StripTop;
-        if (y < top) return -1;
-        int rel = y - top, strip = Px(StripHeightDip);
-        if (strip == 0) return rel / Px(RowDip);
-        return rel < strip ? 0 : 1 + (rel - strip) / Px(RowDip);
+        if (y < top || _model is null) return -1;
+        var items = _model.Tab.Items;
+        for (int i = 0; i < items.Count; i++)
+        {
+            int height = ItemHeight(items[i]);
+            if (y < top + height) return i;
+            top += height;
+        }
+        return items.Count + (y - top) / Px(RowDip);
+    }
+
+    // ---- the paired row (controllers paired but not connected) -----------------------------------
+
+    private const int PairedArrowDip = 32;
+
+    /// <summary>How many paired tiles fit side by side between the scroll arrows.</summary>
+    private int PairedVisible()
+    {
+        int tile = Px(TileDip), gap = Px(TileGapDip), room = Px(WidthDip) - 2 * Px(SideDip + PairedArrowDip);
+        return Math.Max(1, (room + gap) / (tile + gap));
+    }
+
+    /// <summary>Keeps the scroll position in range, and the focused tile in view when the focus moved.</summary>
+    private void ScrollPaired(SettingItem item, int count)
+    {
+        int visible = PairedVisible(), focus = item.FocusedIndex;
+        if (focus != _pairedFocusSeen && focus >= 0)
+        {
+            if (focus < _pairedFirst) _pairedFirst = focus;
+            else if (focus >= _pairedFirst + visible) _pairedFirst = focus - visible + 1;
+        }
+        _pairedFocusSeen = focus;
+        _pairedFirst = Math.Clamp(_pairedFirst, 0, Math.Max(0, count - visible));
+    }
+
+    /// <summary>Left edge of the paired tile <paramref name="index"/> (shown ones are centered as a group).</summary>
+    private int PairedTileLeft(int count, int index) =>
+        TilesLeftFor(Math.Min(count, PairedVisible())) + (index - _pairedFirst) * (Px(TileDip) + Px(TileGapDip));
+
+    /// <summary>The scroll arrows on each side of the paired row, at the height of the tiles.</summary>
+    private (RECT Left, RECT Right) PairedArrows(int rowTop)
+    {
+        int t = rowTop + Px(8), b = t + Px(TileDip), side = Px(SideDip), w = Px(PairedArrowDip), width = Px(WidthDip);
+        return (new RECT(side, t, side + w, b), new RECT(width - side - w, t, width - side, b));
+    }
+
+    /// <summary>The paired controller whose tile is at the point (and which part of it), or null.</summary>
+    private string? PairedHitAt(int x, int y, out SettingItem? item, out StripPart part)
+    {
+        part = StripPart.None;
+        item = null;
+        int row = RowAt(y);
+        if (_model is null || row < 0 || row >= _model.Tab.Items.Count || _model.Tab.Items[row].Kind != SettingKind.Paired) return null;
+        item = _model.Tab.Items[row];
+        var keys = item.Keys?.Invoke() ?? [];
+        if (keys.Count == 0) return null;
+        int rowTop = ItemTop(row), top = rowTop + Px(8), tile = Px(TileDip);
+        int visible = PairedVisible(), last = Math.Min(keys.Count, _pairedFirst + visible);
+
+        var (leftArrow, rightArrow) = PairedArrows(rowTop);
+        if (_pairedFirst > 0 && In(leftArrow, x, y)) { part = StripPart.ScrollLeft; return null; }
+        if (last < keys.Count && In(rightArrow, x, y)) { part = StripPart.ScrollRight; return null; }
+
+        int nameTop = top + tile + Px(6), nameBottom = nameTop + Px(NameHeightDip), reach = Px(TileGapDip) / 2 - 1;
+        for (int i = _pairedFirst; i < last; i++)
+        {
+            int l = PairedTileLeft(keys.Count, i);
+            var corner = CrossBadge(l, top);
+            bool onBadge = x >= corner.X && x < corner.X + corner.Size && y >= corner.Y && y < corner.Y + corner.Size;
+            // The cross badge: on the Controller tab it forgets the controller, on its page it removes the picture (when there is one).
+            if (onBadge && (item.Enabled || (keys[i] == item.Key && (PairedTile?.Invoke(keys[i]).Image ?? 0) != 0))) part = StripPart.Cross;
+            else if (x >= l && x < l + tile && y >= top && y < top + tile) part = StripPart.Picture;
+            else if (x >= l - reach && x < l + tile + reach && y >= nameTop && y < nameBottom) part = StripPart.Name;
+            if (part != StripPart.None) return keys[i];
+        }
+        return null;
     }
 
     private bool InTextBox(int x, int y) =>
@@ -315,6 +420,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (_model.Tab.Calibration is not null) return CalibrationHit(x, y) != CalHit.None;
 
         int row = RowAt(y);
+        if (row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Kind == SettingKind.Paired)
+            return PairedHitAt(x, y, out _, out var paired) is not null || paired != StripPart.None;
         return row >= 0 && row < _model.Tab.Items.Count && _model.Tab.Items[row].Selectable;
     }
 
@@ -366,6 +473,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
     /// <summary>
     /// The pencil and the cross only appear on a controller's page, on the controller being edited, when the mouse is
     /// over its picture. The Controller tab never edits pictures.
+    /// A paired controller: on the Controller tab, any tile (the picture opens its page, a cross badge forgets it); on its
+    /// page, the picture of the one being edited, like a connected controller's.
     /// </summary>
     private void UpdateHover(int x, int y)
     {
@@ -374,10 +483,20 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         int hover = onPicture ? hit : -1;
         bool cross = onPicture && over == StripPart.Cross;
         second &= onPicture;
-        if (hover == _hoverSlot && cross == _hoverCross && second == _hoverSecond) return;
+
+        string? key = PairedHitAt(x, y, out var item, out var part);
+        if (key is null || part is not (StripPart.Picture or StripPart.Cross) || (!item!.Enabled && key != item.Key))
+        {
+            key = null;
+            part = StripPart.None;
+        }
+
+        if (hover == _hoverSlot && cross == _hoverCross && second == _hoverSecond && key == _hoverKey && part == _hoverPart) return;
         _hoverSlot = hover;
         _hoverCross = cross;
         _hoverSecond = second;
+        _hoverKey = key;
+        _hoverPart = part;
         Refresh();
     }
 
@@ -401,6 +520,14 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         if (y < TabsTop)
         {
             if (x >= width - Px(CloseDip)) CloseRequested?.Invoke();
+            return;
+        }
+
+        if (PairedHitAt(x, y, out var pairedRow, out var pairedPart) is var paired && pairedRow is not null)
+        {
+            OnPairedClick(pairedRow, paired, pairedPart, x, y);
+            Refresh();
+            Changed?.Invoke();
             return;
         }
 
@@ -472,6 +599,86 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         }
         Refresh();
         Changed?.Invoke();
+    }
+
+    /// <summary>A click on the paired row (what each part does: see <see cref="UpdateHover"/>).</summary>
+    private void OnPairedClick(SettingItem row, string? key, StripPart part, int x, int y)
+    {
+        if (part == StripPart.ScrollLeft) _pairedFirst--;
+        else if (part == StripPart.ScrollRight) _pairedFirst++;
+        if (key is null || part == StripPart.None || _model is null) return;
+
+        if (row.Enabled)
+        {
+            // The Controller tab: the picture opens the controller's page, the cross forgets it.
+            row.Key = key;
+            for (int i = 0; i < _model.Tab.Items.Count; i++)
+                if (_model.Tab.Items[i] == row) _model.Select(i);
+            if (part == StripPart.Picture) row.Activate?.Invoke();
+            else if (part == StripPart.Cross) row.Alternate?.Invoke();
+            UpdateHover(x, y);
+        }
+        else if (key != row.Key || part == StripPart.Name)
+        {
+            row.Key = key; // another controller: edit it instead
+            UpdateHover(x, y);
+        }
+        else if (part == StripPart.Cross) PairedPictureRemoveRequested?.Invoke(key);
+        else PairedPictureEditRequested?.Invoke(key);
+    }
+
+    /// <summary>The paired controllers, a ring on the focused one, with arrows when more are hidden on a side. Hidden when empty.</summary>
+    private void PaintPairedRow(nint dc, FontSet fonts, SettingItem item, bool selected, int rowTop)
+    {
+        var keys = item.Keys?.Invoke() ?? [];
+        if (keys.Count == 0) return;
+        ScrollPaired(item, keys.Count);
+        int focus = item.FocusedIndex, last = Math.Min(keys.Count, _pairedFirst + PairedVisible()), top = rowTop + Px(8);
+        for (int i = _pairedFirst; i < last; i++)
+            PaintPairedTile(dc, fonts, PairedTile?.Invoke(keys[i]) ?? default, PairedTileLeft(keys.Count, i), top,
+                focused: i == focus && (selected || !item.Enabled), hovered: keys[i] == _hoverKey, onTab: item.Enabled);
+
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        var (left, right) = PairedArrows(rowTop);
+        if (_pairedFirst > 0)
+            Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ChevronLeft, left.Left, left.Top, left.Right, left.Bottom, DT_CENTER | oneLine);
+        if (last < keys.Count)
+            Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, ChevronRight, right.Left, right.Top, right.Right, right.Bottom, DT_CENTER | oneLine);
+    }
+
+    /// <summary>
+    /// A paired controller's tile: its picture dimmed (it is not connected), how long ago it was last connected on the
+    /// bottom-right corner, its name underneath. Hovered: a pencil over the picture (on the Controller tab: its page, on
+    /// its page: change the picture) and a cross badge on the top right (forget it / remove the picture).
+    /// </summary>
+    private void PaintPairedTile(nint dc, FontSet fonts, SlotTile info, int l, int t, bool focused, bool hovered, bool onTab)
+    {
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        int tile = Px(TileDip);
+        if (focused)
+            Gdi.RoundedFill(dc, Gdi.SelectionBrush, l - Px(3), t - Px(3), l + tile + Px(3), t + tile + Px(3), Px(18));
+        ControllerTile.PaintFace(dc, fonts, _dpi, info, l, t);
+        if (!hovered)
+            ControllerPictures.DrawDim(dc, l, t, tile, tile, Px(14), 0x66000000);
+        else
+        {
+            ControllerPictures.DrawDim(dc, l, t, tile, Px(14));
+            Gdi.Text(dc, fonts.Glyph, Gdi.TextColor, PencilGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+            if (onTab || info.Image != 0)
+            {
+                var badge = CrossBadge(l, t);
+                nint brush = _hoverPart == StripPart.Cross ? ControllerTile.RedHotBrush : ControllerTile.RedBrush;
+                Gdi.RoundedFill(dc, brush, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, badge.Size);
+                Gdi.Text(dc, BadgeFont(), Gdi.TextColor, Close, badge.X, badge.Y, badge.X + badge.Size, badge.Y + badge.Size, DT_CENTER | oneLine);
+            }
+        }
+        if (info.Ago is { Length: > 0 } ago)
+        {
+            int w = Px(34), h = Px(18), bl = l + tile - w + Px(6), bt = t + tile - h + Px(4);
+            Gdi.RoundedFill(dc, Gdi.BackgroundBrush, bl, bt, bl + w, bt + h, Px(8));
+            Gdi.Text(dc, fonts.Footer, Gdi.Dim, ago, bl, bt, bl + w, bt + h, DT_CENTER | oneLine);
+        }
+        ControllerTile.PaintName(dc, fonts, _dpi, info, l, t, Px(TileGapDip) / 2 - 1);
     }
 
     /// <summary>One controller tile: picture or gamepad icon, battery badge, name underneath.</summary>
@@ -690,8 +897,13 @@ internal sealed unsafe class SettingsWindow : NativeWindow
         {
             var item = items[i];
             if (item.Kind == SettingKind.Strip) continue;
-            int y = rowsTop + (strip ? i - 1 : i) * rowH;
+            int y = ItemTop(i);
             bool selected = i == model.Selected;
+            if (item.Kind == SettingKind.Paired)
+            {
+                PaintPairedRow(dc, fonts, item, selected, y);
+                continue;
+            }
             if (selected)
                 Gdi.RoundedFill(dc, Gdi.SelectionBrush, side, y + Px(4), width - side, y + rowH - Px(4), Px(16));
 
@@ -765,6 +977,8 @@ internal sealed unsafe class SettingsWindow : NativeWindow
             ? "Left / Right  Stick     Up / Down  Deadzone     X  Auto     ZL / ZR  Controller     A / B  Back"
             : model.InSubPage
             ? "Up / Down  Select     ZL / ZR  Controller     A  OK     B  Back"
+            : model.CurrentItem?.Kind == SettingKind.Paired
+            ? "L / R  Tab     Up / Down  Select     Left / Right  Controller     A  Edit     X  Forget     B  Close"
             : "L / R  Tab     Up / Down  Select     Left / Right  Change     A  Toggle     B  Close";
         Gdi.Text(dc, fonts.Footer, Gdi.Dim, hint,
             0, footerTop, width, footerTop + Px(FooterDip), DT_CENTER | oneLine);

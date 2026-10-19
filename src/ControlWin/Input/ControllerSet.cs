@@ -54,6 +54,18 @@ internal sealed class ControllerSet : IDisposable
     /// <summary>What drives the slot (a closed source when the slot is free).</summary>
     public IControllerSource Source(int slot) => _hid[slot].IsOpen ? _hid[slot] : _joy[slot];
 
+    /// <summary>The physical controllers in the slot whose MAC is known, with their kind (one of <see cref="Config.ControllerKinds"/>).</summary>
+    public IEnumerable<(string Mac, string Kind)> Devices(int slot)
+    {
+        if (_hid[slot].IsOpen)
+        {
+            if (_hid[slot].HasMac) yield return (_hid[slot].Id!, Config.ControllerKinds.Pro);
+            yield break;
+        }
+        foreach (var device in _joy[slot].Devices)
+            yield return (device.Mac, device.Side == JoyConSide.Left ? Config.ControllerKinds.JoyConLeft : Config.ControllerKinds.JoyConRight);
+    }
+
     public bool AnyOpen => Enumerable.Range(0, Slots).Any(i => Source(i).IsOpen);
 
     public int OpenCount => Enumerable.Range(0, Slots).Count(i => Source(i).IsOpen);

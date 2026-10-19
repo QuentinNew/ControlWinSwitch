@@ -103,7 +103,7 @@ Opened from the menu's Settings node or the tray. Drive it with the controller (
 
 | Tab | Contents |
 |---|---|
-| Controller | The four controller slots (see [Controllers](#controllers)), Add new controller (pairing), how to keep a Joy-Con alone |
+| Controller | The four controller slots (see [Controllers](#controllers)), Add new controller (pairing), how to keep a Joy-Con alone, the paired controllers that are not connected |
 | Layout | Main menu List / Radial, Edit menu, Show controller in menu |
 | Virtual Pad | None / Xbox / PS4, Swap A / B, Swap X / Y, Rumble strength, Pad off while running |
 | Mouse | Speed, fast / precise multipliers, stick deadzone, scroll speed, D-pad glide speed |
@@ -164,7 +164,8 @@ The **Controller** tab of the settings shows the four controller slots. Each con
 Click a tile (or press **A** on it) to open that controller's page: **Name**, **Test rumble**, **Calibrate deadzone** and **Back**, with the connected controllers kept on top and a ring around the one being edited. Click another tile, or press **ZL** / **ZR** for the previous / next one, to edit another controller. Only on that page can a picture be changed: hover the picture of the controller being edited, and a pencil appears on it (click it to choose a PNG, JPG or BMP; the picture is scaled down to 128 pixels and shown with rounded corners) and, when it has a picture, a red cross at the top right that removes it. **B** or a right click goes back.
 
 - **Stick calibration** is read from the controller's own flash (user calibration if present, otherwise factory), so the sticks reach their full range without a warm-up. **Calibrate deadzone** sets a per-stick deadzone for a stick that drifts.
-- **Add new controller** (in the Controller tab or as a menu node) pairs a Pro Controller or a Joy-Con 2 over Bluetooth: hold its sync button while ControlWin searches.
+- **Add new controller** (in the Controller tab or as a menu node) pairs a Pro Controller or a Joy-Con 2 over Bluetooth: hold its sync button while ControlWin searches. A Pro Controller Windows already knows is paired again when it is in sync mode (its old pairing is stale after it was used on a Switch); the others are left alone.
+- **Paired controllers**, at the bottom of the Controller tab, lists the controllers that are not connected, last connected first (how long ago on each tile). Hover a tile: its picture opens its page, the cross on its top right forgets it; with the controller, **A** edits and **X** forgets. Its page edits the name and picture, **Re-pair controller** pairs it again (hold its sync button) and **Forget controller** forgets it. Forgetting unpairs a Pro Controller from Windows; a Joy-Con 2 is only dropped from the list and comes back the next time it connects. The name and picture are kept either way.
 - Controllers are told apart by their Bluetooth MAC address, which ControlWin reads from the controller itself, so a profile follows the controller to any slot and over USB or Bluetooth. Names and deadzones are stored in `config.json` under `controllers`; pictures are copied to `%APPDATA%\ControlWin\controllers\`. A profile is kept while the controller is away; to forget one, delete its entry (and picture file) by hand.
 
 ## Joy-Con 2

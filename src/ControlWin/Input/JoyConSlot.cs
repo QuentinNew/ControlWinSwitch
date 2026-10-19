@@ -25,6 +25,9 @@ internal sealed class JoyConSlot : IControllerSource
 
     public bool IsOpen => _left is not null || _right is not null;
 
+    /// <summary>The Joy-Cons in the slot (left first).</summary>
+    public IEnumerable<JoyCon2Device> Devices => new[] { _left, _right }.OfType<JoyCon2Device>();
+
     public JoyConLayout Layout => JoyCon2Mapper.LayoutOf(_left is not null, _right is not null);
 
     /// <summary>A lone Joy-Con of the other side that this one may join.</summary>

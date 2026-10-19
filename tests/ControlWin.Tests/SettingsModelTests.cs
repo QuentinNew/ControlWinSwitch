@@ -58,6 +58,16 @@ public class SettingsModelTests
         public Action<string>? Commit;
         public string? Editing;
         public void EditText(string current, Action<string> commit) { Editing = current; Commit = commit; }
+        public List<string> Paired = [];
+        public IReadOnlyList<string> PairedControllers => Paired;
+        public List<string> Forgotten = [], Repaired = [], PairedPages = [];
+        public void ForgetController(string key) { Forgotten.Add(key); Paired.Remove(key); }
+        public void RepairController(string key) => Repaired.Add(key);
+        public void OpenPairedPage(string key) => PairedPages.Add(key);
+        public Dictionary<string, string> Names = [];
+        public string ProfileName(string key) => Names.GetValueOrDefault(key, "");
+        public void SetProfileName(string key, string name) => Names[key] = name;
+        public string PairedDisplayName(string key) => Names.TryGetValue(key, out var name) ? name : "Pro Controller";
     }
 
     private static (SettingsModel Model, ConfigStore Store, FakeHost Host) Create()
@@ -619,5 +629,93 @@ public class SettingsModelTests
         row.Adjust!(1);
         Assert.Equal("WH-1000XM4", row.Value());
         Assert.Equal("WH-1000XM4", store.Current.HeadsetName);
+    }
+
+    [Fact]
+    public void Paired_row_comes_last_and_cannot_be_selected_while_empty()
+    {
+        var (m, _, host) = Create();
+        m.SetTab(0);
+        var row = m.Tab.Items[^1];
+
+        Assert.Equal(SettingKind.Paired, row.Kind);
+        Assert.False(row.Selectable);
+        host.Paired = ["A", "B"];
+        Assert.True(row.Selectable);
+        Assert.Equal(0, row.FocusedIndex);
+    }
+
+    [Fact]
+    public void Paired_row_moves_without_wrapping_and_edits_with_A_and_forgets_with_X()
+    {
+        var (m, _, host) = Create();
+        host.Paired = ["A", "B", "C"];
+        m.SetTab(0);
+        m.Move(-1); // from the strip up, wrapping: the paired row
+        Assert.Equal(SettingKind.Paired, m.CurrentItem!.Kind);
+
+        m.Adjust(-1);
+        Assert.Equal("A", m.CurrentItem.FocusedKey);
+        m.Adjust(1);
+        m.Adjust(1);
+        m.Adjust(1);
+        Assert.Equal("C", m.CurrentItem.FocusedKey);
+
+        m.Activate();
+        Assert.Equal(["C"], host.PairedPages);
+        m.Alternate();
+        Assert.Equal(["C"], host.Forgotten);
+        Assert.Equal("B", m.CurrentItem.FocusedKey); // the one now at its place (the last one)
+    }
+
+    [Fact]
+    public void Paired_row_focus_follows_its_controller_when_the_list_reorders()
+    {
+        var (m, _, host) = Create();
+        host.Paired = ["A", "B"];
+        m.SetTab(0);
+        var row = m.Tab.Items[^1];
+        row.Key = "B";
+        Assert.Equal(1, row.FocusedIndex);
+
+        host.Paired = ["X", "A", "B"]; // another controller went away: it comes first
+        Assert.Equal(2, row.FocusedIndex);
+        Assert.Equal("B", row.FocusedKey);
+    }
+
+    [Fact]
+    public void Paired_page_names_repairs_and_forgets_the_focused_controller()
+    {
+        var (m, _, host) = Create();
+        host.Paired = ["A", "B"];
+        m.OpenSub(SettingsPages.PairedPage(host, "B", out var strip));
+
+        Assert.Equal(["Paired controllers", "Name", "Re-pair controller", "Forget controller", "Back"], m.Tab.Items.Select(i => i.Label));
+        Assert.Equal("Name", m.CurrentItem!.Label);
+        Assert.Equal("Paired  >  Pro Controller", m.SubTitle);
+
+        m.Activate();
+        host.Commit!("Living room");
+        Assert.Equal("Living room", host.Names["B"]);
+        Assert.Equal("Paired  >  Living room", m.SubTitle);
+
+        strip.Adjust!(-1); // ZL: the previous paired controller
+        m.Tab.Items.Single(i => i.Label == "Re-pair controller").Activate!();
+        m.Tab.Items.Single(i => i.Label == "Forget controller").Activate!();
+        Assert.Equal(["A"], host.Repaired);
+        Assert.Equal(["A"], host.Forgotten);
+    }
+
+    [Theory]
+    [InlineData(0, "now")]
+    [InlineData(5 * 60, "5m")]
+    [InlineData(3 * 3600, "3h")]
+    [InlineData(2 * 86400, "2d")]
+    [InlineData(65 * 86400, "2mo")]
+    [InlineData(800 * 86400, "2y")]
+    public void Last_connection_is_shown_as_a_short_age(int seconds, string expected)
+    {
+        var now = new DateTime(2026, 10, 19, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(expected, AppController.Ago(now.AddSeconds(-seconds), now));
     }
 }

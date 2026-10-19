@@ -3,7 +3,7 @@ using ControlWin.Config;
 
 namespace ControlWin.App;
 
-internal enum SettingKind { Toggle, Number, Action, Info, Text, Choice, Strip }
+internal enum SettingKind { Toggle, Number, Action, Info, Text, Choice, Strip, Paired }
 
 /// <summary>One row of the settings window.</summary>
 internal sealed class SettingItem
@@ -23,13 +23,49 @@ internal sealed class SettingItem
     /// <summary>Action rows, and Toggle rows when "A" is pressed.</summary>
     public Action? Activate { get; init; }
 
-    /// <summary>Strip rows: the focused controller slot (left / right move it).</summary>
+    /// <summary>"X" on the row (the paired row: forget the focused controller).</summary>
+    public Action? Alternate { get; init; }
+
+    /// <summary>Strip rows: the focused controller slot (left / right move it). The paired row: the focused index.</summary>
     public int Slot { get; set; }
+
+    /// <summary>The paired row: the controllers it shows (their keys, in order).</summary>
+    public Func<IReadOnlyList<string>>? Keys { get; init; }
+
+    /// <summary>The paired row: the focused controller. When it leaves the list, the one now at its place is focused.</summary>
+    public string? Key { get; set; }
 
     public bool Enabled { get; init; } = true;
 
+    public bool Selectable => Enabled && Kind != SettingKind.Info && (Keys is null || Keys().Count > 0);
 
-    public bool Selectable => Enabled && Kind != SettingKind.Info;
+    /// <summary>The paired row: index of the focused controller (-1 when the list is empty).</summary>
+    public int FocusedIndex
+    {
+        get
+        {
+            var keys = Keys?.Invoke() ?? [];
+            if (keys.Count == 0) return -1;
+            int index = Key is null ? -1 : IndexOf(keys, Key);
+            if (index < 0)
+            {
+                index = Math.Clamp(Slot, 0, keys.Count - 1);
+                Key = keys[index];
+            }
+            Slot = index;
+            return index;
+        }
+    }
+
+    /// <summary>The paired row: the focused controller's key, or null when the list is empty.</summary>
+    public string? FocusedKey => FocusedIndex >= 0 ? Key : null;
+
+    private static int IndexOf(IReadOnlyList<string> keys, string key)
+    {
+        for (int i = 0; i < keys.Count; i++)
+            if (keys[i] == key) return i;
+        return -1;
+    }
 
     public static SettingItem Toggle(string label, Func<bool> get, Action<bool> set) => new()
     {
@@ -131,6 +167,30 @@ internal sealed class SettingItem
         };
     }
 
+    /// <summary>
+    /// The row of paired controllers (not connected): left / right move along it (no wrapping), "A" runs
+    /// <paramref name="edit"/> on the focused one and "X" <paramref name="forget"/>.
+    /// </summary>
+    public static SettingItem Paired(string label, Func<IReadOnlyList<string>> keys, Action<string> edit, Action<string> forget, bool selectable = true)
+    {
+        SettingItem? self = null;
+        return self = new()
+        {
+            Label = label,
+            Kind = SettingKind.Paired,
+            Enabled = selectable,
+            Keys = keys,
+            Adjust = d =>
+            {
+                var list = keys();
+                if (list.Count == 0) return;
+                self!.Key = list[Math.Clamp(self.FocusedIndex + Math.Sign(d), 0, list.Count - 1)];
+            },
+            Activate = () => { if (self!.FocusedKey is { } key) edit(key); },
+            Alternate = () => { if (self!.FocusedKey is { } key) forget(key); },
+        };
+    }
+
     public static SettingItem Info(string label, Func<string> value) => new()
     {
         Label = label,
@@ -203,7 +263,7 @@ internal sealed class SettingsModel
             return;
         }
         _sub = null;
-        if (CurrentItem is not { Kind: SettingKind.Strip }) return;
+        if (CurrentItem is not { Kind: SettingKind.Strip } && CurrentItem?.Selectable != false) return;
         int first = FirstSelectable(Tab, skipStrip: true);
         if (first >= 0) _selected[TabIndex] = first;
     }
@@ -266,6 +326,9 @@ internal sealed class SettingsModel
     /// <summary>"A" on the selected row.</summary>
     public void Activate() => CurrentItem?.Activate?.Invoke();
 
+    /// <summary>"X" on the selected row.</summary>
+    public void Alternate() => CurrentItem?.Alternate?.Invoke();
+
     private static int FirstSelectable(SettingsTab tab, bool skipStrip = false)
     {
         for (int i = 0; i < tab.Items.Count; i++)
@@ -326,6 +389,20 @@ internal interface ISettingsHost
     /// <summary>"Searching..." while a pairing runs, otherwise empty.</summary>
     string PairingStatus { get; }
 
+    /// <summary>Keys (MAC addresses) of the controllers paired with this PC but not connected, last connected first.</summary>
+    IReadOnlyList<string> PairedControllers { get; }
+    /// <summary>Unpairs a Pro Controller from Windows, or drops a Joy-Con 2 from the list; its name and picture are kept.</summary>
+    void ForgetController(string key);
+    /// <summary>Pairs that controller again (it is put in sync mode by the user).</summary>
+    void RepairController(string key);
+    /// <summary>Opens the page of a paired (not connected) controller.</summary>
+    void OpenPairedPage(string key);
+    /// <summary>The name the user gave a controller, by key (empty = none).</summary>
+    string ProfileName(string key);
+    void SetProfileName(string key, string name);
+    /// <summary>The name shown for a paired controller: its own, or its kind.</summary>
+    string PairedDisplayName(string key);
+
     /// <summary>Opens the page of the controller in <paramref name="slot"/> (name, picture, rumble test).</summary>
     void OpenControllerPage(int slot);
     void CloseControllerPage();
@@ -362,6 +439,29 @@ internal static class SettingsPages
             SettingItem.Action("Calibrate deadzone", host.OpenDeadzoneCalibration),
             SettingItem.Action("Back", host.CloseControllerPage),
         ], controllerStrip: true, titleOf: () => $"Controller {tiles.Slot + 1}");
+    }
+
+    /// <summary>
+    /// The page of a paired controller (not connected): the paired row on top (ZL / ZR or a click switch to
+    /// another one, a ring marks the one being edited), then its settings. The picture is edited on the row itself.
+    /// <paramref name="strip"/> is the paired row: its <see cref="SettingItem.Key"/> is the controller being edited.
+    /// </summary>
+    public static SettingsTab PairedPage(ISettingsHost host, string key, out SettingItem strip)
+    {
+        var tiles = SettingItem.Paired("Paired controllers", () => host.PairedControllers, _ => { }, _ => { }, selectable: false);
+        tiles.Key = key;
+        strip = tiles;
+        string Key() => tiles.FocusedKey ?? key;
+        return new SettingsTab("Controller",
+        [
+            tiles,
+            SettingItem.Text("Name",
+                () => host.ProfileName(Key()) is { Length: > 0 } name ? name : "(default)",
+                () => host.EditText(host.ProfileName(Key()), v => host.SetProfileName(Key(), v))),
+            SettingItem.Action("Re-pair controller", () => host.RepairController(Key()), () => host.PairingStatus),
+            SettingItem.Action("Forget controller", () => host.ForgetController(Key())),
+            SettingItem.Action("Back", host.CloseControllerPage),
+        ], titleOf: () => $"Paired  >  {host.PairedDisplayName(Key())}");
     }
 
     /// <summary>
@@ -402,6 +502,7 @@ internal static class SettingsPages
             SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, host.OpenControllerPage, host.ControllerConnected),
             SettingItem.Action("Add new controller", host.AddController, () => host.PairingStatus),
             SettingItem.Info("Single Joy-Con", () => "Hold SL + SR while it connects"),
+            SettingItem.Paired("Paired controllers", () => host.PairedControllers, host.OpenPairedPage, host.ForgetController),
         ], controllerStrip: true);
 
         var virtualPad = new SettingsTab("Virtual Pad",

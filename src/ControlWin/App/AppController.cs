@@ -121,6 +121,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
             ((ISettingsHost)this).RemoveControllerPicture(slot, second);
             _settingsWindow.Refresh();
         };
+        _settingsWindow.PairedTile = PairedTileOf;
+        _settingsWindow.PairedPictureEditRequested += key =>
+        {
+            ChoosePicture(key);
+            _settingsWindow.Refresh();
+        };
+        _settingsWindow.PairedPictureRemoveRequested += key =>
+        {
+            ControllerPictures.Remove(key);
+            _settingsWindow.Refresh();
+        };
         _settingsWindow.CloseRequested += () => { if (_mode == Mode.Settings) CloseSettings(); };
         _menuEditor.Saved += OnMenuEditorSaved;
         _menuEditor.Cancelled += () => { if (_mode == Mode.Editor) CloseMenuEditor(); };
@@ -162,6 +173,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         _slots[slot].State.Update(report);
         if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
+        if (Environment.TickCount64 - _lastKnownSync >= KnownSyncMs) SyncKnown(); // a MAC read late, half of a Joy-Con pair gone
 
         if (_mode == Mode.Settings && _settings.Tab.Calibration is { } calibration && calibration.Slot == slot)
         {
@@ -224,7 +236,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_shutDown) return;
         gone.Pad.Detach(); // re-plugged on the next report
         SyncHiding();
-        if (_settings.InSubPage && _pageStrip?.Slot == slot) CloseControllerPage();
+        if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Strip } strip && strip.Slot == slot) CloseControllerPage();
         if (slot == _owner)
         {
             if (_mode == Mode.Menu) CloseMenu();
@@ -233,6 +245,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         gone.IgnoreMask = Buttons.None;
         gone.IgnoreSticks = false;
+        SyncKnown();
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
@@ -507,6 +520,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (fromMenu) StopRepeat();
 
         ReloadConfigIfChanged();
+        SyncKnown();
+        RefreshRememberedPros();
         _pad.SubmitNeutral();
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
@@ -572,6 +587,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_state.Pressed(Buttons.A))
         {
             _settings.Activate();
+            if (_mode == Mode.Settings) _settingsWindow.Refresh();
+        }
+        else if (_state.Pressed(Buttons.X))
+        {
+            _settings.Alternate();
             if (_mode == Mode.Settings) _settingsWindow.Refresh();
         }
         else if (_state.Pressed(Buttons.B))
@@ -1171,12 +1191,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _store.Save();
     }
 
-    string ISettingsHost.ControllerName(int slot) =>
-        ControllerKey(slot) is { } key && Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
+    string ISettingsHost.ControllerName(int slot) => ControllerKey(slot) is { } key ? ProfileName(key) : "";
 
     void ISettingsHost.SetControllerName(int slot, string name)
     {
-        if (ControllerKey(slot) is not { } key) return;
+        if (ControllerKey(slot) is { } key) SetProfileName(key, name);
+    }
+
+    private string ProfileName(string key) => Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
+
+    private void SetProfileName(string key, string name)
+    {
         name = name.Trim();
         if (name.Length > 24) name = name[..24];
         ProfileOf(key).Name = name;
@@ -1184,12 +1209,20 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _store.Save();
     }
 
+    string ISettingsHost.ProfileName(string key) => ProfileName(key);
+
+    void ISettingsHost.SetProfileName(string key, string name) => SetProfileName(key, name);
+
     /// <summary>The id a picture is stored under: the slot's, or the right Joy-Con's of a pair.</summary>
     private string? PictureKey(int slot, bool second) => second ? _set.Source(slot).PartnerId : ControllerKey(slot);
 
     void ISettingsHost.ChooseControllerPicture(int slot, bool second)
     {
-        if (PictureKey(slot, second) is not { } key) return;
+        if (PictureKey(slot, second) is { } key) ChoosePicture(key);
+    }
+
+    private void ChoosePicture(string key)
+    {
         var file = FilePicker.Pick(_settingsWindow.Handle, "Choose a picture for this controller", FilePicker.PictureFilter);
         if (file is null) return;
         var error = ControllerPictures.Import(file, key);
@@ -1216,17 +1249,23 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.CloseControllerPage() => CloseControllerPage();
 
-    void ISettingsHost.AddController()
+    void ISettingsHost.AddController() => StartPairing(onlyPro: null);
+
+    /// <summary>
+    /// Searches for a controller in sync mode: a Pro Controller (<paramref name="onlyPro"/>: that one only, by MAC) and,
+    /// when any controller is wanted, a Joy-Con 2.
+    /// </summary>
+    private void StartPairing(string? onlyPro)
     {
         if (_pairing || _shutDown) return;
         _pairing = true;
         _pairedJoyCons = 0;
         _toast.Show(MenuPages.Game, "Searching... Please hold sync button");
-        _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
+        if (onlyPro is null) _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
         nint hwnd = _window.Handle;
         new Thread(() =>
         {
-            var result = BluetoothPairing.PairNewProController();
+            var result = BluetoothPairing.PairProController(onlyPro);
             PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)result, 0);
         }) { IsBackground = true, Name = "pairing" }.Start();
     }
@@ -1238,6 +1277,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _set.Hub.StopPairing();
         if (_shutDown) return;
         Log.Info($"Pairing: {result}");
+        RefreshRememberedPros();
         if (result == PairResult.NotFound && _pairedJoyCons > 0)
         {
             if (_mode == Mode.Settings) _settingsWindow.Refresh();
@@ -1252,7 +1292,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    private const int PairWindowMs = 60_000; // longer than the Pro Controller search: it ends the window
+    private const int PairWindowMs = BluetoothPairing.SearchMs + 20_000; // longer than the Pro Controller search: it ends the window
     private int _pairedJoyCons;
 
     /// <summary>A Joy-Con 2 in sync mode was paired with this PC (UI thread).</summary>
@@ -1268,6 +1308,151 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _window.UpdateTray();
         if (!_shutDown && _mode == Mode.Settings) _settingsWindow.Refresh();
     }
+
+    // ---- known controllers (the paired list of the Controller tab) ----------------------------
+
+    private const long KnownSyncMs = 1000;
+    private long _lastKnownSync;
+    private readonly HashSet<string> _connectedMacs = [];
+    private List<RememberedController> _rememberedPros = [];
+
+    /// <summary>
+    /// Records the controllers that connected or went away since the last call: a new one joins the known list, and
+    /// each one's last-seen time is set when it connects and when it goes.
+    /// </summary>
+    private void SyncKnown()
+    {
+        _lastKnownSync = Environment.TickCount64;
+        var current = new Dictionary<string, string>();
+        for (int slot = 0; slot < _slots.Length; slot++)
+            foreach (var (mac, kind) in _set.Devices(slot)) current[mac] = kind;
+
+        var now = DateTime.UtcNow;
+        var joined = new List<string>();
+        foreach (var (mac, kind) in current)
+        {
+            if (!_connectedMacs.Add(mac)) continue;
+            if (!Config.KnownControllers.TryGetValue(mac, out var known)) Config.KnownControllers[mac] = known = new KnownController();
+            known.Kind = kind;
+            known.LastSeen = now;
+            joined.Add(mac);
+        }
+        var left = _connectedMacs.Where(mac => !current.ContainsKey(mac)).ToList();
+        foreach (var mac in left)
+        {
+            _connectedMacs.Remove(mac);
+            if (Config.KnownControllers.TryGetValue(mac, out var known)) known.LastSeen = now;
+        }
+        if (joined.Count == 0 && left.Count == 0) return;
+        _store.Save();
+
+        // The paired controller being edited connected: edit it as a connected controller.
+        if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } page && page.Key is { } key && joined.Contains(key))
+        {
+            int slot = Enumerable.Range(0, _slots.Length).FirstOrDefault(i => _set.Devices(i).Any(d => d.Mac == key), -1);
+            CloseControllerPage();
+            if (slot >= 0) ((ISettingsHost)this).OpenControllerPage(slot);
+        }
+        else ClosePairedPageIfEmpty();
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    /// <summary>Reads the Pro Controllers Windows remembers; one the app has not seen yet joins the known list.</summary>
+    private void RefreshRememberedPros()
+    {
+        _rememberedPros = BluetoothPairing.RememberedProControllers();
+        bool added = false;
+        foreach (var pro in _rememberedPros)
+        {
+            if (Config.KnownControllers.ContainsKey(pro.Mac)) continue;
+            Config.KnownControllers[pro.Mac] = new KnownController
+            {
+                Kind = ControllerKinds.Pro,
+                LastSeen = pro.LastUsed == DateTime.MinValue ? DateTime.UtcNow : pro.LastUsed,
+            };
+            added = true;
+        }
+        if (added) _store.Save();
+    }
+
+    /// <summary>The known controllers that are not connected (a Pro Controller only while Windows remembers it), last seen first.</summary>
+    IReadOnlyList<string> ISettingsHost.PairedControllers
+    {
+        get
+        {
+            var list = new List<(string Mac, DateTime Seen)>();
+            foreach (var (mac, known) in Config.KnownControllers)
+            {
+                if (_connectedMacs.Contains(mac)) continue;
+                if (known.Kind == ControllerKinds.Pro && !_rememberedPros.Exists(p => p.Mac == mac)) continue;
+                list.Add((mac, known.LastSeen));
+            }
+            list.Sort((a, b) => b.Seen.CompareTo(a.Seen));
+            return list.ConvertAll(e => e.Mac);
+        }
+    }
+
+    private string KindOf(string key) => Config.KnownControllers.TryGetValue(key, out var known) ? known.Kind : ControllerKinds.Pro;
+
+    string ISettingsHost.PairedDisplayName(string key) =>
+        ProfileName(key) is { Length: > 0 } name ? name : ControllerKinds.DefaultName(KindOf(key));
+
+    private SlotTile PairedTileOf(string key)
+    {
+        var seen = Config.KnownControllers.TryGetValue(key, out var known) ? known.LastSeen : DateTime.MinValue;
+        return new SlotTile(true, ((ISettingsHost)this).PairedDisplayName(key), -1, false, ControllerPictures.Get(key), Ago: Ago(seen));
+    }
+
+    /// <summary>"now", "5m", "3h", "2d", "4mo", "1y": how long ago a controller was last connected (empty when unknown).</summary>
+    internal static string Ago(DateTime seen, DateTime? now = null)
+    {
+        if (seen == DateTime.MinValue) return "";
+        var span = (now ?? DateTime.UtcNow) - seen;
+        return span.TotalMinutes < 1 ? "now"
+            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes}m"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours}h"
+            : span.TotalDays < 30 ? $"{(int)span.TotalDays}d"
+            : span.TotalDays < 365 ? $"{(int)(span.TotalDays / 30)}mo"
+            : $"{(int)(span.TotalDays / 365)}y";
+    }
+
+    void ISettingsHost.ForgetController(string key)
+    {
+        if (KindOf(key) == ControllerKinds.Pro)
+        {
+            if (!BluetoothPairing.Forget(key)) _toast.Show(MenuPages.Game, "Could not forget the controller");
+            RefreshRememberedPros();
+        }
+        else
+        {
+            Config.KnownControllers.Remove(key); // a Joy-Con 2 is not paired in Windows: it comes back when it connects
+            _store.Save();
+        }
+        // Forgotten from its own page: back to the Controller tab.
+        if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } page && page.Key == key) CloseControllerPage();
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    void ISettingsHost.RepairController(string key)
+    {
+        if (KindOf(key) == ControllerKinds.Pro) StartPairing(onlyPro: key);
+        else StartPairing(onlyPro: null); // a Joy-Con 2 in sync mode is claimed by the hub
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
+    void ISettingsHost.OpenPairedPage(string key)
+    {
+        if (!((ISettingsHost)this).PairedControllers.Contains(key)) return;
+        _settings.OpenSub(SettingsPages.PairedPage(this, key, out _pageStrip));
+    }
+
+    /// <summary>The paired page has nothing left to show: back to the Controller tab.</summary>
+    private void ClosePairedPageIfEmpty()
+    {
+        if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } && ((ISettingsHost)this).PairedControllers.Count == 0)
+            CloseControllerPage();
+    }
+
 
     void ISettingsHost.EditMenu() => OpenMenuEditor(Config.MenuLayout);
 
@@ -1514,6 +1699,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_shutDown) return;
         _shutDown = true;
         Log.Info("Shutting down");
+        foreach (var mac in _connectedMacs)
+            if (Config.KnownControllers.TryGetValue(mac, out var known)) known.LastSeen = DateTime.UtcNow;
+        if (_connectedMacs.Count > 0) _store.Save();
 
         StopRepeat();
         if (_mode == Mode.Menu) CloseMenu();

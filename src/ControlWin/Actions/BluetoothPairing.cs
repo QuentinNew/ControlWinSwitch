@@ -5,10 +5,14 @@ namespace ControlWin.Actions;
 
 internal enum PairResult { Paired, NotFound, Failed }
 
+/// <summary>A Pro Controller Windows remembers: its MAC address, whether it is connected and when it was last used (UTC).</summary>
+internal readonly record struct RememberedController(string Mac, bool Connected, DateTime LastUsed);
+
 /// <summary>
-/// Pairs a Pro Controller that Windows does not know yet (put in pairing mode with its sync button), the way
-/// "Add a device" does: inquiry, then authenticate and enable the HID service. Blocks for the inquiry
-/// (about ten seconds): run it on a worker thread.
+/// Pairs a Pro Controller put in pairing mode with its sync button, the way "Add a device" does: inquiry, then
+/// authenticate and enable the HID service. One Windows already remembers is paired again only when it answers the
+/// inquiry (it is in sync mode): the remembered pairing is stale after the controller was paired with a Switch.
+/// Blocks for the search (<see cref="SearchMs"/>): run it on a worker thread.
 /// </summary>
 internal static unsafe class BluetoothPairing
 {
@@ -17,10 +21,15 @@ internal static unsafe class BluetoothPairing
     private const string ControllerName = "Pro Controller";
     private const uint MitmNotRequiredBonding = 2, ServiceEnable = 1;
 
-    public static PairResult PairNewProController()
+    /// <summary>How long the search lasts (inquiry rounds of about five seconds each).</summary>
+    public const int SearchMs = 40_000;
+
+    /// <summary>Pairs a Pro Controller in sync mode; <paramref name="only"/>: that controller only (its MAC), null for any.</summary>
+    public static PairResult PairProController(string? only = null)
     {
         try
         {
+            ulong target = only is null ? 0 : ParseAddress(only);
             uint findParams = 4; // BLUETOOTH_FIND_RADIO_PARAMS { dwSize }
             nint radio;
             nint find = BluetoothFindFirstRadio(&findParams, &radio);
@@ -35,10 +44,10 @@ internal static unsafe class BluetoothPairing
             {
                 do
                 {
-                    ForgetStaleControllers(radio);
                     // The controller stays discoverable for a while after the sync button: search in rounds.
-                    for (int round = 0; round < 3 && result == PairResult.NotFound; round++)
-                        result = SearchRadio(radio);
+                    long until = Environment.TickCount64 + SearchMs;
+                    while (result == PairResult.NotFound && Environment.TickCount64 < until)
+                        result = SearchRadio(radio, target);
                     CloseHandle(radio);
                     if (result != PairResult.NotFound) break;
                 } while (BluetoothFindNextRadio(find, &radio) != 0);
@@ -53,44 +62,78 @@ internal static unsafe class BluetoothPairing
         }
     }
 
-    /// <summary>
-    /// Forgets the Pro Controllers Windows remembers but that are not connected: one that was paired with a
-    /// Switch since holds a new link key, so the remembered pairing is stale and blocks pairing it again.
-    /// </summary>
-    private static void ForgetStaleControllers(nint radio)
+    /// <summary>The Pro Controllers Windows remembers (paired), connected or not.</summary>
+    public static List<RememberedController> RememberedProControllers()
     {
-        var search = stackalloc byte[40];
-        new Span<byte>(search, 40).Clear();
-        *(uint*)search = 40;
-        *(int*)(search + 4) = 1; // authenticated
-        *(int*)(search + 8) = 1; // remembered
-        *(nint*)(search + 32) = radio;
-
-        var info = stackalloc byte[560];
-        new Span<byte>(info, 560).Clear();
-        *(uint*)info = 560;
-
-        var stale = new List<ulong>();
-        nint find = BluetoothFindFirstDevice(search, info);
-        if (find == 0) return;
+        var list = new List<RememberedController>();
         try
         {
-            do
-            {
-                string name = new((char*)(info + 64));
-                bool connected = *(int*)(info + 20) != 0;
-                if (!connected && name.Contains(ControllerName, StringComparison.OrdinalIgnoreCase))
-                    stale.Add(*(ulong*)(info + 8));
-            } while (BluetoothFindNextDevice(find, info) != 0);
-        }
-        finally { BluetoothFindDeviceClose(find); }
+            var search = stackalloc byte[40];
+            new Span<byte>(search, 40).Clear();
+            *(uint*)search = 40;
+            *(int*)(search + 4) = 1;  // authenticated
+            *(int*)(search + 8) = 1;  // remembered
+            *(int*)(search + 16) = 1; // connected
+            // hRadio @32 left at 0: every radio.
 
-        foreach (ulong address in stale)
-        {
-            ulong a = address;
-            uint error = BluetoothRemoveDevice(&a);
-            Log.Info($"Pairing: forgot old controller {address:X12} (error {error})");
+            var info = stackalloc byte[560];
+            new Span<byte>(info, 560).Clear();
+            *(uint*)info = 560;
+
+            nint find = BluetoothFindFirstDevice(search, info);
+            if (find == 0) return list;
+            try
+            {
+                do
+                {
+                    string name = new((char*)(info + 64));
+                    if (!name.Contains(ControllerName, StringComparison.OrdinalIgnoreCase)) continue;
+                    list.Add(new RememberedController(FormatAddress(*(ulong*)(info + 8)), *(int*)(info + 20) != 0,
+                        ReadTime(info + 48) ?? DateTime.MinValue));
+                } while (BluetoothFindNextDevice(find, info) != 0);
+            }
+            finally { BluetoothFindDeviceClose(find); }
         }
+        catch (Exception ex)
+        {
+            Log.Error("Listing the paired controllers failed", ex);
+        }
+        return list;
+    }
+
+    /// <summary>Unpairs a controller from Windows (like "Remove device"). Returns false when Windows refused.</summary>
+    public static bool Forget(string mac)
+    {
+        ulong address = ParseAddress(mac);
+        uint error = BluetoothRemoveDevice(&address);
+        Log.Info($"Forgot controller {mac} (error {error})");
+        return error == 0;
+    }
+
+    public static string FormatAddress(ulong address) => Input.JoyCon2Protocol.FormatAddress(address);
+
+    private static ulong ParseAddress(string mac) =>
+        ulong.TryParse(mac.Replace(":", ""), System.Globalization.NumberStyles.HexNumber, null, out var address) ? address : 0;
+
+    /// <summary>A SYSTEMTIME (UTC), or null when empty.</summary>
+    private static DateTime? ReadTime(byte* t)
+    {
+        var w = (ushort*)t;
+        if (w[0] == 0) return null;
+        try { return new DateTime(w[0], w[1], w[3], w[4], w[5], w[6], w[7], DateTimeKind.Utc); }
+        catch (ArgumentOutOfRangeException) { return null; }
+    }
+
+    /// <summary>
+    /// The device answered the inquiry that started at <paramref name="since"/>: Windows updated its "last seen" time.
+    /// The time is read both as UTC and as local time, since what Windows stores is not documented.
+    /// </summary>
+    private static bool AnsweredInquiry(byte* info, DateTime since)
+    {
+        if (ReadTime(info + 32) is not { } seen) return false;
+        var now = DateTime.UtcNow;
+        bool Within(DateTime t) => t >= since.AddSeconds(-2) && t <= now.AddSeconds(5);
+        return Within(seen) || Within(DateTime.SpecifyKind(seen, DateTimeKind.Local).ToUniversalTime());
     }
 
     private static nint _radio; // radio being paired on, for the pairing handler
@@ -139,8 +182,9 @@ internal static unsafe class BluetoothPairing
         }
     }
 
-    private static PairResult SearchRadio(nint radio)
+    private static PairResult SearchRadio(nint radio, ulong target)
     {
+        var since = DateTime.UtcNow;
         // BLUETOOTH_DEVICE_SEARCH_PARAMS (40 bytes): dwSize, fReturnAuthenticated, fReturnRemembered,
         // fReturnUnknown, fReturnConnected, fIssueInquiry, cTimeoutMultiplier (1.28 s units), hRadio @32.
         var search = stackalloc byte[40];
@@ -152,7 +196,8 @@ internal static unsafe class BluetoothPairing
         search[24] = 4;
         *(nint*)(search + 32) = radio;
 
-        // BLUETOOTH_DEVICE_INFO (560 bytes): dwSize, Address @8, fAuthenticated @28, szName @64.
+        // BLUETOOTH_DEVICE_INFO (560 bytes): dwSize, Address @8, fConnected @20, fAuthenticated @28, stLastSeen @32,
+        // stLastUsed @48 (SYSTEMTIME), szName @64.
         var info = stackalloc byte[560];
         new Span<byte>(info, 560).Clear();
         *(uint*)info = 560;
@@ -164,8 +209,15 @@ internal static unsafe class BluetoothPairing
             do
             {
                 string name = new((char*)(info + 64));
-                bool authenticated = *(int*)(info + 28) != 0;
-                if (authenticated || !name.Contains(ControllerName, StringComparison.OrdinalIgnoreCase)) continue;
+                ulong address = *(ulong*)(info + 8);
+                if (!name.Contains(ControllerName, StringComparison.OrdinalIgnoreCase) || (target != 0 && address != target)) continue;
+                if (*(int*)(info + 28) != 0) // authenticated: Windows already knows it
+                {
+                    // Connected, or not in sync mode: nothing to do. In sync mode: its pairing is stale, pair it again.
+                    if (*(int*)(info + 20) != 0 || !AnsweredInquiry(info, since)) continue;
+                    uint removed = BluetoothRemoveDevice(&address);
+                    Log.Info($"Pairing: {FormatAddress(address)} is in sync mode, its old pairing was removed (error {removed})");
+                }
 
                 Log.Info($"Pairing: found {name}, pairing");
 
