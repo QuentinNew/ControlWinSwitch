@@ -68,10 +68,10 @@ internal static class MenuNodeTypes
 {
     public const string Close = "close", Quit = "quit", Sleep = "sleep", Restart = "restart", Shutdown = "shutdown",
         Settings = "settings", Headset = "headset", MouseMode = "mouseMode", VirtualPad = "virtualPad",
-        Folder = "folder", Shortcut = "shortcut", AddController = "addController";
+        Folder = "folder", Shortcut = "shortcut", AddController = "addController", CloseWindow = "closeWindow";
 
     public static readonly string[] All =
-        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, AddController, Folder, Shortcut];
+        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, AddController, CloseWindow, Folder, Shortcut];
 }
 
 /// <summary>Icon of a radial node. Only "glyph" is drawn for now; "auto" and "image" are kept as written.</summary>

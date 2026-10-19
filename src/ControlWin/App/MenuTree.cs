@@ -22,6 +22,7 @@ internal static class NodeKinds
         new(MenuNodeTypes.VirtualPad, "Virtual pad", MenuPages.Game, CommandKind.ToggleVirtualPad, Status: NodeStatus.VirtualPad, ActiveWhen: "On"),
         new(MenuNodeTypes.Headset, "Headset", MenuPages.Headphone, CommandKind.ToggleHeadset, Status: NodeStatus.Headset, ActiveWhen: "Connected"),
         new(MenuNodeTypes.AddController, "Add controller", MenuPages.Add, CommandKind.AddController),
+        new(MenuNodeTypes.CloseWindow, "Close window", MenuPages.CloseWindow, CommandKind.CloseWindow, "Close the current window?"),
         new(MenuNodeTypes.Sleep, "Sleep", MenuPages.Sleep, CommandKind.Sleep, "Put the PC to sleep?"),
         new(MenuNodeTypes.Restart, "Restart", MenuPages.Restart, CommandKind.Restart, "Restart the PC?"),
         new(MenuNodeTypes.Shutdown, "Shut down", MenuPages.Power, CommandKind.Shutdown, "Shut down the PC?"),

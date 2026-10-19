@@ -342,6 +342,10 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int DestroyMenu(nint menu);
     [LibraryImport("user32.dll")] public static partial int SetForegroundWindow(nint hwnd);
     [LibraryImport("user32.dll")] public static partial nint GetForegroundWindow();
+    [LibraryImport("user32.dll")] public static partial nint GetAncestor(nint hwnd, uint flags);
+    public const uint GA_ROOT = 2;
+    [LibraryImport("user32.dll")] public static partial int GetClassNameW(nint hwnd, char* name, int max);
+    [LibraryImport("user32.dll")] public static partial int GetWindowTextW(nint hwnd, char* text, int max);
     [LibraryImport("user32.dll")] public static partial nint LoadCursorW(nint instance, nint name);
     public const nint IDC_ARROW = 32512, IDC_HAND = 32649, IDC_IBEAM = 32513;
     public const uint WM_SETCURSOR = 0x0020;

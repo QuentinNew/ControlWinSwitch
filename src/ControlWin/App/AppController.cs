@@ -717,6 +717,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
             case CommandKind.CloseMenu:
                 break; // the menu is already closed
 
+            case CommandKind.CloseWindow:
+                var error = WindowActions.CloseForeground(out string title);
+                if (error is not null) Log.Info($"Close window: {error}");
+                _toast.Show(entry.Glyph, error ?? $"Closing {title}");
+                break;
+
             case CommandKind.ToggleVirtualPad:
                 TogglePad(entry.Glyph);
                 break;
