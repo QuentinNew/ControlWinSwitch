@@ -13,8 +13,8 @@ internal sealed class ControllerSet : IDisposable
 
     public JoyCon2Hub Hub { get; } = new();
 
-    /// <summary>A report of the slot's controller (raw bytes: the HID report, empty for Joy-Cons).</summary>
-    public event Action<int, ProReport, ReadOnlyMemory<byte>>? Report;
+    /// <summary>A report of the slot's controller.</summary>
+    public event Action<int, ProReport>? Report;
 
     /// <summary>The stick ranges of the slot's controller are known (or changed with its Joy-Con layout).</summary>
     public event Action<int, StickCalibrations>? CalibrationRead;
@@ -31,7 +31,7 @@ internal sealed class ControllerSet : IDisposable
         {
             int slot = i;
             var hid = _hid[slot] = new HidControllerReader(slot);
-            hid.Report += (report, raw) => Report?.Invoke(slot, report, raw);
+            hid.Report += report => Report?.Invoke(slot, report);
             hid.CalibrationRead += cal => CalibrationRead?.Invoke(slot, cal);
             hid.ControllerRemoved += () =>
             {
@@ -40,7 +40,7 @@ internal sealed class ControllerSet : IDisposable
             };
 
             var joy = _joy[slot] = new JoyConSlot(slot);
-            joy.Report += report => Report?.Invoke(slot, report, ReadOnlyMemory<byte>.Empty);
+            joy.Report += report => Report?.Invoke(slot, report);
             joy.CalibrationRead += cal => CalibrationRead?.Invoke(slot, cal);
             joy.ControllerRemoved += () =>
             {

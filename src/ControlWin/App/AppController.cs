@@ -46,8 +46,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private Slot Owner => _slots[_owner];
     private ControllerState _state => Owner.State;
     private VirtualPad _pad => Owner.Pad;
-    private Buttons _ignoreMask { get => Owner.IgnoreMask; set => Owner.IgnoreMask = value; }
-    private bool _ignoreSticks { get => Owner.IgnoreSticks; set => Owner.IgnoreSticks = value; }
     private readonly MainWindow _window;
     private readonly MenuModel _menu = new();
     private readonly MenuOverlay _overlay = new();
@@ -169,7 +167,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     }
 
     /// <summary>Report handler: updates the slot's state, then drives the current mode.</summary>
-    public void OnReport(int slot, ProReport report, ReadOnlyMemory<byte> raw)
+    public void OnReport(int slot, ProReport report)
     {
         _slots[slot].State.Update(report);
         if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
@@ -240,8 +238,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             || state.Left.Magnitude > StickEngage || state.Right.Magnitude > StickEngage;
         if (!active) return false;
 
-        _ignoreMask = _state.Current;
-        _ignoreSticks = true;
+        HideHeldInput();
         StopRepeat();
         _heldDirection = Dir.None;
         _owner = slot;
@@ -361,8 +358,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         StopRepeat();
         _heldDirection = Dir.None;
         _mode = Mode.Idle;
-        _ignoreMask = _state.Current;
-        _ignoreSticks = true;
+        HideHeldInput();
         HideMenu();
         Log.Info("Menu closed");
     }
@@ -568,8 +564,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         StopRepeat();
         _heldDirection = Dir.None;
         _mode = Mode.Idle;
-        _ignoreMask = _state.Current;
-        _ignoreSticks = true;
+        HideHeldInput();
         _settingsWindow.Hide();
         Log.Info("Settings closed");
     }
@@ -718,6 +713,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _repeatTimerArmed = false;
     }
 
+    /// <summary>Hides the owner's held buttons and sticks from the game until they are released.</summary>
+    private void HideHeldInput()
+    {
+        Owner.IgnoreMask = _state.Current;
+        Owner.IgnoreSticks = true;
+    }
+
     // ---- mouse mode --------------------------------------------------------------------------
 
     private void EnterMouse(char glyph)
@@ -734,8 +736,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         _mouse.Deactivate(); // releases left / right buttons
         _mode = Mode.Idle;
-        _ignoreMask = _state.Current;
-        _ignoreSticks = true;
+        HideHeldInput();
         if (announce) _toast.Show(_mouseGlyph, "Mouse mode: off");
         Log.Info("Mouse mode off");
     }
@@ -1532,8 +1533,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         _menuEditor.Hide();
         _mode = Mode.Idle;
-        _ignoreMask = _state.Current;
-        _ignoreSticks = true;
+        HideHeldInput();
         Log.Info("Menu editor closed");
     }
 

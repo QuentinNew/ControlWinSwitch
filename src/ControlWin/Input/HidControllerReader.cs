@@ -20,7 +20,6 @@ namespace ControlWin.Input;
 internal sealed unsafe class HidControllerReader : IControllerSource, IDisposable
 {
     public const ushort NintendoVid = 0x057E;
-    public const ushort ProControllerPid = 0x2009;
 
     private static readonly Guid HidInterface = new("4D1E55B2-F16F-11CF-88CB-001111000030");
 
@@ -70,7 +69,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     public bool IsOpen => _file != 0;
 
     /// <summary>Raised for every decoded report (on the UI thread).</summary>
-    public event Action<ProReport, ReadOnlyMemory<byte>>? Report;
+    public event Action<ProReport>? Report;
 
     /// <summary>Raised when the controller goes away (disconnected, or the read failed).</summary>
     public event Action? ControllerRemoved;
@@ -214,7 +213,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
                 CheckPlayerLights();
                 // Still in simple mode (e.g. the first reports after connecting, or the mode got reset): ask again.
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
-                Report?.Invoke(report, bytes);
+                Report?.Invoke(report);
             }
         }
 

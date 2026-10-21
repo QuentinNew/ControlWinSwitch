@@ -27,7 +27,7 @@ internal static unsafe class RadialIcons
         if (icon.Kind.Equals("image", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(icon.Path))
         {
             cover = true;
-            return Cached("image|" + icon.Path, () => LoadImage(icon.Path!));
+            return Cached("image|" + icon.Path, () => LoadImage(icon.Path));
         }
         if (icon.Kind.Equals("auto", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(target))
             return Cached("auto|" + target, () => LoadFileIcon(target));

@@ -181,13 +181,11 @@ internal sealed class RadialModel
 
         float slice = MathF.Tau / total;
         float first = hasBack ? Normalize(parentAngle!.Value + MathF.PI) : 0f;
-        int slot = 0;
-
         if (hasBack)
             nodes.Add(new RadialNode { Kind = RadialNodeKind.Back, Label = "Back", Glyph = BackGlyph, Angle = first });
 
         // Back (when present) takes slot 0, then the entries go clockwise.
-        slot = hasBack ? 1 : 0;
+        int slot = hasBack ? 1 : 0;
         for (int i = 0; i < shown; i++, slot++)
         {
             var entry = entries[start + i];

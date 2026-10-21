@@ -471,8 +471,6 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         EndPaint(Handle, &ps);
     }
 
-    private static int MeasureNow(string text, nint font) => TextEditor.Measure(text, font);
-
     private void Text(nint font, uint color, string text, int l, int t, int r, int b, uint format) =>
         _texts.Add(new TextOp(font, color, text, new RECT(l, t, r, b), format));
 
@@ -631,7 +629,6 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             AddHit(p.X - radius, p.Y - radius, p.X + radius, p.Y + radius, (_, _) => { CommitField(); _model.Up(); Redraw(); });
         }
 
-        var pictures = new List<(MenuNodeConfig Node, int X, int Y)>();
         for (int slot = 0; slot < _model.Capacity; slot++)
         {
             var p = SlotPosition(SlotAngle(slot));
@@ -657,7 +654,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
                 continue;
             }
 
-            DrawNode(node, p.X, p.Y, radius, ReferenceEquals(node, _model.Selected), dropTarget, pictures);
+            DrawNode(node, p.X, p.Y, radius, ReferenceEquals(node, _model.Selected), dropTarget);
             var captured = node;
             var hit = AddHit(p.X - radius, p.Y - radius, p.X + radius, p.Y + radius);
             hit.Down = (x, y) => BeginDrag(captured, x, y);
@@ -683,11 +680,10 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
         // The node being dragged follows the cursor, on top of everything.
         if (_dragging && _dragNode is not null)
-            DrawNode(_dragNode, _dragX, _dragY, radius, true, false, pictures);
+            DrawNode(_dragNode, _dragX, _dragY, radius, true, false);
     }
 
-    private void DrawNode(MenuNodeConfig node, int x, int y, int radius, bool selected, bool dropTarget,
-        List<(MenuNodeConfig, int, int)> pictures)
+    private void DrawNode(MenuNodeConfig node, int x, int y, int radius, bool selected, bool dropTarget)
     {
         var fonts = Gdi.GetFonts(_dpi);
         const uint oneLine = DT_SINGLELINE | DT_VCENTER;

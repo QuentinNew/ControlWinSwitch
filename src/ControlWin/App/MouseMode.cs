@@ -55,8 +55,6 @@ internal sealed class MouseMode
         _clock = clock ?? System.Diagnostics.Stopwatch.GetTimestamp;
     }
 
-    public bool IsActive => _active;
-
     /// <summary>Buttons held on entry are ignored until released (the A press that selected the entry).</summary>
     public void Activate(Buttons currentlyHeld)
     {
