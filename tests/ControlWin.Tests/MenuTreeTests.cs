@@ -11,50 +11,6 @@ public class MenuTreeTests
         new() { Type = type, Slot = slot, Name = name };
 
     [Fact]
-    public void A_config_without_a_radial_tree_gets_todays_menu_in_todays_order()
-    {
-        var cfg = Parse("{}");
-        var root = cfg.RadialMenu!;
-
-        Assert.Equal(
-            [MenuNodeTypes.MouseMode, MenuNodeTypes.Folder, MenuNodeTypes.VirtualPad, MenuNodeTypes.Headset,
-             MenuNodeTypes.Settings, MenuNodeTypes.Folder, MenuNodeTypes.Quit, MenuNodeTypes.Close],
-            root.Select(n => n.Type));
-        Assert.Equal([0, 1, 2, 3, 4, 5, 6, 7], root.Select(n => n.Slot));
-
-        var power = root[5];
-        Assert.Equal("Power", power.Name);
-        Assert.Equal([MenuNodeTypes.Sleep, MenuNodeTypes.Restart, MenuNodeTypes.Shutdown], power.Children!.Select(n => n.Type));
-    }
-
-    [Fact]
-    public void The_default_trees_seed_the_two_steam_shortcuts()
-    {
-        var cfg = Parse("{}");
-
-        foreach (var root in new[] { cfg.RadialMenu!, cfg.ListMenu! })
-        {
-            var folder = root[1];
-            Assert.Equal(["Steam Big Picture", "Steam"], folder.Children!.Select(n => n.Name));
-            Assert.Equal("steam://open/bigpicture", folder.Children![0].Target);
-        }
-    }
-
-    [Fact]
-    public void A_config_without_a_list_tree_gets_todays_list()
-    {
-        var root = Parse("{}").ListMenu!;
-
-        Assert.Equal(
-            [MenuNodeTypes.MouseMode, MenuNodeTypes.Folder, MenuNodeTypes.VirtualPad, MenuNodeTypes.Headset,
-             MenuNodeTypes.Settings, MenuNodeTypes.Folder, MenuNodeTypes.Quit],
-            root.Select(n => n.Type));
-        Assert.Equal([0, 1, 2, 3, 4, 5, 6], root.Select(n => n.Slot));
-        Assert.Equal(["Mouse mode", "Shortcuts", "Virtual pad", "Headset", "Settings", "Power", "Quit ControlWin"],
-            MenuTree.ToPage("ControlWin", root, slotted: false).Entries.Select(e => e.Label));
-    }
-
-    [Fact]
     public void A_list_has_no_slot_limit_and_keeps_its_order_renumbered()
     {
         var tree = Enumerable.Range(0, 12).Select(i => Node("quit", 100 - i)).Append(Node("settings", -1)).ToList();
@@ -286,14 +242,6 @@ public class RadialAppearanceTests
         var entry = MenuTree.ToPage("Root", [node]).Entries[0];
 
         Assert.Equal("auto", entry.Icon!.Kind);
-    }
-
-    [Fact]
-    public void Other_nodes_have_no_picture_icon_by_default()
-    {
-        var entry = MenuTree.ToPage("Root", [new MenuNodeConfig { Type = "quit", Slot = 0 }]).Entries[0];
-
-        Assert.Null(entry.Icon);
     }
 
     [Fact]

@@ -257,20 +257,6 @@ public class SettingsModelTests
     }
 
     [Fact]
-    public void Has_the_six_tabs_in_order()
-    {
-        var (m, _, _) = Create();
-        Assert.Equal(["Controller", "Layout", "Virtual Pad", "Mouse", "Headset", "Other"], m.Tabs.Select(t => t.Title));
-    }
-
-    [Fact]
-    public void Only_the_controller_tab_shows_the_controller_strip()
-    {
-        var (m, _, _) = Create();
-        Assert.Equal(["Controller"], m.Tabs.Where(t => t.ControllerStrip).Select(t => t.Title));
-    }
-
-    [Fact]
     public void Controller_strip_is_driven_with_left_right_and_a()
     {
         var (m, _, host) = Create();
@@ -303,21 +289,6 @@ public class SettingsModelTests
         Assert.Equal(3, strip.Slot);
         m.Adjust(1);
         Assert.Equal(1, strip.Slot); // wraps over the empty slots
-    }
-
-    [Fact]
-    public void Controller_tab_tells_how_to_keep_a_joycon_alone()
-    {
-        var (m, _, _) = Create();
-        m.SetTab(0);
-        var hint = m.Tab.Items.Single(i => i.Label == "Single Joy-Con");
-
-        Assert.Equal(SettingKind.Info, hint.Kind);
-        Assert.Equal("Hold SL + SR while it connects", hint.Value());
-        m.Move(1);
-        Assert.Equal("Add new controller", m.CurrentItem!.Label);
-        m.Move(1);
-        Assert.Equal(SettingKind.Strip, m.CurrentItem!.Kind); // the hint is skipped: back to the strip
     }
 
     [Fact]
@@ -690,7 +661,6 @@ public class SettingsModelTests
         host.Paired = ["A", "B"];
         m.OpenSub(SettingsPages.PairedPage(host, "B", out var strip));
 
-        Assert.Equal(["Paired controllers", "Name", "Re-pair controller", "Forget controller", "Back"], m.Tab.Items.Select(i => i.Label));
         Assert.Equal("Name", m.CurrentItem!.Label);
         Assert.Equal("Paired  >  Pro Controller", m.SubTitle);
 

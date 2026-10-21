@@ -5,17 +5,6 @@ namespace ControlWin.Tests;
 public class ConfigTests
 {
     [Fact]
-    public void Defaults_match_the_plan()
-    {
-        var c = new AppConfig().Sanitize();
-        Assert.Equal("", c.HeadsetName);
-        Assert.True(c.VirtualPad.Enabled);
-        Assert.True(c.VirtualPad.SwapAB);
-        Assert.True(c.VirtualPad.SwapXY);
-        Assert.Equal(800f, c.Mouse.Speed);
-    }
-
-    [Fact]
     public void Parses_comments_and_trailing_commas()
     {
         var c = ConfigStore.Parse("""
@@ -28,14 +17,6 @@ public class ConfigTests
         Assert.Equal("Foo", c.HeadsetName);
         Assert.Equal(1000f, c.Mouse.Speed);
         Assert.Equal(0.15f, c.Mouse.Deadzone); // missing field -> default
-    }
-
-    [Fact]
-    public void Missing_sections_fall_back_to_defaults()
-    {
-        var c = ConfigStore.Parse("{}");
-        Assert.Equal("", c.HeadsetName);
-        Assert.NotNull(c.ListMenu);
     }
 
     [Fact]

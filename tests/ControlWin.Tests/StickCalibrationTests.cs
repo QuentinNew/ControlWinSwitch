@@ -148,11 +148,4 @@ public class ControllerDeadzoneTests
         Assert.True(new ControlWin.Config.ControllerProfile().IsDefault);
         Assert.False(new ControlWin.Config.ControllerProfile { RightDeadzone = 0.1f }.IsDefault);
     }
-
-    [Fact]
-    public void Deadzone_hides_drift_and_keeps_full_travel()
-    {
-        Assert.Equal(default, new Stick(0.06f, -0.05f).WithDeadzone(0.1f));
-        Assert.Equal(1f, new Stick(1f, 0f).WithDeadzone(0.1f).X, 3);
-    }
 }

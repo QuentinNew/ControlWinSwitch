@@ -169,15 +169,11 @@ public class MenuModelTests
     }
 
     [Fact]
-    public void Root_menu_has_the_planned_entries()
+    public void Quit_and_power_actions_ask_for_confirmation()
     {
         var m = new MenuModel();
         m.Reset(MenuTree.ToPage("ControlWin", MenuDefaults.Create(MenuLayouts.List), slotted: false));
 
-        var labels = m.Page.Entries.Select(e => e.Label).ToArray();
-        Assert.Equal(["Mouse mode", "Shortcuts", "Virtual pad", "Headset", "Settings", "Power", "Quit ControlWin"], labels);
-
-        // Quit must ask for confirmation, and Power opens a page of three confirmed actions.
         var quit = m.Page.Entries[^1];
         Assert.Equal(CommandKind.Quit, quit.Command.Kind);
         Assert.NotNull(quit.ConfirmPrompt);

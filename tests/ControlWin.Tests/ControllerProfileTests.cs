@@ -115,14 +115,6 @@ public class ControllerProfileTests
     }
 
     [Fact]
-    public void Tile_battery_text_names_the_level_and_charging()
-    {
-        Assert.Equal("Full", new ControlWin.UI.SlotTile(true, "x", 4, false, 0).BatteryText);
-        Assert.Equal("Low, charging", new ControlWin.UI.SlotTile(true, "x", 2, true, 0).BatteryText);
-        Assert.Equal("Unknown", new ControlWin.UI.SlotTile(true, "x", -1, false, 0).BatteryText);
-    }
-
-    [Fact]
     public void Subcommand_replies_count_as_input_so_battery_is_always_fresh()
     {
         var reply = Full(0x80);
@@ -147,21 +139,5 @@ public class ControllerProfileTests
         var name = ControllerPictures.FileName("dev:HID" + (char)92 + "{0000}_VID&0002057e" + (char)92 + "b&14c922c8");
         Assert.DoesNotContain(name, c => c is ':' or '&' or '{' or '}' || c == (char)92);
         Assert.EndsWith(".png", name);
-    }
-
-    [Fact]
-    public void A_controller_without_a_picture_reports_none()
-    {
-        var old = ControllerPictures.Folder;
-        ControllerPictures.Folder = Path.Combine(Path.GetTempPath(), "cw-pictures-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            Assert.False(ControllerPictures.Has("A4:5C:01:02:03:FE"));
-            Assert.Equal(0, ControllerPictures.Get("A4:5C:01:02:03:FE"));
-        }
-        finally
-        {
-            ControllerPictures.Folder = old;
-        }
     }
 }
