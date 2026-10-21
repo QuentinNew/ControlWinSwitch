@@ -29,7 +29,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
     private uint _dpi = 96;
     private (int X, int Y) _center;   // root ring center, screen coordinates
     private (int X, int Y) _origin;   // screen position of the window's top-left pixel
-    private int _lastMouseX = -1, _lastMouseY = -1;
+    private (int X, int Y)? _lastMouse; // screen position of the last mouse move, null until the first one
 
     /// <summary>Mouse: node hovered / clicked (index in the current ring), back (right click or the hub).</summary>
     public event Action<int>? NodeHovered, NodeClicked;
@@ -49,7 +49,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
     {
         _model = model;
         _controllers = controllers ?? [];
-        _lastMouseX = _lastMouseY = -1;
+        _lastMouse = null;
         Gdi.GetMonitorUnderCursor(out _work, out _dpi);
         _center = (_work.Left + _work.Width / 2, _work.Top + _work.Height / 2);
 
@@ -152,11 +152,12 @@ internal sealed unsafe class RadialOverlay : NativeWindow
 
     private void OnMouseMove(int x, int y)
     {
-        // The menu appearing under a resting cursor sends a mouse move: only react to real movement.
-        bool first = _lastMouseX < 0;
-        bool moved = x != _lastMouseX || y != _lastMouseY;
-        _lastMouseX = x;
-        _lastMouseY = y;
+        // The menu appearing, or the window moving on a redraw, sends a mouse move under a resting cursor: only react
+        // to real movement on screen, so a still mouse leaves the highlight to the controller.
+        int screenX = x + _origin.X, screenY = y + _origin.Y;
+        bool first = _lastMouse is null;
+        bool moved = _lastMouse != (screenX, screenY);
+        _lastMouse = (screenX, screenY);
         if (first || !moved) return;
 
         int index = NodeAt(x, y);
