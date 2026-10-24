@@ -1,0 +1,131 @@
+using ControlWinSwitch.Actions;
+using static ControlWinSwitch.Native.Win32;
+
+namespace ControlWinSwitch.UI;
+
+/// <summary>
+/// The controller tile shared by the settings page and the radial menu: picture (or gamepad icon), battery badge
+/// on the bottom-right corner, name underneath.
+/// </summary>
+internal static class ControllerTile
+{
+    public const int SizeDip = 64, NameHeightDip = 28, NameGapDip = 6;
+    public const string GamepadGlyph = "", NoneGlyph = "";
+
+    private static nint s_redBrush, s_redHotBrush, s_amberBrush;
+    public static nint RedBrush => s_redBrush != 0 ? s_redBrush : s_redBrush = CreateSolidBrush(Rgb(0xD6, 0x3B, 0x3B));
+    public static nint RedHotBrush => s_redHotBrush != 0 ? s_redHotBrush : s_redHotBrush = CreateSolidBrush(Rgb(0xF2, 0x5C, 0x5C));
+    public static nint AmberBrush => s_amberBrush != 0 ? s_amberBrush : s_amberBrush = CreateSolidBrush(Rgb(0xE0, 0xA1, 0x2B));
+
+    public const int PicGapDip = 6, EntryGapDip = 18, PairGapDip = 3;
+
+    /// <summary>Width of an entry's pictures in a strip: one circle, or two side by side for a Joy-Con pair.</summary>
+    public static int PicturesWidth(uint dpi, SlotTile info, int picRadius) =>
+        info.Pair ? picRadius * 4 + Px(dpi, PairGapDip) : picRadius * 2;
+
+    /// <summary>Left edge of the second picture of a pair in a strip entry starting at <paramref name="x"/>.</summary>
+    public static int SecondPictureX(uint dpi, int x, int picRadius) => x + picRadius * 2 + Px(dpi, PairGapDip);
+
+    /// <summary>One half of a pair's tile: its left edge and width.</summary>
+    public static (int Left, int Width) Half(uint dpi, int l, bool second)
+    {
+        int tile = Px(dpi, SizeDip), w = (tile - Px(dpi, PairGapDip)) / 2;
+        return (second ? l + tile - w : l, w);
+    }
+
+    /// <summary>
+    /// Layout of the controller strip (picture, gap, battery bars per controller, a bigger gap between controllers):
+    /// the x offset of each entry from the strip's left edge is put in <paramref name="xs"/>; returns the total width.
+    /// </summary>
+    public static int StripLayout(uint dpi, IReadOnlyList<SlotTile> controllers, int picRadius, out int[] xs)
+    {
+        xs = new int[controllers.Count];
+        int barsW = Px(dpi, 4) * 4 + Px(dpi, 2) * 3, x = 0;
+        for (int i = 0; i < xs.Length; i++)
+        {
+            xs[i] = x;
+            x += PicturesWidth(dpi, controllers[i], picRadius) + Px(dpi, PicGapDip) + barsW + (i < xs.Length - 1 ? Px(dpi, EntryGapDip) : 0);
+        }
+        return x;
+    }
+
+    private static int Px(uint dpi, int dip) => (int)Math.Round(dip * dpi / 96.0);
+
+    /// <summary>The rounded square: picture, or gamepad icon (none icon when nothing is connected). A pair: two halves.</summary>
+    public static void PaintFace(nint dc, FontSet fonts, uint dpi, SlotTile info, int l, int t)
+    {
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        bool on = info.Connected;
+        int tile = Px(dpi, SizeDip);
+        if (on && info.Pair)
+        {
+            foreach (bool second in (ReadOnlySpan<bool>)[false, true])
+            {
+                var (hl, hw) = Half(dpi, l, second);
+                nint image = info.ImageOf(second);
+                if (image != 0)
+                    ControllerPictures.DrawRounded(dc, image, hl, t, hw, tile, Px(dpi, 10));
+                else
+                {
+                    Gdi.RoundedFill(dc, Gdi.OnBrush, hl, t, hl + hw, t + tile, Px(dpi, 10));
+                    Gdi.Text(dc, fonts.GlyphSmall, Gdi.TextColor, GamepadGlyph, hl, t, hl + hw, t + tile, DT_CENTER | oneLine);
+                }
+            }
+            return;
+        }
+        Gdi.RoundedFill(dc, on && info.Image == 0 ? Gdi.OnBrush : Gdi.PanelBrush, l, t, l + tile, t + tile, Px(dpi, 14));
+        if (on && info.Image != 0)
+            ControllerPictures.DrawRounded(dc, info.Image, l, t, tile, Px(dpi, 14));
+        else
+            Gdi.Text(dc, fonts.Glyph, on ? Gdi.TextColor : Gdi.Dim, on ? GamepadGlyph : NoneGlyph, l, t, l + tile, t + tile, DT_CENTER | oneLine);
+    }
+
+    /// <summary>The name under the tile; it may use up to <paramref name="reach"/> pixels on each side.</summary>
+    public static void PaintName(nint dc, FontSet fonts, uint dpi, SlotTile info, int l, int t, int reach)
+    {
+        int tile = Px(dpi, SizeDip), top = t + tile + Px(dpi, NameGapDip);
+        Gdi.Text(dc, fonts.Detail, Gdi.TextColor, info.Name, l - reach, top, l + tile + reach, top + Px(dpi, NameHeightDip),
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    }
+
+    /// <summary>A small battery badge on the bottom-right corner of a tile: four bars, a plus while charging.</summary>
+    public static void PaintBattery(nint dc, uint dpi, SlotTile info, int right, int bottom)
+    {
+        if (info.Battery < 0) return;
+        int w = Px(dpi, 38), h = Px(dpi, 18);
+        int l = right - w + Px(dpi, 6), t = bottom - h + Px(dpi, 4);
+        Gdi.RoundedFill(dc, Gdi.BackgroundBrush, l, t, l + w, t + h, Px(dpi, 8));
+
+        nint color = info.Battery <= 1 ? RedBrush : info.Battery == 2 ? AmberBrush : Gdi.OnBrush;
+
+        int barW = Px(dpi, 5), gap = Px(dpi, 2), barH = Px(dpi, 10), x = l + Px(dpi, 6), y = t + (h - barH) / 2;
+        int filled = Math.Max(info.Battery, info.Battery == 0 ? 1 : 0); // an empty battery still shows one (red) bar
+        for (int i = 0; i < 4; i++)
+        {
+            int bx = x + i * (barW + gap);
+            Gdi.Fill(dc, i < filled ? color : Gdi.DimBrush, bx, y, bx + barW, y + barH);
+        }
+        if (info.Charging)
+            Gdi.Bolt(dc, x + (4 * barW + 3 * gap) / 2, t + h / 2, Px(dpi, 14));
+    }
+
+    /// <summary>Four battery bars (a plus after them while charging), centered on <paramref name="cy"/>. Returns the width used.</summary>
+    public static int PaintBars(nint dc, uint dpi, SlotTile info, int x, int cy)
+    {
+        int barW = Px(dpi, 4), gap = Px(dpi, 2), barH = Px(dpi, 10), y = cy - barH / 2;
+        int width = 4 * barW + 3 * gap;
+        if (info.Battery >= 0)
+        {
+            nint color = info.Battery <= 1 ? RedBrush : info.Battery == 2 ? AmberBrush : Gdi.OnBrush;
+            int filled = Math.Max(info.Battery, info.Battery == 0 ? 1 : 0); // an empty battery still shows one (red) bar
+            for (int i = 0; i < 4; i++)
+            {
+                int bx = x + i * (barW + gap);
+                Gdi.Fill(dc, i < filled ? color : Gdi.DimBrush, bx, y, bx + barW, y + barH);
+            }
+            if (info.Charging)
+                Gdi.Bolt(dc, x + width / 2, cy, Px(dpi, 14));
+        }
+        return width;
+    }
+}

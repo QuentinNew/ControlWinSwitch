@@ -5,3 +5,4 @@ dist/
 *.user
 TestResults/
 PLAN.md
+.idea

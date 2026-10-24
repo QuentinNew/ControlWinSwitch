@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 550 550" width="550" height="550">
+  <g fill="#2a2a2f" stroke="#4a4a52" stroke-width="2">
+    <circle cx="275" cy="87" r="26"/>
+    <circle cx="407.9" cy="142.1" r="26"/>
+    <circle cx="463" cy="275" r="26"/>
+    <circle cx="407.9" cy="407.9" r="26"/>
+    <circle cx="275" cy="463" r="26"/>
+    <circle cx="142.1" cy="407.9" r="26"/>
+    <circle cx="87" cy="275" r="26"/>
+    <circle cx="142.1" cy="142.1" r="26"/>
+  </g>
+  <g font-family="'Segoe UI', sans-serif" text-anchor="middle">
+    <text x="275" y="272" font-size="48"><tspan font-weight="700" fill="#2a2a2f">Control</tspan><tspan font-weight="300" fill="#00a8d6">Win</tspan></text>
+    <rect x="213" y="294" width="124" height="42" rx="21" fill="#e60012"/>
+    <text x="275" y="323" font-size="24" font-weight="600" letter-spacing="2" fill="#fff">Switch</text>
+  </g>
+</svg>

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ControlWinSwitch/ControlWinSwitch.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ControlWinSwitch.Tests/ControlWinSwitch.Tests.csproj" />
+  </Folder>
+</Solution>

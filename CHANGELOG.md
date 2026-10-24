@@ -17,6 +17,6 @@ First release. A portable exe that lets you control a Windows PC from a Nintendo
 - **HidHide integration**: the physical controller is hidden from games while its virtual pad is on.
 - **Up to four controllers** with names, pictures, battery badges, player lights, flash stick calibration, per-stick deadzones and Bluetooth pairing from the app.
 - **Power** (sleep, restart, shut down) and **Bluetooth headset** connect / disconnect.
-- Tray icon, single instance, `--quit`, Launch on startup (elevated scheduled task or Run key), settings window driven by the controller or the mouse, `config.json` in `%APPDATA%\ControlWin`.
+- Tray icon, single instance, `--quit`, Launch on startup (elevated scheduled task or Run key), settings window driven by the controller or the mouse, `config.json` in `%APPDATA%\ControlWinSwitch`.
 
 Requires Windows 10/11 x64 and ViGEmBus for the virtual pad; HidHide is optional.
