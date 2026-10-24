@@ -17,6 +17,7 @@ internal enum CommandKind
     CloseMenu,
     CloseWindow,
     Launch,
+    Screenshot,
 }
 
 internal readonly record struct MenuCommand(CommandKind Kind, int Arg = 0);
@@ -49,6 +50,10 @@ internal sealed class MenuEntry
 
     /// <summary>App shortcut entries (<see cref="CommandKind.Launch"/>): what to start.</summary>
     public ShortcutConfig? Launch { get; init; }
+
+    /// <summary>Screenshot entries (<see cref="CommandKind.Screenshot"/>): where to save, and whether to copy.</summary>
+    public string? SaveFolder { get; init; }
+    public bool CopyToClipboard { get; init; }
 
     /// <summary>The node's own color (COLORREF) as shown when highlighted; null = theme colors.</summary>
     public uint? Color { get; init; }
@@ -182,6 +187,7 @@ internal sealed class MenuModel
 internal static class MenuPages
 {
     // Segoe Fluent Icons code points.
+    internal const char Camera = '';
     internal const char Add = '';
     internal const char Folder = '', Close = '', CloseWindow = '';
     internal const char Gear ='', Mouse = '', Play = '', Game = '', Headphone = '',

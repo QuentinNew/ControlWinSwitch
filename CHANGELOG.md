@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Screenshot node**: saves a PNG of the monitor under the cursor, named after the active window and the time, to the Windows Screenshots folder or a folder chosen on the node's page (modern folder picker); optional copy to the clipboard.
 - **All controllers control menu** (Layout tab): any connected controller can drive the open menu and the settings, not only the one that opened them.
 - **Paired controllers** on the Controller tab: the controllers that are not connected, last connected first, with their page (name, picture, Re-pair, Forget). **Add new controller** no longer forgets every Pro Controller that is not connected: it only pairs again one that is in sync mode.
 - **Switch 2 Joy-Cons** over Bluetooth Low Energy (no pairing in Windows): a left and a right Joy-Con act as one controller, a lone one is held sideways (hold SL / SR while it connects to keep it alone). Paired from **Add new controller**, then reconnected with any button. C and Capture open the menu. Stick calibration, player lights, rumble and battery badge; a lone Joy-Con scrolls in mouse mode with SL / SR held.

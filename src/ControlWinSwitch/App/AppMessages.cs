@@ -18,6 +18,9 @@ internal static class AppMessages
     /// <summary>Posted by the pairing worker thread: wParam = <c>PairResult</c>.</summary>
     public const uint PairDone = WM_APP + 4;
 
+    /// <summary>Posted by the screenshot worker thread once the picture is saved (or failed).</summary>
+    public const uint ScreenshotDone = WM_APP + 5;
+
     /// <summary>Posts <paramref name="message"/> to the running instance. False when none is running.</summary>
     public static bool PostToRunningInstance(uint message)
     {

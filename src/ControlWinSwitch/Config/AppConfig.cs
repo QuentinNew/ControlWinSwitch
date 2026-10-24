@@ -94,10 +94,11 @@ internal static class MenuNodeTypes
 {
     public const string Close = "close", Quit = "quit", Sleep = "sleep", Restart = "restart", Shutdown = "shutdown",
         Settings = "settings", Headset = "headset", MouseMode = "mouseMode", VirtualPad = "virtualPad",
-        Folder = "folder", Shortcut = "shortcut", AddController = "addController", CloseWindow = "closeWindow";
+        Folder = "folder", Shortcut = "shortcut", AddController = "addController", CloseWindow = "closeWindow",
+        Screenshot = "screenshot";
 
     public static readonly string[] All =
-        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, AddController, CloseWindow, Folder, Shortcut];
+        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, AddController, CloseWindow, Screenshot, Folder, Shortcut];
 }
 
 /// <summary>Icon of a radial node. Only "glyph" is drawn for now; "auto" and "image" are kept as written.</summary>
@@ -136,6 +137,12 @@ internal sealed class MenuNodeConfig
     /// <summary>Shortcuts: start the program with administrator rights.</summary>
     public bool? RunAsAdmin { get; set; }
 
+    /// <summary>Screenshots: where the pictures go; null = the Windows Screenshots folder.</summary>
+    public string? SaveFolder { get; set; }
+
+    /// <summary>Screenshots: also put the picture on the clipboard.</summary>
+    public bool? CopyToClipboard { get; set; }
+
     /// <summary>Folders only; a folder can hold other folders.</summary>
     public List<MenuNodeConfig>? Children { get; set; }
 
@@ -150,7 +157,9 @@ internal sealed class MenuNodeConfig
         Args = Args,
         WorkingDir = WorkingDir,
         RunAsAdmin = RunAsAdmin,
-        Children = Children?.Select(c => c.Clone()).ToList(),
+        SaveFolder = SaveFolder,
+        CopyToClipboard = CopyToClipboard,
+        Children =Children?.Select(c => c.Clone()).ToList(),
     };
 }
 

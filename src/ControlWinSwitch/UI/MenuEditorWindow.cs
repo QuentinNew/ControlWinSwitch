@@ -33,7 +33,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         "E72C", "E72E", "E734", "E753", "E7C3", "E7C9", "E7EF", "E8AD", "E8F1", "EA8A",
     ];
 
-    private enum Field { None, Name, ImagePath, Hex, Target, Args }
+    private enum Field { None, Name, ImagePath, Hex, Target, Args, SaveFolder }
 
     private sealed class Hit
     {
@@ -67,6 +67,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     // Text editing.
     private Field _field;
+    private string? _defaultShotFolder;
     private readonly TextEditor _edit = new(260);
 
     private bool _steamOpen;      // the recently played Steam games list is open
@@ -352,6 +353,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
                     break;
                 case Field.Args:
                     node.Args = value.Length == 0 ? null : value;
+                    break;
+                case Field.SaveFolder:
+                    node.SaveFolder = value.Length == 0 ? null : value;
                     break;
             }
         }
@@ -1088,6 +1092,27 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             bool admin = node.RunAsAdmin == true;
             Button(bx, by, bx + bw, by + Px(36), admin ? "Run as administrator: On" : "Run as administrator: Off",
                 () => node.RunAsAdmin = admin ? null : true, active: admin);
+        }
+
+        if (node.Type == MenuNodeTypes.Screenshot)
+        {
+            int browseW = Px(74);
+            _defaultShotFolder ??= Screenshot.DefaultFolder();
+            TextField(Field.SaveFolder, "Save folder", bx, by, bx + bw - browseW - Px(6), node.SaveFolder ?? "", _defaultShotFolder);
+            Button(bx + bw - browseW, by + Px(18), bx + bw, by + Px(52), "Browse...", () =>
+            {
+                CommitField();
+                var folder = FilePicker.PickFolder(Handle, "Choose where screenshots go",
+                    Screenshot.CustomFolder(node.SaveFolder) ?? _defaultShotFolder);
+                if (folder is not null)
+                    node.SaveFolder = string.Equals(folder, _defaultShotFolder, StringComparison.OrdinalIgnoreCase) ? null : folder;
+            });
+            by += Px(62);
+            Button(bx, by, bx + bw, by + Px(36), "Default folder", () => node.SaveFolder = null, enabled: node.SaveFolder is not null);
+            by += Px(46);
+            bool copy = node.CopyToClipboard == true;
+            Button(bx, by, bx + bw, by + Px(36), copy ? "Also copy to clipboard: On" : "Also copy to clipboard: Off",
+                () => node.CopyToClipboard = copy ? null : true, active: copy);
         }
 
         // Delete.

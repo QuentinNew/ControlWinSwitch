@@ -429,6 +429,8 @@ internal static unsafe partial class Win32
         int sx, int sy, int sw, int sh, int srcUnit, nint attributes, nint callback, nint callbackData);
     [LibraryImport("gdiplus.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial int GdipSaveImageToFile(nint image, string file, Guid* encoder, nint parameters);
+    [LibraryImport("gdiplus.dll")] public static partial int GdipCreateBitmapFromHBITMAP(nint hbitmap, nint palette, nint* bitmap);
+    public const uint CAPTUREBLT = 0x40000000, CF_DIB = 8, DIB_RGB_COLORS = 0, BI_RGB = 0;
     [LibraryImport("gdiplus.dll")] public static partial int GdipSetPixelOffsetMode(nint graphics, int mode);
     [LibraryImport("gdiplus.dll")] public static partial int GdipAddPathArcI(nint path, int x, int y, int w, int h, float startAngle, float sweepAngle);
     [LibraryImport("gdiplus.dll")] public static partial int GdipClosePathFigure(nint path);
@@ -540,6 +542,10 @@ internal static unsafe partial class Win32
     [LibraryImport("shell32.dll", SetLastError = true)] public static partial int ShellExecuteExW(SHELLEXECUTEINFOW* info);
     [LibraryImport("shcore.dll")] public static partial int GetDpiForMonitor(nint monitor, int type, uint* dpiX, uint* dpiY);
     [LibraryImport("dwmapi.dll")] public static partial int DwmSetWindowAttribute(nint hwnd, int attr, void* value, uint size);
+    [LibraryImport("dwmapi.dll")] public static partial int DwmFlush();
+    [LibraryImport("shell32.dll")] public static partial int SHGetKnownFolderPath(Guid* folderId, uint flags, nint token, char** path);
+    public const uint KF_FLAG_DONT_VERIFY = 0x4000;
+    [LibraryImport("shell32.dll")] public static partial int SHCreateItemFromParsingName(char* path, nint bindContext, Guid* iid, void** item);
 
     // ---- ole32 ----------------------------------------------------------------------------
     [LibraryImport("ole32.dll")] public static partial int CoInitializeEx(nint reserved, uint coInit);

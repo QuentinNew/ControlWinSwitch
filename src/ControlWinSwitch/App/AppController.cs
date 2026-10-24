@@ -71,6 +71,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private bool _shutDown;
     private HeadsetState _headsetState;
     private bool _headsetBusy;
+    private bool _screenshotBusy;
+    private char _screenshotGlyph;
+    private volatile string? _screenshotResult; // written by the screenshot thread, read after ScreenshotDone
     private volatile IReadOnlyList<string> _headsetDevices = [];
 
     private Mode _mode;
@@ -777,6 +780,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 _toast.Show(entry.Glyph, error ?? $"Closing {title}");
                 break;
 
+            case CommandKind.Screenshot:
+                TakeScreenshot(entry);
+                break;
+
             case CommandKind.ToggleVirtualPad:
                 TogglePad(entry.Glyph);
                 break;
@@ -827,6 +834,44 @@ internal sealed class AppController : IDisposable, ISettingsHost
     public void OnPowerFailed()
     {
         if (!_shutDown) _toast.Show(MenuPages.Power, "Power action failed - see log");
+    }
+
+    /// <summary>The menu is already hidden: capture now, encode and write on a worker thread.</summary>
+    private void TakeScreenshot(MenuEntry entry)
+    {
+        if (_screenshotBusy)
+        {
+            _toast.Show(entry.Glyph, "Still saving the last screenshot");
+            return;
+        }
+        _toast.Hide(); // a toast still on screen would end up in the picture
+
+        var shot = Screenshot.Capture(out var error);
+        if (shot is null)
+        {
+            Log.Error($"Screenshot: {error}");
+            _toast.Show(entry.Glyph, error ?? "Screenshot failed");
+            return;
+        }
+
+        _screenshotBusy = true;
+        _screenshotGlyph = entry.Glyph;
+        nint hwnd = _window.Handle;
+        string? folder = entry.SaveFolder;
+        bool copy = entry.CopyToClipboard;
+        new Thread(() =>
+        {
+            _screenshotResult = Screenshot.Save(shot, folder, copy);
+            PostMessageW(hwnd, AppMessages.ScreenshotDone, 0, 0);
+        }) { IsBackground = true, Name = "screenshot" }.Start();
+    }
+
+    /// <summary>AppMessages.ScreenshotDone, on the UI thread.</summary>
+    public void OnScreenshotDone()
+    {
+        _screenshotBusy = false;
+        if (!_shutDown && _screenshotResult is { } text) _toast.Show(_screenshotGlyph, text);
+        _screenshotResult = null;
     }
 
     private void LaunchTarget(ShortcutConfig shortcut)
