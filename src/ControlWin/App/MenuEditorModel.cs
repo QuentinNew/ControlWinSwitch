@@ -10,7 +10,7 @@ namespace ControlWin.App;
 internal sealed class MenuEditorModel
 {
     private List<MenuNodeConfig> _root;
-    private MenuNodeConfig? _folder;
+    private readonly List<MenuNodeConfig> _path = [];
 
     public MenuEditorModel(string layout, IEnumerable<MenuNodeConfig> tree)
     {
@@ -24,36 +24,40 @@ internal sealed class MenuEditorModel
     public bool IsList => Layout == MenuLayouts.List;
 
     /// <summary>The folder being edited, or null on the root.</summary>
-    public MenuNodeConfig? Folder => _folder;
+    public MenuNodeConfig? Folder => _path.Count > 0 ? _path[^1] : null;
+
+    /// <summary>The open folders, from the root's down to the one being edited.</summary>
+    public IReadOnlyList<MenuNodeConfig> Path => _path;
 
     public MenuNodeConfig? Selected { get; private set; }
 
     public IReadOnlyList<MenuNodeConfig> Root => _root;
 
     /// <summary>Nodes of the ring / list being edited.</summary>
-    public List<MenuNodeConfig> Nodes => _folder is null ? _root : (_folder.Children ??= []);
+    public List<MenuNodeConfig> Nodes => Folder is { } folder ? (folder.Children ??= []) : _root;
 
     /// <summary>Radial: slots of the ring being edited. List: unlimited.</summary>
-    public int Capacity => MenuDefaults.Capacity(Layout, _folder is not null);
+    public int Capacity => MenuDefaults.Capacity(Layout, Folder is not null);
 
     public MenuNodeConfig? At(int slot) => Nodes.Find(n => n.Slot == slot);
 
     public void Select(MenuNodeConfig? node) => Selected = node;
 
-    /// <summary>Goes into a folder of the root (folders do not nest).</summary>
+    /// <summary>Goes into a folder of the ring / list being edited.</summary>
     public bool Enter(MenuNodeConfig folder)
     {
-        if (_folder is not null || folder.Type != MenuNodeTypes.Folder || !_root.Contains(folder)) return false;
-        _folder = folder;
+        if (folder.Type != MenuNodeTypes.Folder || !Nodes.Contains(folder)) return false;
+        _path.Add(folder);
         Selected = null;
         return true;
     }
 
+    /// <summary>Goes up one folder and selects the folder it left.</summary>
     public void Up()
     {
-        if (_folder is null) return;
-        Selected = _folder;
-        _folder = null;
+        if (_path.Count == 0) return;
+        Selected = _path[^1];
+        _path.RemoveAt(_path.Count - 1);
     }
 
     /// <summary>Radial: moves a node of the current ring to a slot; an occupied slot swaps places.</summary>
@@ -80,19 +84,19 @@ internal sealed class MenuEditorModel
         return true;
     }
 
-    /// <summary>List: moves a node of the root into one of the root's folders (at the end of it).</summary>
+    /// <summary>List: moves a node of the current list into another folder of that list (at the end of it).</summary>
     public bool MoveInto(MenuNodeConfig node, MenuNodeConfig folder)
     {
-        if (!IsList || _folder is not null || node.Type == MenuNodeTypes.Folder || folder.Type != MenuNodeTypes.Folder
-            || !_root.Contains(node) || !_root.Contains(folder)) return false;
-        _root.Remove(node);
+        var nodes = Nodes;
+        if (!IsList || ReferenceEquals(node, folder) || folder.Type != MenuNodeTypes.Folder
+            || !nodes.Contains(node) || !nodes.Contains(folder)) return false;
+        nodes.Remove(node);
         (folder.Children ??= []).Add(node);
         Renumber();
         return true;
     }
 
-    public static bool CanHold(string type, bool inFolder) =>
-        MenuNodeTypes.All.Contains(type) && !(inFolder && type == MenuNodeTypes.Folder);
+    public static bool CanHold(string type) => MenuNodeTypes.All.Contains(type);
 
     /// <summary>
     /// Adds a node of a type to the current ring / list and selects it. Radial: <paramref name="position"/> is an empty
@@ -100,7 +104,7 @@ internal sealed class MenuEditorModel
     /// </summary>
     public MenuNodeConfig? Add(string type, int position)
     {
-        if (!CanHold(type, _folder is not null)) return null;
+        if (!CanHold(type)) return null;
         if (!IsList && (position < 0 || position >= Capacity || At(position) is not null)) return null;
 
         var node = new MenuNodeConfig { Type = type, Slot = position };
@@ -133,25 +137,20 @@ internal sealed class MenuEditorModel
     public void Reset()
     {
         _root = MenuDefaults.Create(Layout);
-        _folder = null;
+        _path.Clear();
         Selected = null;
     }
 
     /// <summary>
     /// Turns a tree of one layout into a tree of the other: list → radial keeps the first 8 root nodes and the first 7
-    /// per folder, radial → list orders by slot. <paramref name="dropped"/> counts the nodes (folder contents included)
+    /// per folder (at every depth), radial → list orders by slot. <paramref name="dropped"/> counts the nodes (folder contents included)
     /// that did not fit.
     /// </summary>
     public static List<MenuNodeConfig> Convert(IEnumerable<MenuNodeConfig> source, string to, out int dropped)
     {
         dropped = 0;
         var result = Order(source.Select(n => n.Clone()).ToList());
-        if (to == MenuLayouts.Radial)
-        {
-            result = Fit(result, MenuDefaults.RootSlots, ref dropped);
-            foreach (var folder in result.Where(n => n.Children is not null))
-                folder.Children = Fit(folder.Children!, MenuDefaults.FolderSlots, ref dropped);
-        }
+        if (to == MenuLayouts.Radial) result = Fit(result, MenuDefaults.RootSlots, ref dropped);
         Number(result);
         return result;
     }
@@ -160,7 +159,7 @@ internal sealed class MenuEditorModel
     public void Replace(List<MenuNodeConfig> tree)
     {
         _root = tree;
-        _folder = null;
+        _path.Clear();
         Selected = null;
     }
 
@@ -190,7 +189,10 @@ internal sealed class MenuEditorModel
     private static List<MenuNodeConfig> Fit(List<MenuNodeConfig> nodes, int capacity, ref int dropped)
     {
         for (int i = capacity; i < nodes.Count; i++) dropped += 1 + Count(nodes[i].Children);
-        return nodes.Take(capacity).ToList();
+        var kept = nodes.Take(capacity).ToList();
+        foreach (var folder in kept.Where(n => n.Children is not null))
+            folder.Children = Fit(folder.Children!, MenuDefaults.FolderSlots, ref dropped);
+        return kept;
     }
 
     private static int Count(List<MenuNodeConfig>? nodes) => nodes is null ? 0 : nodes.Count + nodes.Sum(n => Count(n.Children));

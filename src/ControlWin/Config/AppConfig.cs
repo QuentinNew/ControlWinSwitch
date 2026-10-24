@@ -136,7 +136,7 @@ internal sealed class MenuNodeConfig
     /// <summary>Shortcuts: start the program with administrator rights.</summary>
     public bool? RunAsAdmin { get; set; }
 
-    /// <summary>Folders only; folders do not nest.</summary>
+    /// <summary>Folders only; a folder can hold other folders.</summary>
     public List<MenuNodeConfig>? Children { get; set; }
 
     public MenuNodeConfig Clone() => new()

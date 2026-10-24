@@ -66,24 +66,27 @@ internal static class MenuDefaults
 
 /// <summary>
 /// Makes a hand-edited menu tree valid without ever failing the load: unknown or incomplete nodes are dropped,
-/// radial slots are made unique and in range (list order is the slot order, renumbered from 0), folders do not nest,
-/// and the tree always has a Settings node.
+/// radial slots are made unique and in range (list order is the slot order, renumbered from 0), folders nest no deeper
+/// than <see cref="MaxDepth"/>, and the tree always has a Settings node.
 /// </summary>
 internal static class MenuRepair
 {
+    /// <summary>Folders inside folders: deeper ones are dropped (also stops a runaway hand-written tree).</summary>
+    public const int MaxDepth = 8;
+
     public static List<MenuNodeConfig> Run(List<MenuNodeConfig>? tree, string layout, List<string> notes, string label = "menu")
     {
         if (tree is null) return MenuDefaults.Create(layout);
 
-        var root = Fix(tree, layout, inFolder: false, $"{label} root", notes);
+        var root = Fix(tree, layout, depth: 0, $"{label} root", notes);
         if (!ContainsSettings(root)) AddSettings(root, layout, label, notes);
         return root;
     }
 
-    private static List<MenuNodeConfig> Fix(List<MenuNodeConfig> nodes, string layout, bool inFolder, string where, List<string> notes)
+    private static List<MenuNodeConfig> Fix(List<MenuNodeConfig> nodes, string layout, int depth, string where, List<string> notes)
     {
-        bool allowFolders = !inFolder;
-        int capacity = MenuDefaults.Capacity(layout, inFolder);
+        bool allowFolders = depth < MaxDepth;
+        int capacity = MenuDefaults.Capacity(layout, inFolder: depth > 0);
         var accepted = new List<MenuNodeConfig>();
         foreach (var node in nodes)
         {
@@ -99,7 +102,7 @@ internal static class MenuRepair
             }
             if (node.Type == MenuNodeTypes.Folder && !allowFolders)
             {
-                notes.Add($"{where}: folder inside a folder dropped");
+                notes.Add($"{where}: folder nested too deep dropped");
                 continue;
             }
 
@@ -127,7 +130,7 @@ internal static class MenuRepair
                 }
             }
             if (node.Type == MenuNodeTypes.Folder)
-                node.Children = Fix(node.Children ?? [], layout, inFolder: true, node.Name ?? "folder", notes);
+                node.Children = Fix(node.Children ?? [], layout, depth + 1, node.Name ?? "folder", notes);
             else
                 node.Children = null;
             accepted.Add(node);

@@ -57,15 +57,21 @@ public class MenuEditorModelTests
     }
 
     [Fact]
-    public void Folders_hold_seven_slots_and_no_folders()
+    public void Folders_hold_seven_slots_and_other_folders()
     {
         var m = Defaults();
         m.Enter(m.At(5)!); // Power
 
         Assert.Equal(7, m.Capacity);
-        Assert.Null(m.Add(MenuNodeTypes.Folder, 4));
         Assert.Null(m.Add(MenuNodeTypes.Quit, 7));
-        Assert.NotNull(m.Add(MenuNodeTypes.Quit, 4));
+        var inner = m.Add(MenuNodeTypes.Folder, 4)!;
+        Assert.True(m.Enter(inner));
+        Assert.Equal(7, m.Capacity);
+        Assert.Equal(2, m.Path.Count);
+
+        m.Up();
+        Assert.Same(inner, m.Selected);
+        Assert.Equal("Power", m.Folder!.Name);
     }
 
     [Fact]
@@ -196,7 +202,7 @@ public class ListEditorModelTests
     }
 
     [Fact]
-    public void A_node_can_be_dropped_into_a_folder_but_a_folder_cannot()
+    public void Nodes_and_folders_can_be_dropped_into_a_folder()
     {
         var folder = new MenuNodeConfig { Type = "folder", Name = "F", Children = [] };
         var other = new MenuNodeConfig { Type = "folder", Name = "G", Children = [] };
@@ -204,11 +210,16 @@ public class ListEditorModelTests
 
         var f = m.Nodes[1];
         Assert.True(m.MoveInto(m.Nodes[0], f));
-        Assert.False(m.MoveInto(m.Nodes[1], m.Nodes[0]));
+        Assert.False(m.MoveInto(f, f));
+        Assert.True(m.MoveInto(m.Nodes[1], f)); // G into F
 
-        Assert.Equal(["F", "G"], m.Nodes.Select(n => n.Name));
-        Assert.Equal(["a"], f.Children!.Select(n => n.Name));
-        Assert.Equal(0, f.Children![0].Slot);
+        Assert.Equal(["F"], m.Nodes.Select(n => n.Name));
+        Assert.Equal(["a", "G"], f.Children!.Select(n => n.Name));
+        Assert.Equal([0, 1], f.Children!.Select(n => n.Slot));
+
+        Assert.True(m.Enter(f));
+        Assert.True(m.MoveInto(m.Nodes[0], m.Nodes[1])); // a into G, inside F
+        Assert.Equal(["a"], f.Children![0].Children!.Select(n => n.Name));
     }
 
     [Fact]

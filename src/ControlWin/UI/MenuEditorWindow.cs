@@ -403,7 +403,17 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     private (int X, int Y) RingCenter => (Px(RingCenterXDip), Px(RingCenterYDip));
 
-    private float BackAngle => _model.Folder is { } f ? MathF.PI + f.Slot * MathF.Tau / 8 : 0f;
+    /// <summary>Angle of the back node: opposite the folder's node on its parent ring, as in the radial menu.</summary>
+    private float BackAngle
+    {
+        get
+        {
+            float back = 0f;
+            for (int i = 0; i < _model.Path.Count; i++)
+                back = (i == 0 ? _model.Path[i].Slot * MathF.Tau / 8 : back + (_model.Path[i].Slot + 1) * MathF.Tau / 8) + MathF.PI;
+            return back;
+        }
+    }
 
     private float SlotAngle(int slot) =>
         _model.Folder is null ? slot * MathF.Tau / 8 : BackAngle + (slot + 1) * MathF.Tau / 8;
@@ -574,7 +584,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         // Header: title, breadcrumb, cancel.
         Text(fonts.Title, Gdi.TextColor, _model.IsList ? "List menu editor" : "Radial menu editor", Px(24), 0, Px(560), Px(HeaderDip), DT_LEFT | oneLine);
         Text(fonts.Detail, Gdi.Dim,
-            _model.Folder is { } folder ? $"ControlWin  >  {folder.Name ?? "Folder"}" : "ControlWin",
+            string.Join("  >  ", _model.Path.Select(f => f.Name ?? "Folder").Prepend("ControlWin")),
             Px(330), 0, Px(580), Px(HeaderDip), DT_LEFT | oneLine | DT_END_ELLIPSIS);
 
         if (_model.IsList) DrawList();
@@ -730,7 +740,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         if (_dragging) Redraw();
     }
 
-    /// <summary>Double click on a folder of the root goes into it.</summary>
+    /// <summary>Double click on a folder goes into it.</summary>
     private void TryEnterOnDoubleClick(MenuNodeConfig node)
     {
         if (node.Type != MenuNodeTypes.Folder || !ReferenceEquals(_lastClickNode, node)
@@ -763,7 +773,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         return _listScroll;
     }
 
-    /// <summary>Where a dragged node would land: the index to insert at, or the root folder to drop it into.</summary>
+    /// <summary>Where a dragged node would land: the index to insert at, or the folder to drop it into.</summary>
     private (int Index, MenuNodeConfig? Into) ListDrop(int y)
     {
         var nodes = _model.Nodes;
@@ -773,8 +783,8 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         {
             var over = nodes[row];
             double within = position - Math.Floor(position);
-            if (_model.Folder is null && over.Type == MenuNodeTypes.Folder && _dragNode is { } dragged
-                && dragged.Type != MenuNodeTypes.Folder && within is > 0.25 and < 0.75)
+            if (over.Type == MenuNodeTypes.Folder && _dragNode is { } dragged && !ReferenceEquals(dragged, over)
+                && within is > 0.25 and < 0.75)
                 return (row, over);
             if (within >= 0.5) row++;
         }
@@ -1055,9 +1065,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         DrawPipette(node, bx + bw - pipW, by, bx + bw, by + Px(52));
         by += Px(66);
 
-        if (isFolder && _model.Folder is null)
+        if (isFolder)
         {
-            Button(bx, by, bx + bw, by + Px(36), "Open folder", () => _model.Enter(node), primary: true);
+            Button(bx, by, bx + bw, by + Px(36), "Open folder", () => { if (_model.Enter(node)) _listScroll = 0; }, primary: true);
             by += Px(46);
         }
 
@@ -1272,7 +1282,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             Redraw();
         }, hand: false);
 
-        var types = NodeKinds.All.Where(t => MenuEditorModel.CanHold(t.Type, _model.Folder is not null)).ToArray();
+        var types = NodeKinds.All.Where(t => MenuEditorModel.CanHold(t.Type)).ToArray();
         int rowH = Px(34), width = Px(220), height = rowH * types.Length + Px(48);
         var center = RingCenter;
         int l = center.X - width / 2, t = center.Y - height / 2;

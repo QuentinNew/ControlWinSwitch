@@ -77,7 +77,7 @@ public class MenuTreeTests
     }
 
     [Fact]
-    public void A_folder_inside_a_folder_is_dropped()
+    public void A_folder_inside_a_folder_is_kept()
     {
         var inner = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [Node("quit", 0)] };
         var outer = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [inner, Node("sleep", 1)] };
@@ -85,7 +85,23 @@ public class MenuTreeTests
 
         var fixedTree = MenuRepair.Run(tree, MenuLayouts.Radial, []);
 
-        Assert.Equal(["sleep"], fixedTree[0].Children!.Select(n => n.Type));
+        Assert.Equal(["folder", "sleep"], fixedTree[0].Children!.Select(n => n.Type));
+        Assert.Equal(["quit"], fixedTree[0].Children![0].Children!.Select(n => n.Type));
+    }
+
+    [Fact]
+    public void Folders_nested_too_deep_are_dropped()
+    {
+        var deepest = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [] };
+        var node = deepest;
+        for (int i = 0; i < MenuRepair.MaxDepth; i++)
+            node = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [node] };
+        var notes = new List<string>();
+
+        MenuRepair.Run([node, Node("settings", 1)], MenuLayouts.Radial, notes);
+
+        Assert.Empty(Enumerable.Range(0, MenuRepair.MaxDepth - 1).Aggregate(node, (n, _) => n.Children![0]).Children!);
+        Assert.Contains(notes, n => n.Contains("too deep"));
     }
 
     [Fact]
