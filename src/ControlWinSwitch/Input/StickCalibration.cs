@@ -61,6 +61,17 @@ internal static class StickCalibrationParser
         return new StickCalibrations(left, right, source);
     }
 
+    /// <summary>
+    /// One stick of the same blocks, for an original Joy-Con (a left one stores its stick in the left blocks, a right one
+    /// in the right blocks): the user calibration when present, otherwise the factory one.
+    /// </summary>
+    public static AxisRange[]? CombineStick(ReadOnlySpan<byte> user, ReadOnlySpan<byte> factory, bool right)
+    {
+        var (ul, ur) = ParseUser(user);
+        var (fl, fr) = ParseFactory(factory);
+        return right ? ur ?? fr : ul ?? fl;
+    }
+
     private static (int X, int Y) Pair(ReadOnlySpan<byte> b) => (b[0] | ((b[1] & 0x0F) << 8), (b[1] >> 4) | (b[2] << 4));
 
     /// <summary>Null for a block that is blank (flash erased: all 0xFF) or has no travel.</summary>

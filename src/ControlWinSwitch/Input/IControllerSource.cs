@@ -1,8 +1,8 @@
 namespace ControlWinSwitch.Input;
 
 /// <summary>
-/// What drives one controller slot: a Pro Controller (<see cref="HidControllerReader"/>) or one or two Joy-Con 2s
-/// (<see cref="JoyConSlot"/>). Both deliver Pro Controller shaped reports, through <see cref="ControllerSet"/>'s events.
+/// What drives one controller slot: a Pro Controller (<see cref="HidControllerReader"/>) or one or two Joy-Cons of
+/// either generation (<see cref="JoyConSlot"/>). Both deliver Pro Controller shaped reports, through <see cref="ControllerSet"/>'s events.
 /// </summary>
 internal interface IControllerSource
 {
@@ -20,8 +20,8 @@ internal interface IControllerSource
     /// <summary>The identity is the MAC address.</summary>
     bool HasMac { get; }
 
-    /// <summary>The HID interface to hide from games while the slot drives a virtual pad (null: nothing to hide).</summary>
-    string? HidPath { get; }
+    /// <summary>The HID interfaces to hide from games while the slot drives a virtual pad.</summary>
+    IReadOnlyList<string> HidPaths { get; }
 
     /// <summary>
     /// Where the deadzone of the slot's left or right stick is stored: the profile id, and whether it is that profile's

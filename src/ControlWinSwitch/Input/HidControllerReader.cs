@@ -5,8 +5,13 @@ using static ControlWinSwitch.Native.Win32;
 
 namespace ControlWinSwitch.Input;
 
+/// <summary>What a <see cref="HidControllerReader"/> has open.</summary>
+internal enum HidKind : byte { Pro, JoyConLeft, JoyConRight }
+
 /// <summary>
-/// Reads Switch Pro Controller reports by opening its HID interface directly with an overlapped read.
+/// Reads Switch Pro Controller reports by opening its HID interface directly with an overlapped read. Original Joy-Cons
+/// speak the same protocol and are read the same way: their reports go to <see cref="JoyConInput"/> (for a
+/// <see cref="JoyCon1Device"/>) instead of <see cref="Report"/>.
 /// Raw Input is not used: it is served by the system itself, so HidHide hides the controller from it even
 /// for allow-listed applications. A direct open honours HidHide's application allow-list.
 /// Besides reading, it sends one standard command (set input report mode 0x30): in the default simple mode
@@ -38,7 +43,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     private uint _outputLength;
     private bool _canWrite;
     private byte _packetCounter;
-    private readonly int _slot;
+    private byte _lightMask; // 0: the LEDs are not set (yet)
     private bool _vibrationEnabled;
     private int _modeAttempts;
     private long _lastModeAttempt;
@@ -54,9 +59,8 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     private const long ModeRetryMs = 1000;
     private const long LightCheckMs = 2000;
 
-    public HidControllerReader(int slot = 0)
+    public HidControllerReader()
     {
-        _slot = slot;
         _event = CreateEventW(0, 1, 0, null); // manual reset: ReadFile resets it when a new read starts
         if (_event == 0) throw new InvalidOperationException($"CreateEvent failed ({Marshal.GetLastPInvokeError()})");
         _writeEvent = CreateEventW(0, 1, 0, null);
@@ -68,8 +72,46 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
 
     public bool IsOpen => _file != 0;
 
-    /// <summary>Raised for every decoded report (on the UI thread).</summary>
+    /// <summary>What is open (meaningful while <see cref="IsOpen"/>).</summary>
+    public HidKind Kind { get; private set; }
+
+    public string Name => Kind switch
+    {
+        HidKind.JoyConLeft => "Joy-Con (L)",
+        HidKind.JoyConRight => "Joy-Con (R)",
+        _ => "Pro Controller",
+    };
+
+    /// <summary>Raised for every decoded report of a Pro Controller (on the UI thread).</summary>
     public event Action<ProReport>? Report;
+
+    /// <summary>Raised for every full report of a Joy-Con: its input, battery level (0..4) and charging state.</summary>
+    public event Action<JoyCon2Input, int, bool>? JoyConInput;
+
+    /// <summary>The Joy-Con's stick calibration, once read (null until then, or when its flash holds none).</summary>
+    public AxisRange[]? JoyConCalibration { get; private set; }
+
+    /// <summary>The MAC address and the stick calibration were read (or given up on).</summary>
+    public bool SetUpDone => _calStep == CalStep.None
+        && (_mac is not null || !_canWrite
+            || (_infoAttempts >= MaxModeAttempts && Environment.TickCount64 - _lastInfoAttempt >= ModeRetryMs));
+
+    /// <summary>A Pro Controller now drives <paramref name="slot"/>: its player LED shows it.</summary>
+    public void Assign(int slot) => LightMask = ProCommands.PlayerLightMask(slot);
+
+    /// <summary>The player LEDs to keep lit (one bit per LED; 0 leaves them alone).</summary>
+    public byte LightMask
+    {
+        get => _lightMask;
+        set
+        {
+            if (value == _lightMask) return;
+            _lightMask = value;
+            _lightsAcked = false;
+            _lightAttempts = 0;
+            SetPlayerLights();
+        }
+    }
 
     /// <summary>Raised when the controller goes away (disconnected, or the read failed).</summary>
     public event Action? ControllerRemoved;
@@ -77,7 +119,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     /// <summary>Device path of the open controller (null when closed).</summary>
     public string? Path => _path;
 
-    public string? HidPath => _path;
+    public IReadOnlyList<string> HidPaths { get; private set; } = [];
 
     public string? PartnerId => null;
 
@@ -96,15 +138,17 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     public bool HasMac => _mac is not null;
 
     /// <summary>
-    /// Opens a controller that is present, not open yet and not in <paramref name="taken"/> (the paths other slots hold).
-    /// Cheap enough to call on every HID arrival.
+    /// Opens a controller that is present, not open yet and not in <paramref name="taken"/> (the paths other readers
+    /// hold or that are refused): a Pro Controller only when <paramref name="allowPro"/>. Cheap enough to call on every
+    /// HID arrival.
     /// </summary>
-    public void TryOpen(IReadOnlyCollection<string> taken)
+    public void TryOpen(IReadOnlyCollection<string> taken, bool allowPro)
     {
         if (_file != 0) return;
 
-        var path = FindControllerPath(taken);
-        if (path is null) return;
+        var found = FindControllerPath(taken, allowPro);
+        if (found is not { } f) return;
+        var (path, kind) = f;
 
         // Read+write so we can ask for full mode; fall back to read-only if write access is refused.
         bool canWrite = true;
@@ -121,9 +165,10 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
             if (error != _lastOpenError)
             {
                 _lastOpenError = error;
+                Kind = kind;
                 Log.Error(error == ERROR_ACCESS_DENIED
-                    ? "Pro Controller found but access denied (error 5): add this exe to HidHide's allowed applications"
-                    : $"Pro Controller found but CreateFile failed (error {error})");
+                    ? $"{Name} found but access denied (error 5): add this exe to HidHide's allowed applications"
+                    : $"{Name} found but CreateFile failed (error {error})");
             }
             return;
         }
@@ -145,6 +190,10 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
 
         _file = file;
         _path = path;
+        HidPaths = [path];
+        Kind = kind;
+        _lightMask = 0;
+        JoyConCalibration = null;
         _lastOpenError = 0;
         _bufferLength = length;
         _buffer = (byte*)NativeMemory.Alloc(length);
@@ -162,10 +211,9 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         _lastLightCheck = 0;
         var instance = HidHide.InstanceId(path);
         _fallbackId = instance is null ? null : "dev:" + instance;
-        Log.Info($"Pro Controller opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
+        Log.Info($"{Name} opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
         BeginRead();
         RequestFullMode();
-        SetPlayerLights();
         RequestDeviceInfo();
         RequestCalibration();
     }
@@ -191,16 +239,16 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
             new ReadOnlySpan<byte>(_buffer, (int)transferred).CopyTo(_managed);
             var bytes = new ReadOnlyMemory<byte>(_managed, 0, (int)transferred);
             if (IsPlayerLightsAck(bytes.Span)) _lightsAcked = true;
-            else if (ProCommands.TryParsePlayerLights(bytes.Span, out var lights) && lights != ProCommands.PlayerLightMask(_slot))
+            else if (ProCommands.TryParsePlayerLights(bytes.Span, out var lights) && _lightMask != 0 && lights != _lightMask)
             {
                 // Something else (Windows' GameInput service, a game) set the controller's LEDs: light ours again.
-                Log.Info($"Player light {_slot + 1} was changed to 0x{lights:X2} by another app: setting it again");
+                Log.Info($"{Name} player lights 0x{_lightMask:X2} were changed to 0x{lights:X2} by another app: setting them again");
                 _lightsAcked = false;
                 _lightAttempts = 0;
             }
             if (ProCommands.TryParseDeviceInfo(bytes.Span, out var mac))
             {
-                if (_mac != mac) Log.Info($"Pro Controller {_slot + 1} identified ({mac})");
+                if (_mac != mac) Log.Info($"{Name} identified ({mac})");
                 _mac = mac;
             }
             else if (ProCommands.TryParseSpiRead(bytes.Span, out var address, out var spi))
@@ -213,7 +261,9 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
                 CheckPlayerLights();
                 // Still in simple mode (e.g. the first reports after connecting, or the mode got reset): ask again.
                 if (report.Format == ReportFormat.Simple) RequestFullMode();
-                Report?.Invoke(report);
+                if (Kind == HidKind.Pro) Report?.Invoke(report);
+                else if (JoyCon1Device.TryParseInput(bytes.Span, out var input, out int battery, out bool charging))
+                    JoyConInput?.Invoke(input, battery, charging); // a Joy-Con's simple reports are laid out otherwise: ignored
             }
         }
 
@@ -327,6 +377,12 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         else if (_calStep == CalStep.Factory && address == StickCalibrationParser.FactoryAddress)
         {
             _calStep = CalStep.None;
+            if (Kind != HidKind.Pro)
+            {
+                JoyConCalibration = StickCalibrationParser.CombineStick(_userCal, data, right: Kind == HidKind.JoyConRight);
+                if (JoyConCalibration is null) Log.Error($"{Name}: the flash holds no usable stick calibration, using the default range");
+                return;
+            }
             var cal = StickCalibrationParser.Combine(_userCal, data);
             if (cal is null)
             {
@@ -354,19 +410,19 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     }
 
     /// <summary>
-    /// Lights the LED of the player number (slot 1 = LED 1, ...), so each controller shows which pad it drives.
-    /// Official pads handle one subcommand at a time and drop the ones sent right behind another, so this repeats
-    /// (rate limited, capped) from the read loop until the controller acknowledges it.
+    /// Lights <see cref="LightMask"/> (for a Pro Controller, the LED of the player number: slot 1 = LED 1, ...), so each
+    /// controller shows which pad it drives. Official pads handle one subcommand at a time and drop the ones sent right
+    /// behind another, so this repeats (rate limited, capped) from the read loop until the controller acknowledges it.
     /// </summary>
     private void SetPlayerLights()
     {
-        if (_file == 0 || !_canWrite || _lightsAcked || _lightAttempts >= MaxLightAttempts) return;
+        if (_file == 0 || !_canWrite || _lightMask == 0 || _lightsAcked || _lightAttempts >= MaxLightAttempts) return;
         long now = Environment.TickCount64;
         if (_lightAttempts > 0 && now - _lastLightAttempt < ModeRetryMs) return;
         _lastLightAttempt = now;
         _lightAttempts++;
-        if (Write(ProCommands.SetPlayerLights(_packetCounter++, ProCommands.PlayerLightMask(_slot), (int)_outputLength)))
-            Log.Info($"Player light {_slot + 1} set (attempt {_lightAttempts})");
+        if (Write(ProCommands.SetPlayerLights(_packetCounter++, _lightMask, (int)_outputLength)))
+            Log.Info($"{Name} player lights 0x{_lightMask:X2} set (attempt {_lightAttempts})");
     }
 
     /// <summary>
@@ -464,12 +520,13 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
 
     private void Fail(string reason)
     {
-        Log.Info($"Pro Controller disconnected: {reason}");
+        Log.Info($"{Name} disconnected: {reason}");
         Close();
         ControllerRemoved?.Invoke();
     }
 
-    private void Close()
+    /// <summary>Stops reading (without <see cref="ControllerRemoved"/>): the reader is free again.</summary>
+    public void Close()
     {
         if (_file == 0) return;
         if (_pending)
@@ -486,13 +543,17 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         ResetEvent(_event);
         _calStep = CalStep.None;
         _path = null;
+        HidPaths = [];
         _mac = null;
         _fallbackId = null;
         NativeMemory.Free(_buffer);
         _buffer = null;
     }
 
-    private static string? FindControllerPath(IReadOnlyCollection<string> taken)
+    private static readonly (string Pid, HidKind Kind)[] Products =
+        [("2009", HidKind.Pro), ("2006", HidKind.JoyConLeft), ("2007", HidKind.JoyConRight)];
+
+    private static (string Path, HidKind Kind)? FindControllerPath(IReadOnlyCollection<string> taken, bool allowPro)
     {
         var guid = HidInterface;
         uint length = 0;
@@ -505,10 +566,14 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         // USB: ...vid_057e&pid_2009...   Bluetooth: ..._vid&0002057e_pid&2009...
         foreach (var path in new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
-            if ((path.Contains("vid_057e&pid_2009", StringComparison.OrdinalIgnoreCase)
-                    || path.Contains("vid&0002057e_pid&2009", StringComparison.OrdinalIgnoreCase))
-                && !taken.Contains(path, StringComparer.OrdinalIgnoreCase))
-                return path;
+            if (taken.Contains(path, StringComparer.OrdinalIgnoreCase)) continue;
+            foreach (var (pid, kind) in Products)
+            {
+                if (kind == HidKind.Pro && !allowPro) continue;
+                if (path.Contains($"vid_057e&pid_{pid}", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains($"vid&0002057e_pid&{pid}", StringComparison.OrdinalIgnoreCase))
+                    return (path, kind);
+            }
         }
         return null;
     }

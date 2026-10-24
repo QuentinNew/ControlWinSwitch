@@ -1,14 +1,15 @@
 namespace ControlWinSwitch.Input;
 
 /// <summary>
-/// A controller slot driven by Joy-Con 2s: a left and a right one together (a Pro Controller), or one alone held
-/// sideways. When half of a pair goes, the other carries on alone in the same slot; a Joy-Con of the other side may join
-/// a lone one again, unless that one was connected with SL / SR held (sideways on purpose). UI thread only.
+/// A controller slot driven by Joy-Cons (Joy-Con 2s or original ones, mixed or not): a left and a right one together (a
+/// Pro Controller), or one alone held sideways. When half of a pair goes, the other carries on alone in the same slot; a
+/// Joy-Con of the other side may join a lone one again, unless that one was connected with SL / SR held (sideways on
+/// purpose). UI thread only.
 /// </summary>
 internal sealed class JoyConSlot : IControllerSource
 {
     private readonly int _slot;
-    private JoyCon2Device? _left, _right;
+    private IJoyCon? _left, _right;
     private JoyCon2Input? _leftInput, _rightInput;
     private bool _sidewaysByChoice;
 
@@ -26,7 +27,7 @@ internal sealed class JoyConSlot : IControllerSource
     public bool IsOpen => _left is not null || _right is not null;
 
     /// <summary>The Joy-Cons in the slot (left first).</summary>
-    public IEnumerable<JoyCon2Device> Devices => new[] { _left, _right }.OfType<JoyCon2Device>();
+    public IEnumerable<IJoyCon> Devices => new[] { _left, _right }.OfType<IJoyCon>();
 
     public JoyConLayout Layout => JoyCon2Mapper.LayoutOf(_left is not null, _right is not null);
 
@@ -42,7 +43,8 @@ internal sealed class JoyConSlot : IControllerSource
 
     public bool HasMac => true;
 
-    public string? HidPath => null; // not a HID device: games cannot see it
+    /// <summary>Original Joy-Cons are HID devices games could read; Joy-Con 2s are not.</summary>
+    public IReadOnlyList<string> HidPaths { get; private set; } = [];
 
     public (string Id, bool RightField)? StickProfile(bool right) => Layout switch
     {
@@ -52,7 +54,7 @@ internal sealed class JoyConSlot : IControllerSource
         _ => right ? null : (_right!.Mac, true),
     };
 
-    public void Add(JoyCon2Device device)
+    public void Add(IJoyCon device)
     {
         if (!IsOpen) _sidewaysByChoice = device.SideButtonsHeld;
         if (device.Side == JoyConSide.Left) _left = device;
@@ -62,7 +64,7 @@ internal sealed class JoyConSlot : IControllerSource
         LayoutChanged();
     }
 
-    private void OnRemoved(JoyCon2Device device)
+    private void OnRemoved(IJoyCon device)
     {
         device.Input -= OnInput;
         device.Removed -= OnRemoved;
@@ -73,6 +75,7 @@ internal sealed class JoyConSlot : IControllerSource
         if (IsOpen) LayoutChanged();
         else
         {
+            HidPaths = [];
             _sidewaysByChoice = false;
             ControllerRemoved?.Invoke();
         }
@@ -82,14 +85,15 @@ internal sealed class JoyConSlot : IControllerSource
     private void LayoutChanged()
     {
         var layout = Layout;
-        Log.Info($"Controller {_slot + 1}: {(layout == JoyConLayout.Combined ? "Joy-Con 2 pair" : (_left ?? _right)!.Name + " alone")}");
+        HidPaths = Devices.Select(d => d.HidPath).OfType<string>().ToArray();
+        Log.Info($"Controller {_slot + 1}: {(layout == JoyConLayout.Combined ? $"{_left!.Name} + {_right!.Name}" : (_left ?? _right)!.Name + " alone")}");
         byte mask = ProCommands.PlayerLightMask(_slot);
         _left?.SetLeds(mask);
         _right?.SetLeds(layout == JoyConLayout.SingleRight ? JoyCon2Protocol.ReverseLeds(mask) : mask);
         CalibrationRead?.Invoke(JoyCon2Mapper.Calibration(layout, _left?.Calibration, _right?.Calibration));
     }
 
-    private void OnInput(JoyCon2Device device, JoyCon2Input input)
+    private void OnInput(IJoyCon device, JoyCon2Input input)
     {
         if (device == _left) _leftInput = input;
         else if (device == _right) _rightInput = input;
@@ -103,19 +107,19 @@ internal sealed class JoyConSlot : IControllerSource
         // The battery badge shows the emptier Joy-Con.
         int battery = -1;
         bool charging = false;
-        foreach (var half in new[] { left, right })
+        foreach (var (d, half) in new[] { (_left, left), (_right, right) })
         {
-            if (half is not { } h) continue;
-            int level = JoyCon2Protocol.BatteryLevel(h.BatteryMv);
+            if (d is null || half is not { } h) continue;
+            var (level, charge) = d.Battery(h);
             if (level < 0 || (battery >= 0 && level >= battery)) continue;
             battery = level;
-            charging = h.BatteryCurrent > 0;
+            charging = charge;
         }
 
         Report?.Invoke(JoyCon2Mapper.Map(left, right, lc, rc, battery, charging));
     }
 
-    private static (int X, int Y) Center(JoyCon2Device? d) =>
+    private static (int X, int Y) Center(IJoyCon? d) =>
         d?.Calibration is { } c ? (c[0].Center, c[1].Center) : (JoyCon2Mapper.DefaultCenter, JoyCon2Mapper.DefaultCenter);
 
     private static JoyCon2Input Neutral((int X, int Y) c) => new(0, c.X, c.Y, c.X, c.Y, 0, 0);
@@ -125,10 +129,9 @@ internal sealed class JoyConSlot : IControllerSource
     public bool SetRumbleMotors(byte large, byte small, int percent)
     {
         if (!IsOpen) return false;
-        var (low, high) = JoyCon2Protocol.Amplitudes(large, small, percent);
         bool sent = false;
-        if (_left is not null) sent |= _left.SetRumble(low, high);
-        if (_right is not null) sent |= _right.SetRumble(low, high);
+        if (_left is not null) sent |= _left.SetRumbleMotors(large, small, percent);
+        if (_right is not null) sent |= _right.SetRumbleMotors(large, small, percent);
         return sent;
     }
 

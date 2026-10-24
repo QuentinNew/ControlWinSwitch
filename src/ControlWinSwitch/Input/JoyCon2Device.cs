@@ -10,7 +10,7 @@ namespace ControlWinSwitch.Input;
 /// its disconnection reach the UI thread through the hub's queue (<see cref="Input"/>, <see cref="Removed"/>), and the
 /// UI thread drives LEDs and rumble; every GATT call itself runs on the thread pool.
 /// </summary>
-internal sealed class JoyCon2Device
+internal sealed class JoyCon2Device : IJoyCon
 {
     private const int CommandTimeoutMs = 1500, FirstInputTimeoutMs = 2000;
     private const long RumbleResendMs = 20, RumbleHoldMs = 1000;
@@ -47,11 +47,16 @@ internal sealed class JoyCon2Device
 
     public string Name => Side == JoyConSide.Left ? "Joy-Con 2 (L)" : "Joy-Con 2 (R)";
 
+    public string? HidPath => null; // not a HID device: games cannot see it
+
+    public (int Level, bool Charging) Battery(in JoyCon2Input input) =>
+        (JoyCon2Protocol.BatteryLevel(input.BatteryMv), input.BatteryCurrent > 0);
+
     /// <summary>Raised on the UI thread for every input notification.</summary>
-    public event Action<JoyCon2Device, JoyCon2Input>? Input;
+    public event Action<IJoyCon, JoyCon2Input>? Input;
 
     /// <summary>Raised once on the UI thread when the connection is lost (or <see cref="Disconnect"/> was called).</summary>
-    public event Action<JoyCon2Device>? Removed;
+    public event Action<IJoyCon>? Removed;
 
     /// <summary>
     /// Connects, reads the calibration, pairs it when <paramref name="pair"/> (writes our address so it reconnects to
@@ -276,6 +281,12 @@ internal sealed class JoyCon2Device
         _rumbleSet = Environment.TickCount64;
         SendRumble();
         return true;
+    }
+
+    public bool SetRumbleMotors(byte large, byte small, int percent)
+    {
+        var (low, high) = JoyCon2Protocol.Amplitudes(large, small, percent);
+        return SetRumble(low, high);
     }
 
     private void ResendRumble()

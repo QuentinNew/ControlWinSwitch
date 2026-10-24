@@ -549,7 +549,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         ReloadConfigIfChanged();
         SyncKnown();
-        RefreshRememberedPros();
+        RefreshRemembered();
         _pad.SubmitNeutral();
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
@@ -986,7 +986,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_padEnabled && !_padFailed && !_shutDown && Config.VirtualPad.HidePhysical)
         {
             for (int i = 0; i < _slots.Length; i++)
-                if (_set.Source(i).HidPath is { } path && _slots[i].Pad.IsAttached) wanted.Add(path);
+                if (_slots[i].Pad.IsAttached) wanted.AddRange(_set.Source(i).HidPaths);
         }
         wanted.Sort(StringComparer.OrdinalIgnoreCase);
         string key = string.Join('|', wanted);
@@ -1016,7 +1016,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
             return;
         }
-        if (_set.Source(index).HidPath is { } path && !_hiddenKey.Contains(path, StringComparison.OrdinalIgnoreCase)) SyncHiding(); // just attached
+        var paths = _set.Source(index).HidPaths;
+        for (int i = 0; i < paths.Count; i++)
+            if (!_hiddenKey.Contains(paths[i], StringComparison.OrdinalIgnoreCase))
+            {
+                SyncHiding(); // just attached
+                break;
+            }
 
         var state = slot.State;
         slot.IgnoreMask &= state.Current;
@@ -1282,23 +1288,23 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.CloseControllerPage() => CloseControllerPage();
 
-    void ISettingsHost.AddController() => StartPairing(onlyPro: null);
+    void ISettingsHost.AddController() => StartPairing(only: null);
 
     /// <summary>
-    /// Searches for a controller in sync mode: a Pro Controller (<paramref name="onlyPro"/>: that one only, by MAC) and,
-    /// when any controller is wanted, a Joy-Con 2.
+    /// Searches for a controller in sync mode: a Pro Controller or an original Joy-Con (<paramref name="only"/>: that one
+    /// only, by MAC) and, when any controller is wanted, a Joy-Con 2.
     /// </summary>
-    private void StartPairing(string? onlyPro)
+    private void StartPairing(string? only)
     {
         if (_pairing || _shutDown) return;
         _pairing = true;
         _pairedJoyCons = 0;
         _toast.Show(MenuPages.Game, "Searching... Please hold sync button");
-        if (onlyPro is null) _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
+        if (only is null) _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
         nint hwnd = _window.Handle;
         new Thread(() =>
         {
-            var result = BluetoothPairing.PairProController(onlyPro);
+            var result = BluetoothPairing.PairController(only);
             PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)result, 0);
         }) { IsBackground = true, Name = "pairing" }.Start();
     }
@@ -1310,7 +1316,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _set.Hub.StopPairing();
         if (_shutDown) return;
         Log.Info($"Pairing: {result}");
-        RefreshRememberedPros();
+        RefreshRemembered();
         if (result == PairResult.NotFound && _pairedJoyCons > 0)
         {
             if (_mode == Mode.Settings) _settingsWindow.Refresh();
@@ -1318,7 +1324,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         _toast.Show(MenuPages.Game, result switch
         {
-            PairResult.Paired => "Pro Controller paired",
+            PairResult.Paired => "Controller paired",
             PairResult.NotFound => "No new controller found",
             _ => "Pairing failed - try Windows Bluetooth settings",
         });
@@ -1347,7 +1353,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private const long KnownSyncMs = 1000;
     private long _lastKnownSync;
     private readonly HashSet<string> _connectedMacs = [];
-    private List<RememberedController> _rememberedPros = [];
+    private List<RememberedController> _remembered = [];
 
     /// <summary>
     /// Records the controllers that connected or went away since the last call: a new one joins the known list, and
@@ -1390,23 +1396,26 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    /// <summary>Reads the Pro Controllers Windows remembers; one the app has not seen yet joins the known list.</summary>
-    private void RefreshRememberedPros()
+    /// <summary>Reads the Pro Controllers and original Joy-Cons Windows remembers; one the app has not seen yet joins the known list.</summary>
+    private void RefreshRemembered()
     {
-        _rememberedPros = BluetoothPairing.RememberedProControllers();
+        _remembered = BluetoothPairing.RememberedControllers();
         bool added = false;
-        foreach (var pro in _rememberedPros)
+        foreach (var controller in _remembered)
         {
-            if (Config.KnownControllers.ContainsKey(pro.Mac)) continue;
-            Config.KnownControllers[pro.Mac] = new KnownController
+            if (Config.KnownControllers.ContainsKey(controller.Mac)) continue;
+            Config.KnownControllers[controller.Mac] = new KnownController
             {
-                Kind = ControllerKinds.Pro,
-                LastSeen = pro.LastUsed == DateTime.MinValue ? DateTime.UtcNow : pro.LastUsed,
+                Kind = controller.Kind,
+                LastSeen = controller.LastUsed == DateTime.MinValue ? DateTime.UtcNow : controller.LastUsed,
             };
             added = true;
         }
         if (added) _store.Save();
     }
+
+    /// <summary>Windows remembers the controller: a Pro Controller or an original Joy-Con (a Joy-Con 2 never is).</summary>
+    private bool PairedInWindows(string key) => _remembered.Exists(c => c.Mac == key);
 
     /// <summary>The known controllers that are not connected (a Pro Controller only while Windows remembers it), last seen first.</summary>
     IReadOnlyList<string> ISettingsHost.PairedControllers
@@ -1417,7 +1426,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             foreach (var (mac, known) in Config.KnownControllers)
             {
                 if (_connectedMacs.Contains(mac)) continue;
-                if (known.Kind == ControllerKinds.Pro && !_rememberedPros.Exists(p => p.Mac == mac)) continue;
+                if (known.Kind == ControllerKinds.Pro && !PairedInWindows(mac)) continue;
                 list.Add((mac, known.LastSeen));
             }
             list.Sort((a, b) => b.Seen.CompareTo(a.Seen));
@@ -1451,14 +1460,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.ForgetController(string key)
     {
-        if (KindOf(key) == ControllerKinds.Pro)
+        if (KindOf(key) == ControllerKinds.Pro || PairedInWindows(key))
         {
             if (!BluetoothPairing.Forget(key)) _toast.Show(MenuPages.Game, "Could not forget the controller");
-            RefreshRememberedPros();
+            RefreshRemembered();
         }
-        else
+        if (KindOf(key) != ControllerKinds.Pro)
         {
-            Config.KnownControllers.Remove(key); // a Joy-Con 2 is not paired in Windows: it comes back when it connects
+            Config.KnownControllers.Remove(key); // a Joy-Con comes back when it connects (an original one once paired again)
             _store.Save();
         }
         // Forgotten from its own page: back to the Controller tab.
@@ -1468,8 +1477,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.RepairController(string key)
     {
-        if (KindOf(key) == ControllerKinds.Pro) StartPairing(onlyPro: key);
-        else StartPairing(onlyPro: null); // a Joy-Con 2 in sync mode is claimed by the hub
+        if (KindOf(key) == ControllerKinds.Pro || PairedInWindows(key)) StartPairing(only: key);
+        else StartPairing(only: null); // a Joy-Con 2 in sync mode is claimed by the hub
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 

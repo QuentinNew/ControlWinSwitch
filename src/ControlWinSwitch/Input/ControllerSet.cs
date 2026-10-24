@@ -1,15 +1,24 @@
 namespace ControlWinSwitch.Input;
 
 /// <summary>
-/// Up to four controllers. Each slot is driven either by a Pro Controller (its <see cref="HidControllerReader"/>) or by
-/// Joy-Con 2s (its <see cref="JoyConSlot"/>, fed by the <see cref="Hub"/>). The events carry the slot index.
+/// Up to four controllers. Each slot is driven either by a Pro Controller (a <see cref="HidControllerReader"/>) or by
+/// Joy-Cons (its <see cref="JoyConSlot"/>): Joy-Con 2s found by the <see cref="Hub"/>, original Joy-Cons read by a
+/// <see cref="HidControllerReader"/> each. The readers are a pool: one opens whatever Nintendo HID controller comes. The
+/// events carry the slot index.
 /// </summary>
 internal sealed class ControllerSet : IDisposable
 {
     public const int Slots = 4;
 
-    private readonly HidControllerReader[] _hid = new HidControllerReader[Slots];
+    /// <summary>HID readers: enough for a pair of original Joy-Cons in every slot.</summary>
+    public const int Readers = 2 * Slots;
+
+    private readonly HidControllerReader[] _hid = new HidControllerReader[Readers];
+    private readonly HidControllerReader?[] _pro = new HidControllerReader?[Slots];
     private readonly JoyConSlot[] _joy = new JoyConSlot[Slots];
+
+    /// <summary>Original Joy-Cons that found no slot: not opened again until they reconnect or a slot frees up.</summary>
+    private readonly HashSet<string> _refused = new(StringComparer.OrdinalIgnoreCase);
 
     public JoyCon2Hub Hub { get; } = new();
 
@@ -27,23 +36,38 @@ internal sealed class ControllerSet : IDisposable
 
     public ControllerSet()
     {
-        for (int i = 0; i < Slots; i++)
+        for (int i = 0; i < Readers; i++)
         {
-            int slot = i;
-            var hid = _hid[slot] = new HidControllerReader(slot);
-            hid.Report += report => Report?.Invoke(slot, report);
-            hid.CalibrationRead += cal => CalibrationRead?.Invoke(slot, cal);
+            var hid = _hid[i] = new HidControllerReader();
+            hid.Report += report =>
+            {
+                int slot = Array.IndexOf(_pro, hid);
+                if (slot >= 0) Report?.Invoke(slot, report);
+            };
+            hid.CalibrationRead += cal =>
+            {
+                int slot = Array.IndexOf(_pro, hid);
+                if (slot >= 0) CalibrationRead?.Invoke(slot, cal);
+            };
             hid.ControllerRemoved += () =>
             {
+                int slot = Array.IndexOf(_pro, hid);
+                if (slot < 0) return; // a Joy-Con: its JoyCon1Device tells its slot
+                _pro[slot] = null;
+                _refused.Clear();
                 ControllerRemoved?.Invoke(slot);
                 UpdateScanning();
             };
-
+        }
+        for (int i = 0; i < Slots; i++)
+        {
+            int slot = i;
             var joy = _joy[slot] = new JoyConSlot(slot);
             joy.Report += report => Report?.Invoke(slot, report);
             joy.CalibrationRead += cal => CalibrationRead?.Invoke(slot, cal);
             joy.ControllerRemoved += () =>
             {
+                _refused.Clear();
                 ControllerRemoved?.Invoke(slot);
                 UpdateScanning();
             };
@@ -52,14 +76,14 @@ internal sealed class ControllerSet : IDisposable
     }
 
     /// <summary>What drives the slot (a closed source when the slot is free).</summary>
-    public IControllerSource Source(int slot) => _hid[slot].IsOpen ? _hid[slot] : _joy[slot];
+    public IControllerSource Source(int slot) => _pro[slot] ?? (IControllerSource)_joy[slot];
 
     /// <summary>The physical controllers in the slot whose MAC is known, with their kind (one of <see cref="Config.ControllerKinds"/>).</summary>
     public IEnumerable<(string Mac, string Kind)> Devices(int slot)
     {
-        if (_hid[slot].IsOpen)
+        if (_pro[slot] is { } pro)
         {
-            if (_hid[slot].HasMac) yield return (_hid[slot].Id!, Config.ControllerKinds.Pro);
+            if (pro.HasMac) yield return (pro.Id!, Config.ControllerKinds.Pro);
             yield break;
         }
         foreach (var device in _joy[slot].Devices)
@@ -70,27 +94,40 @@ internal sealed class ControllerSet : IDisposable
 
     public int OpenCount => Enumerable.Range(0, Slots).Count(i => Source(i).IsOpen);
 
-    /// <summary>Signaled when the slot's Pro Controller read completed (wait on it, then call <see cref="OnHidSignaled"/>).</summary>
-    public nint HidEventHandle(int slot) => _hid[slot].EventHandle;
+    /// <summary>Signaled when the reader's pending read completed (wait on it, then call <see cref="OnHidSignaled"/>).</summary>
+    public nint HidEventHandle(int reader) => _hid[reader].EventHandle;
 
-    public void OnHidSignaled(int slot) => _hid[slot].OnSignaled();
+    public void OnHidSignaled(int reader) => _hid[reader].OnSignaled();
 
-    /// <summary>Opens every Pro Controller that is present and not open yet, each in the first free slot.</summary>
+    private int FreeSlot() => Enumerable.Range(0, Slots).FirstOrDefault(i => !Source(i).IsOpen, -1);
+
+    /// <summary>
+    /// Opens every Pro Controller and original Joy-Con that is present and not open yet: a Pro Controller takes the first
+    /// free slot right away, a Joy-Con finds its slot once it is set up (<see cref="OnJoyConReady"/>).
+    /// </summary>
     public void TryOpen()
     {
-        var taken = _hid.Where(r => r.Path is not null).Select(r => r.Path!).ToList();
-        for (int i = 0; i < Slots; i++)
+        var taken = _hid.Where(r => r.Path is not null).Select(r => r.Path!).Concat(_refused).ToList();
+        foreach (var reader in _hid)
         {
-            var reader = _hid[i];
-            if (reader.IsOpen || _joy[i].IsOpen) continue;
-            reader.TryOpen(taken);
-            if (reader.Path is not null) taken.Add(reader.Path);
+            if (reader.IsOpen) continue;
+            int free = FreeSlot();
+            reader.TryOpen(taken, allowPro: free >= 0);
+            if (reader.Path is not { } path) continue;
+            taken.Add(path);
+            if (reader.Kind == HidKind.Pro)
+            {
+                _pro[free] = reader;
+                reader.Assign(free);
+            }
+            else new JoyCon1Device(reader).Ready += OnJoyConReady;
         }
         UpdateScanning();
     }
 
     public void OnInterfaceRemoved(string path)
     {
+        _refused.Remove(path);
         foreach (var reader in _hid) reader.OnInterfaceRemoved(path);
     }
 
@@ -98,14 +135,14 @@ internal sealed class ControllerSet : IDisposable
     /// A Joy-Con is ready: it joins a lone Joy-Con of the other side (unless SL / SR is held: it stays alone, sideways),
     /// otherwise it takes the first free slot.
     /// </summary>
-    private void OnJoyConReady(JoyCon2Device device)
+    private void OnJoyConReady(IJoyCon device)
     {
         int slot = device.SideButtonsHeld ? -1 : Array.FindIndex(_joy, j => j.CanTake(device.Side));
-        if (slot < 0)
-            slot = Enumerable.Range(0, Slots).FirstOrDefault(i => !Source(i).IsOpen, -1);
+        if (slot < 0) slot = FreeSlot();
         if (slot < 0)
         {
             Log.Info($"{device.Name} {device.Mac}: every controller slot is taken");
+            if (device.HidPath is { } path) _refused.Add(path);
             device.Disconnect();
             return;
         }
@@ -114,7 +151,7 @@ internal sealed class ControllerSet : IDisposable
         UpdateScanning();
     }
 
-    /// <summary>Scans for Joy-Cons while one could still find a slot (a free one, or a lone Joy-Con waiting for a partner).</summary>
+    /// <summary>Scans for Joy-Con 2s while one could still find a slot (a free one, or a lone Joy-Con waiting for a partner).</summary>
     private void UpdateScanning()
     {
         bool room = false;

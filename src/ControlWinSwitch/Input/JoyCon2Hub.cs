@@ -206,7 +206,7 @@ internal sealed class JoyCon2Hub : IDisposable
                 return;
             }
             _devices.Add(device);
-            device.Removed += d => _devices.Remove(d);
+            device.Removed += _ => _devices.Remove(device);
             if (pair) DevicePaired?.Invoke(device);
             DeviceReady?.Invoke(device);
         });

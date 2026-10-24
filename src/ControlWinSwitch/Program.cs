@@ -56,17 +56,18 @@ internal static unsafe class Program
     /// <summary>Event-driven loop: blocks until a message or a controller report arrives (~0% CPU idle).</summary>
     private static void RunMessageLoop(ControllerSet set, AppController controller)
     {
-        // Wait set: the Pro Controllers' reports, the Joy-Con 2 queue, the virtual pads' rumble requests, the mouse timer
-        // (signalled only while a stick moves the cursor) and the watched process (signalled when it exits). Pads, mouse
-        // and process change at run time, so the set is rebuilt on every iteration.
-        const int Slots = ControllerSet.Slots, MouseId = 2 * Slots, WatchId = 2 * Slots + 1, JoyConId = 2 * Slots + 2;
-        nint* handles = stackalloc nint[2 * Slots + 3];
-        int* ids = stackalloc int[2 * Slots + 3]; // 0..3 reader, 4..7 pad rumble, then mouse, watch, Joy-Cons
+        // Wait set: the HID readers' reports (Pro Controllers, original Joy-Cons), the Joy-Con 2 queue, the virtual pads'
+        // rumble requests, the mouse timer (signalled only while a stick moves the cursor) and the watched process
+        // (signalled when it exits). Pads, mouse and process change at run time, so the set is rebuilt on every iteration.
+        const int Slots = ControllerSet.Slots, Readers = ControllerSet.Readers, PadBase = Readers,
+            MouseId = Readers + Slots, WatchId = MouseId + 1, JoyConId = MouseId + 2;
+        nint* handles = stackalloc nint[JoyConId + 1];
+        int* ids = stackalloc int[JoyConId + 1]; // readers, then pad rumble, then mouse, watch, Joy-Con 2s
         MSG msg;
         while (true)
         {
             uint count = 0;
-            for (int i = 0; i < Slots; i++)
+            for (int i = 0; i < Readers; i++)
             {
                 ids[count] = i;
                 handles[count++] = set.HidEventHandle(i);
@@ -77,7 +78,7 @@ internal static unsafe class Program
             {
                 nint pad = controller.PadNotifyHandle(i);
                 if (pad == 0) continue;
-                ids[count] = Slots + i;
+                ids[count] = PadBase + i;
                 handles[count++] = pad;
             }
             if (controller.MouseTimerHandle != 0)
@@ -96,8 +97,8 @@ internal static unsafe class Program
             if (r < WAIT_OBJECT_0 + count)
             {
                 int id = ids[r - WAIT_OBJECT_0];
-                if (id < Slots) set.OnHidSignaled(id);
-                else if (id < MouseId) controller.OnPadNotify(id - Slots);
+                if (id < Readers) set.OnHidSignaled(id);
+                else if (id < MouseId) controller.OnPadNotify(id - PadBase);
                 else if (id == MouseId) controller.OnMouseTick();
                 else if (id == JoyConId) set.Hub.OnSignaled();
                 else controller.OnWatchedProcessExited();

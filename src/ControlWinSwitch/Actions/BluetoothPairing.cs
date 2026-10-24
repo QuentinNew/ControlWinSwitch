@@ -4,12 +4,15 @@ namespace ControlWinSwitch.Actions;
 
 internal enum PairResult { Paired, NotFound, Failed }
 
-/// <summary>A Pro Controller Windows remembers: its MAC address, whether it is connected and when it was last used (UTC).</summary>
-internal readonly record struct RememberedController(string Mac, bool Connected, DateTime LastUsed);
+/// <summary>
+/// A Pro Controller or original Joy-Con Windows remembers: its MAC address, whether it is connected, when it was last
+/// used (UTC) and its kind (one of <see cref="Config.ControllerKinds"/>).
+/// </summary>
+internal readonly record struct RememberedController(string Mac, bool Connected, DateTime LastUsed, string Kind);
 
 /// <summary>
-/// Pairs a Pro Controller put in pairing mode with its sync button, the way "Add a device" does: inquiry, then
-/// authenticate and enable the HID service. One Windows already remembers is paired again only when it answers the
+/// Pairs a Pro Controller or an original Joy-Con put in pairing mode with its sync button, the way "Add a device" does:
+/// inquiry, then authenticate and enable the HID service. One Windows already remembers is paired again only when it answers the
 /// inquiry (it is in sync mode): the remembered pairing is stale after the controller was paired with a Switch.
 /// Blocks for the search (<see cref="SearchMs"/>): run it on a worker thread.
 /// </summary>
@@ -17,14 +20,20 @@ internal static unsafe class BluetoothPairing
 {
     private static readonly Guid HidService = new("00001124-0000-1000-8000-00805F9B34FB");
 
-    private const string ControllerName = "Pro Controller";
+    /// <summary>The kind of a classic Bluetooth controller by its name ("Pro Controller", "Joy-Con (L)", "Joy-Con (R)"), null for anything else.</summary>
+    internal static string? KindOfName(string name) =>
+        name.Contains("Pro Controller", StringComparison.OrdinalIgnoreCase) ? Config.ControllerKinds.Pro
+        : name.Contains("Joy-Con (L)", StringComparison.OrdinalIgnoreCase) ? Config.ControllerKinds.JoyConLeft
+        : name.Contains("Joy-Con (R)", StringComparison.OrdinalIgnoreCase) ? Config.ControllerKinds.JoyConRight
+        : null;
+
     private const uint MitmNotRequiredBonding = 2, ServiceEnable = 1;
 
     /// <summary>How long the search lasts (inquiry rounds of about five seconds each).</summary>
     public const int SearchMs = 40_000;
 
-    /// <summary>Pairs a Pro Controller in sync mode; <paramref name="only"/>: that controller only (its MAC), null for any.</summary>
-    public static PairResult PairProController(string? only = null)
+    /// <summary>Pairs a Pro Controller or original Joy-Con in sync mode; <paramref name="only"/>: that controller only (its MAC), null for any.</summary>
+    public static PairResult PairController(string? only = null)
     {
         try
         {
@@ -61,8 +70,8 @@ internal static unsafe class BluetoothPairing
         }
     }
 
-    /// <summary>The Pro Controllers Windows remembers (paired), connected or not.</summary>
-    public static List<RememberedController> RememberedProControllers()
+    /// <summary>The Pro Controllers and original Joy-Cons Windows remembers (paired), connected or not.</summary>
+    public static List<RememberedController> RememberedControllers()
     {
         var list = new List<RememberedController>();
         try
@@ -86,9 +95,9 @@ internal static unsafe class BluetoothPairing
                 do
                 {
                     string name = new((char*)(info + 64));
-                    if (!name.Contains(ControllerName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (KindOfName(name) is not { } kind) continue;
                     list.Add(new RememberedController(FormatAddress(*(ulong*)(info + 8)), *(int*)(info + 20) != 0,
-                        ReadTime(info + 48) ?? DateTime.MinValue));
+                        ReadTime(info + 48) ?? DateTime.MinValue, kind));
                 } while (BluetoothFindNextDevice(find, info) != 0);
             }
             finally { BluetoothFindDeviceClose(find); }
@@ -209,7 +218,7 @@ internal static unsafe class BluetoothPairing
             {
                 string name = new((char*)(info + 64));
                 ulong address = *(ulong*)(info + 8);
-                if (!name.Contains(ControllerName, StringComparison.OrdinalIgnoreCase) || (target != 0 && address != target)) continue;
+                if (KindOfName(name) is null || (target != 0 && address != target)) continue;
                 if (*(int*)(info + 28) != 0) // authenticated: Windows already knows it
                 {
                     // Connected, or not in sync mode: nothing to do. In sync mode: its pairing is stale, pair it again.
