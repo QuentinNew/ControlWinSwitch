@@ -16,7 +16,7 @@ internal sealed unsafe class RadialOverlay : NativeWindow
     public const string ClassName = "ControlWinSwitch.Radial";
 
     // Layout in DIPs.
-    private const int RingDip = 150, RingStepDip = 25, MinRingDip = 100;
+    private const int RingDip = 150, RingStepDip = 15, MinRingDip = 135;
     private const int NodeDip = 34, SelectedNodeDip = 40, PillHeightDip = 34, BarDip = 28;
 
     private static readonly uint NodeColor = Rgb(0x2A, 0x2A, 0x30);   // same as the list's panels

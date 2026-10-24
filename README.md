@@ -1,8 +1,13 @@
 # ControlWinSwitch
+![logo.svg](assets/logo.svg)
+A background app that act as an Xbox or DualShock controller from the following **Nintendo Switch** controllers :
+- Switch Pro Controller
+- Switch 2 Joy-Con
+- Switch 1 Joy-Con
 
-A background app that lets you control a Windows PC from a **Nintendo Switch Pro Controller** (including Pro-style pads in Switch mode) or **Switch 2 Joy-Cons**: open a menu with the **Capture** button, drive the mouse with the sticks, launch games, expose a virtual Xbox 360 or DualShock 4 pad, connect a Bluetooth headset, sleep or shut down the PC, all keyboard and mouse free!
+Pressing the **Capture** button let you open a customizable menu allowing all kind of shortcuts!
 
-Written in C# / .NET 10, compiled with **NativeAOT** and uses plain Win32 and GDI. It uses a few MB of RAM and no CPU while idle.
+
 
 ## Features
 
@@ -19,16 +24,15 @@ Written in C# / .NET 10, compiled with **NativeAOT** and uses plain Win32 and GD
 ## Requirements
 
 - Windows 10/11, x64
-- A Switch Pro Controller (VID `057E`, PID `2009`) paired over Bluetooth, or plugged in over USB (see [Known limitations](#known-limitations)), and / or Switch 2 Joy-Cons with a Bluetooth adapter that supports Bluetooth Low Energy
-- [ViGEmBus](https://github.com/nefarius/ViGEmBus) for the virtual pad (everything else works without it)
+- [ViGEmBus](https://github.com/nefarius/ViGEmBus)
 - Optional: [HidHide](https://github.com/nefarius/HidHide), so games see only the virtual pad
 
 ## Install
 
-1. Download `ControlWinSwitch-<version>-win-x64.zip` from the [Releases](../../releases) page and unzip it to any folder (for example `C:\Tools\ControlWinSwitch`). There is no installer: the exe is the whole app.
-2. Install ViGEmBus and HidHide.
+1. Download `ControlWinSwitch-<version>-win-x64.zip` from the [Releases](../../releases) page and unzip it to any folder.
+2. Install [ViGEmBus](https://github.com/nefarius/ViGEmBus) and [HidHide](https://github.com/nefarius/HidHide).
 3. Start `ControlWinSwitch.exe`. The app runs invisibly apart from its [tray icon](#tray-icon). Press **Capture** to open the [menu](#menu-capture-button).
-4. To start it with Windows: Settings → **Other** → **Launch on startup**. When ControlWinSwitch runs as administrator this creates a scheduled task that starts it elevated at logon with no UAC prompt (needed to control elevated windows); otherwise it uses the per-user Run key and starts without administrator rights. To get the elevated task, run `ControlWinSwitch.exe` once as administrator and turn the setting on.
+4. To start it with Windows: Settings → **Other** → **Launch on startup**.
 
 To uninstall: turn Launch on startup off, quit ControlWinSwitch and delete its folder. Settings live in `%APPDATA%\ControlWinSwitch\` (delete it too to remove everything).
 
