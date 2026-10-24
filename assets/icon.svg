@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- One node of the logo: dark circle, blue border, white Switch icon -->
+  <!-- r + half the stroke = 256: the border touches the edges of the area -->
+  <circle cx="256" cy="256" r="244" fill="#2a2a2f" stroke="#2F5BD3" stroke-width="24"/>
+  <svg x="110" y="110" width="292" height="292" viewBox="0 0 48 48">
+    <g fill="none" stroke="#fff" stroke-width="3">
+      <path d="M6 12a8 8 0 0 1 8-8h5a2 2 0 0 1 2 2v34a2 2 0 0 1-2 2h-5a8 8 0 0 1-8-8zm36 2a8 8 0 0 0-8-8h-6a2 2 0 0 0-2 2v34a2 2 0 0 0 2 2h6a8 8 0 0 0 8-8z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h-3m22 11v6m-3-3h6"/>
+    </g>
+    <rect width="5" height="5" x="11" y="30" fill="#fff" rx="2.5"/>
+    <rect width="5" height="5" x="31.5" y="14" fill="#fff" rx="2.5"/>
+  </svg>
+</svg>

@@ -194,14 +194,6 @@ internal unsafe struct SHFILEINFOW
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal struct ICONINFO
-{
-    public int fIcon;
-    public uint xHotspot, yHotspot;
-    public nint hbmMask, hbmColor;
-}
-
-[StructLayout(LayoutKind.Sequential)]
 internal struct BITMAPINFOHEADER
 {
     public uint biSize;
@@ -356,8 +348,9 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial void keybd_event(byte vk, byte scan, uint flags, nuint extra);
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static partial nint GetWindowLongPtrW(nint hwnd, int index);
     [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static partial nint SetWindowLongPtrW(nint hwnd, int index, nint value);
-    [LibraryImport("user32.dll")] public static partial nint CreateIconIndirect(ICONINFO* info);
     [LibraryImport("user32.dll")] public static partial int DestroyIcon(nint icon);
+    public const int LIM_SMALL = 0;
+    [LibraryImport("comctl32.dll")] public static partial int LoadIconMetric(nint hInstance, nint name, int size, nint* icon);
     [LibraryImport("user32.dll")] public static partial nint GetDC(nint hwnd);
     [LibraryImport("user32.dll")] public static partial int ReleaseDC(nint hwnd, nint hdc);
     [LibraryImport("user32.dll")] public static partial nint SetCapture(nint hwnd);
@@ -386,7 +379,6 @@ internal static unsafe partial class Win32
     [LibraryImport("gdi32.dll")] public static partial nint CreateCompatibleDC(nint hdc);
     [LibraryImport("gdi32.dll")] public static partial nint CreateCompatibleBitmap(nint hdc, int w, int h);
     [LibraryImport("gdi32.dll")] public static partial nint CreateDIBSection(nint hdc, BITMAPINFOHEADER* info, uint usage, void** bits, nint section, uint offset);
-    [LibraryImport("gdi32.dll")] public static partial nint CreateBitmap(int w, int h, uint planes, uint bpp, void* bits);
     [LibraryImport("gdi32.dll")] public static partial nint SelectObject(nint hdc, nint obj);
     [LibraryImport("gdi32.dll")] public static partial int DeleteObject(nint obj);
     [LibraryImport("gdi32.dll")] public static partial int Polygon(nint hdc, POINT* points, int count);

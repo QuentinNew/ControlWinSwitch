@@ -3,14 +3,15 @@ using static ControlWinSwitch.Native.Win32;
 
 namespace ControlWinSwitch.UI;
 
-/// <summary>Notification-area icon: generated glyph, tooltip, context menu. UI thread only.</summary>
+/// <summary>Notification-area icon: the app icon, tooltip, context menu. UI thread only.</summary>
 internal sealed unsafe class TrayIcon : IDisposable
 {
     public const uint CallbackMessage = WM_APP + 1;
     public const int CmdOpenMenu = 1, CmdTogglePad = 2, CmdOpenLog = 3, CmdQuit = 4, CmdSettings = 5, CmdEditConfig = 6;
 
     private const uint IconId = 1;
-    private const int IconSize = 32;
+    /// <summary>Resource id the SDK gives the ApplicationIcon (MAKEINTRESOURCE(32512)).</summary>
+    private const nint AppIconResource = 32512;
 
     private readonly nint _hwnd;
     private nint _icon;
@@ -28,7 +29,7 @@ internal sealed unsafe class TrayIcon : IDisposable
     /// <summary>Adds (or re-adds, after an explorer restart) the icon.</summary>
     public void Add(string tooltip)
     {
-        if (_icon == 0) _icon = CreateGlyphIcon();
+        if (_icon == 0) _icon = LoadAppIcon();
         var data = NewData(tooltip);
         _added = Shell_NotifyIconW(NIM_ADD, &data) != 0;
         if (!_added)
@@ -103,49 +104,13 @@ internal sealed unsafe class TrayIcon : IDisposable
         return data;
     }
 
-    /// <summary>White controller glyph on a transparent 32x32 icon: draw white-on-black text, alpha = coverage.</summary>
-    private static nint CreateGlyphIcon()
+    /// <summary>The app icon embedded in the exe (assets\icon.ico), at the small-icon size for the screen's DPI.</summary>
+    private static nint LoadAppIcon()
     {
-        var info = new BITMAPINFOHEADER
-        {
-            biSize = (uint)sizeof(BITMAPINFOHEADER), biWidth = IconSize, biHeight = -IconSize,
-            biPlanes = 1, biBitCount = 32,
-        };
-        void* bits;
-        var dc = CreateCompatibleDC(0);
-        var color = CreateDIBSection(dc, &info, 0, &bits, 0, 0);
-        if (color == 0)
-        {
-            DeleteDC(dc);
-            return 0;
-        }
-
-        var oldBitmap = SelectObject(dc, color);
-        var font = Gdi.CreateIconFont(28);
-        var oldFont = SelectObject(dc, font);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, Rgb(255, 255, 255));
-        var rc = new RECT(0, 0, IconSize, IconSize);
-        DrawTextW(dc, "", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        GdiFlush();
-
-        uint* pixels = (uint*)bits;
-        for (int i = 0; i < IconSize * IconSize; i++)
-        {
-            uint coverage = (pixels[i] >> 8) & 0xFF; // green channel of white-on-black text
-            pixels[i] = (coverage << 24) | 0x00FFFFFF;
-        }
-
-        SelectObject(dc, oldFont);
-        SelectObject(dc, oldBitmap);
-        DeleteObject(font);
-        DeleteDC(dc);
-
-        var mask = CreateBitmap(IconSize, IconSize, 1, 1, null);
-        var icon = new ICONINFO { fIcon = 1, hbmMask = mask, hbmColor = color };
-        var handle = CreateIconIndirect(&icon);
-        DeleteObject(mask);
-        DeleteObject(color);
-        return handle;
+        nint icon;
+        int hr = LoadIconMetric(GetModuleHandleW(null), AppIconResource, LIM_SMALL, &icon);
+        if (hr >= 0) return icon;
+        Log.Error($"Tray icon: LoadIconMetric failed (0x{hr:X8})");
+        return 0;
     }
 }
