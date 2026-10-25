@@ -245,13 +245,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
     }
 
     /// <summary>
-    /// With "All controllers control menu", another controller takes the open menu or settings over as soon as it presses
-    /// a button or tilts a stick. The one that had them goes back to its game, its held buttons and sticks hidden until
-    /// released. Mouse mode stays with the controller that started it.
+    /// With "All controllers control menu", or once the controller that had them disconnected, another controller takes
+    /// the open menu or settings over as soon as it presses a button or tilts a stick. The one that had them goes back to
+    /// its game, its held buttons and sticks hidden until released. Mouse mode stays with the controller that started it.
     /// </summary>
     private bool TakeOverMenu(int slot)
     {
-        if (!Config.MenuAnyController || _mode is not (Mode.Menu or Mode.Settings)) return false;
+        if (_mode is not (Mode.Menu or Mode.Settings)) return false;
+        // Without "All controllers control menu", only once the controller that had them is gone.
+        if (!Config.MenuAnyController && _window.ControllerConnected(_owner)) return false;
         var state = _slots[slot].State;
         bool active = (state.Current & ~state.Previous) != 0
             || state.Left.Magnitude > StickEngage || state.Right.Magnitude > StickEngage;
@@ -287,7 +289,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
         else if (slot == _owner)
         {
             if (_mode == Mode.Menu) CloseMenu();
-            else if (_mode == Mode.Settings) CloseSettings();
+            else if (_mode == Mode.Settings)
+            {
+                // The settings stay open: the mouse still works, and the next controller that presses a button takes them.
+                StopRepeat();
+                _heldDirection = Dir.None;
+            }
             else if (_mode == Mode.Mouse) ExitMouse(announce: false);
             else if (_mode == Mode.Slider) ExitSlider();
         }
