@@ -9,7 +9,8 @@ namespace ControlWinSwitch.Input;
 /// <summary>
 /// Finds Joy-Con 2s over Bluetooth LE. They are never paired in Windows: a Joy-Con paired with this PC advertises our
 /// adapter's address once a button wakes it, and is connected right away; one in sync mode advertises no address and is
-/// claimed (paired) only while <see cref="StartPairing"/> is open.
+/// claimed (paired) only while <see cref="StartPairing"/> is open. The scan only runs while the app looks for them (see
+/// <see cref="SetScanning"/>): it wakes the app for every Bluetooth LE device nearby.
 /// </summary>
 /// <remarks>
 /// WinRT calls back on the thread pool: everything meant for the app is queued and run by <see cref="OnSignaled"/> on
@@ -66,7 +67,10 @@ internal sealed class JoyCon2Hub : IDisposable
         _draining.Clear();
     }
 
-    /// <summary>Scans while a slot can take a Joy-Con (UI thread). The adapter is looked up on the first start.</summary>
+    /// <summary>
+    /// Scans while asked to (the Controller tab of the settings is shown and a slot can take a Joy-Con), and during the
+    /// pairing window (UI thread). The adapter is looked up on the first start.
+    /// </summary>
     public void SetScanning(bool scan)
     {
         if (_disposed) return;

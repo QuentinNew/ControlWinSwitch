@@ -1,4 +1,6 @@
-using System.Diagnostics;
+using System.Runtime.InteropServices;
+using ControlWinSwitch.Native;
+using static ControlWinSwitch.Native.Win32;
 
 namespace ControlWinSwitch.App;
 
@@ -36,34 +38,35 @@ internal static class ProcessList
 
     /// <summary>
     /// Finds a running process whose exe name is in <paramref name="names"/>. Returns its id (0 when none)
-    /// and the list entry that matched.
+    /// and the list entry that matched. One process snapshot for the whole list, names compared in place.
     /// </summary>
-    public static int FindRunning(IReadOnlyList<string> names, out string matched)
+    public static unsafe int FindRunning(IReadOnlyList<string> names, out string matched)
     {
         matched = "";
-        foreach (var name in names)
+        if (names.Count == 0) return 0;
+        var keys = new string[names.Count];
+        for (int i = 0; i < keys.Length; i++) keys[i] = Normalize(names[i]);
+
+        nint snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == INVALID_HANDLE_VALUE) return 0;
+        try
         {
-            var key = Normalize(name);
-            if (key.Length == 0) continue;
-
-            Process[] processes;
-            try { processes = Process.GetProcessesByName(key); }
-            catch { continue; }
-
-            try
+            PROCESSENTRY32W entry = default;
+            entry.dwSize = (uint)sizeof(PROCESSENTRY32W);
+            for (int ok = Process32FirstW(snapshot, &entry); ok != 0; ok = Process32NextW(snapshot, &entry))
             {
-                if (processes.Length > 0)
+                var exe = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(entry.szExeFile);
+                if (exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) exe = exe[..^4];
+                for (int i = 0; i < keys.Length; i++)
                 {
-                    matched = name;
-                    return processes[0].Id;
+                    if (keys[i].Length == 0 || !exe.Equals(keys[i], StringComparison.OrdinalIgnoreCase)) continue;
+                    matched = names[i];
+                    return (int)entry.th32ProcessID;
                 }
             }
-            finally
-            {
-                foreach (var p in processes) p.Dispose();
-            }
+            return 0;
         }
-        return 0;
+        finally { CloseHandle(snapshot); }
     }
 }
 

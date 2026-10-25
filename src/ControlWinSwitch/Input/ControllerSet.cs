@@ -165,13 +165,33 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
         UpdateScanning();
     }
 
-    /// <summary>Scans for Joy-Con 2s while one could still find a slot (a free one, or a lone Joy-Con waiting for a partner).</summary>
+    private bool _lookForJoyCons;
+
+    /// <summary>
+    /// The Controller tab of the settings is on screen: Joy-Con 2s are looked for meanwhile (a paired one connects when a
+    /// button wakes it). Otherwise the Bluetooth LE scan only runs while "Add new controller" searches.
+    /// </summary>
+    public bool LookForJoyCons
+    {
+        get => _lookForJoyCons;
+        set
+        {
+            if (value == _lookForJoyCons) return;
+            _lookForJoyCons = value;
+            UpdateScanning();
+        }
+    }
+
+    /// <summary>
+    /// Scans for Joy-Con 2s while the Controller tab is shown and one could still find a slot (a free one, or a lone
+    /// Joy-Con waiting for a partner). The pairing window of "Add new controller" scans on its own.
+    /// </summary>
     private void UpdateScanning()
     {
         bool room = false;
         for (int i = 0; i < Slots && !room; i++)
             room = !Source(i).IsOpen || (_joy[i].IsOpen && (_joy[i].CanTake(JoyConSide.Left) || _joy[i].CanTake(JoyConSide.Right)));
-        Hub.SetScanning(room);
+        Hub.SetScanning(_lookForJoyCons && room);
     }
 
     public void Dispose()

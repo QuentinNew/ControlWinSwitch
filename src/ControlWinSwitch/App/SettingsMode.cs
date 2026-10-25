@@ -20,16 +20,20 @@ internal sealed class SettingsMode : IMode
     private readonly ControllerRegistry _registry;
     private SettingItem? _pageStrip; // the strip row of the open controller page: its Slot is the controller being edited
     private long _lastCalibrationPaint;
+    private readonly Action<bool> _controllerTabShown;
 
     /// <param name="createHost">Builds the host of the settings rows; it gets this mode for the page navigation.</param>
+    /// <param name="controllerTabShown">Told whether the Controller tab is on screen (Joy-Con 2s are looked for meanwhile).</param>
     public SettingsMode(IModeHost host, DirectionRepeat direction, ConfigStore store, ControllerRegistry registry,
-        Func<SettingsMode, SettingsHost> createHost)
+        Func<SettingsMode, SettingsHost> createHost, Action<bool> controllerTabShown)
     {
         _host = host;
         _direction = direction;
         _registry = registry;
+        _controllerTabShown = controllerTabShown;
         _settingsHost = createHost(this);
         _model = SettingsPages.Create(store, _settingsHost);
+        _model.TabChanged += () => { if (IsOpen) _controllerTabShown(_model.OnControllerTab); };
 
         _window.Tile = registry.TileOf;
         _window.PairedTile = registry.PairedTileOf;
@@ -69,12 +73,14 @@ internal sealed class SettingsMode : IMode
         _direction.Held = _direction.Read(State, horizontal: true);
         _window.Show(_model);
         Log.Info("Settings opened");
+        _controllerTabShown(_model.OnControllerTab);
     }
 
     public void Exit(bool announce)
     {
         _window.Hide();
         Log.Info("Settings closed");
+        _controllerTabShown(false);
     }
 
     public void CloseIfOpen()

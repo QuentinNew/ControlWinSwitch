@@ -28,6 +28,17 @@ internal unsafe struct WNDCLASSEXW
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal unsafe struct PROCESSENTRY32W
+{
+    public uint dwSize, cntUsage, th32ProcessID;
+    public nuint th32DefaultHeapID;
+    public uint th32ModuleID, cntThreads, th32ParentProcessID;
+    public int pcPriClassBase;
+    public uint dwFlags;
+    public fixed char szExeFile[260];
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct MSG
 {
     public nint hwnd;
@@ -500,6 +511,10 @@ internal static unsafe partial class Win32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial int WriteFile(nint file, void* buffer, uint bytes, uint* written, nint overlapped);
     [LibraryImport("kernel32.dll")] public static partial uint WaitForSingleObject(nint handle, uint milliseconds);
+    [LibraryImport("kernel32.dll", SetLastError = true)] public static partial nint CreateToolhelp32Snapshot(uint flags, uint processId);
+    [LibraryImport("kernel32.dll", SetLastError = true)] public static partial int Process32FirstW(nint snapshot, PROCESSENTRY32W* entry);
+    [LibraryImport("kernel32.dll", SetLastError = true)] public static partial int Process32NextW(nint snapshot, PROCESSENTRY32W* entry);
+    public const uint TH32CS_SNAPPROCESS = 0x2;
     [LibraryImport("kernel32.dll")] public static partial int GetSystemPowerStatus(SYSTEM_POWER_STATUS* status);
     public const uint GENERIC_WRITE = 0x40000000;
     public const uint GENERIC_READ = 0x80000000, FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, OPEN_EXISTING = 3,

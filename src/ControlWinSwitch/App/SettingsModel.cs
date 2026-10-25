@@ -235,6 +235,12 @@ internal sealed class SettingsModel
 
     public SettingsTab Tab => _sub ?? Tabs[TabIndex];
 
+    /// <summary>Raised when another tab is shown (by the pad or the mouse).</summary>
+    public event Action? TabChanged;
+
+    /// <summary>The tab shown (or the one the open page belongs to) is the one with the controllers.</summary>
+    public bool OnControllerTab => Tabs[TabIndex].ControllerStrip;
+
     /// <summary>A sub-page is open (B / right click goes back to the tab instead of closing the window).</summary>
     public bool InSubPage => _sub is not null;
 
@@ -282,16 +288,14 @@ internal sealed class SettingsModel
     public void SetTab(int index)
     {
         if (index < 0 || index >= Tabs.Count) return;
+        bool changed = index != TabIndex;
         TabIndex = index;
         _sub = _parent = null;
+        if (changed) TabChanged?.Invoke();
     }
 
     /// <summary>Next / previous tab, wrapping.</summary>
-    public void MoveTab(int delta)
-    {
-        TabIndex = ((TabIndex + Math.Sign(delta)) % Tabs.Count + Tabs.Count) % Tabs.Count;
-        _sub = _parent = null;
-    }
+    public void MoveTab(int delta) => SetTab(((TabIndex + Math.Sign(delta)) % Tabs.Count + Tabs.Count) % Tabs.Count);
 
     /// <summary>Moves the selection among selectable rows, wrapping.</summary>
     public void Move(int delta)

@@ -78,7 +78,7 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         _mouse = new MouseControlMode(this, _toast, MouseConfig);
         _slider = new SliderMode(this, _direction, _timers, _toast);
         _editor = new EditorMode(this, _store, _toast, SaveConfig);
-        _settings = new SettingsMode(this, _direction, _store, _registry, CreateSettingsHost);
+        _settings = new SettingsMode(this, _direction, _store, _registry, CreateSettingsHost, shown => set.LookForJoyCons = shown);
         _hideMenuTimer = _timers.Create(OnHideMenuTimer);
         ApplyMenuHotkey();
         Startup.DetectInBackground(); // known before the Settings show the "Launch on startup" row

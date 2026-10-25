@@ -146,7 +146,10 @@ internal sealed class PadService : IDisposable
             else if (_set.Source(i).IsOpen && !pad.Attach()) _failed = true;
         }
         SyncHiding();
+        UpdateWatchTimer();
     }
+
+    private bool AnyAttached => Array.Exists(_pads, p => p.IsAttached);
 
     /// <summary>Brings the pads in line with the current config (after a reload or a settings change).</summary>
     public void ApplyConfig()
@@ -171,11 +174,22 @@ internal sealed class PadService : IDisposable
     {
         if (!_enabled || _failed) return false;
         var pad = _pads[slot];
-        if (!pad.IsAttached && !pad.Attach())
+        if (!pad.IsAttached)
         {
-            _failed = true;
-            _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
-            return false;
+            // The process watcher sleeps while no pad is plugged in: look now, so that no pad shows up while a watched
+            // program runs.
+            if (!AnyAttached)
+            {
+                CheckProcesses();
+                if (!_enabled) return false;
+            }
+            if (!pad.Attach())
+            {
+                _failed = true;
+                _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
+                return false;
+            }
+            UpdateWatchTimer(); // a pad is in use: the watcher polls again
         }
         var paths = _set.Source(slot).HidPaths;
         for (int i = 0; i < paths.Count; i++)
@@ -204,6 +218,7 @@ internal sealed class PadService : IDisposable
     {
         _pads[slot].Detach();
         SyncHiding();
+        UpdateWatchTimer(); // the last pad gone: no more polling
     }
 
     // ---- game rumble -------------------------------------------------------------------------
@@ -293,10 +308,15 @@ internal sealed class PadService : IDisposable
         WatchChanged?.Invoke();
     }
 
-    /// <summary>Poll only while there is something to wait for and no handle to wait on.</summary>
+    /// <summary>
+    /// Poll only while there is something to wait for, no handle to wait on, and it matters: a pad is plugged in (a
+    /// watched program starting turns it off), or the watcher holds the pads off (its program closing gives them back).
+    /// With no pad in use the poll sleeps; <see cref="Prepare"/> looks once before plugging one in.
+    /// </summary>
     private void UpdateWatchTimer()
     {
-        bool poll = Config.VirtualPad.DisableWhileRunning.Count > 0 && _watchHandle == 0;
+        bool poll = Config.VirtualPad.DisableWhileRunning.Count > 0 && _watchHandle == 0
+            && (_gate.HeldOff || (_enabled && AnyAttached));
         if (!poll)
         {
             _watchTimer.Stop();
