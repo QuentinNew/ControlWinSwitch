@@ -212,6 +212,35 @@ internal sealed class MenuMode : IMode
         _radialOverlay.Refresh();
     }
 
+    // ---- keyboard --------------------------------------------------------------------------------
+
+    /// <summary>Arrow keys move the highlight, Enter runs it, Escape goes back.</summary>
+    public void OnKey(uint key)
+    {
+        if (!IsOpen) return;
+        switch (key)
+        {
+            case Native.Win32.VK_ESCAPE:
+                Back();
+                return;
+            case Native.Win32.VK_RETURN:
+                if (_radialShown)
+                {
+                    if (_radial.CurrentNode is not null) AcceptRadial();
+                }
+                else Accept();
+                return;
+        }
+
+        int delta = key is Native.Win32.VK_UP or Native.Win32.VK_LEFT ? -1 : 1;
+        if (_radialShown)
+        {
+            _radial.Step(delta);
+            _radialOverlay.Refresh();
+        }
+        else if (key is Native.Win32.VK_UP or Native.Win32.VK_DOWN) Move(delta < 0 ? Dir.Up : Dir.Down);
+    }
+
     // ---- mouse -----------------------------------------------------------------------------------
 
     private void OnRowHovered(int index)

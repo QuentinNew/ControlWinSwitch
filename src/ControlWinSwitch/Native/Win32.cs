@@ -410,6 +410,8 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll", SetLastError = true)] public static partial int RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
     [LibraryImport("user32.dll")] public static partial int UnregisterHotKey(nint hwnd, int id);
     public const uint WM_HOTKEY = 0x0312, MOD_NOREPEAT = 0x4000;
+    public const uint VK_BACK = 0x08, VK_RETURN = 0x0D, VK_ESCAPE = 0x1B, VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
+    [LibraryImport("user32.dll")] public static partial int SetCursorPos(int x, int y);
     [LibraryImport("kernel32.dll")] public static partial nint GlobalAlloc(uint flags, nuint bytes);
     [LibraryImport("kernel32.dll")] public static partial nint GlobalFree(nint handle);
     public const uint GMEM_MOVEABLE = 0x0002;

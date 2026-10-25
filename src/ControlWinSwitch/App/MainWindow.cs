@@ -53,6 +53,25 @@ internal sealed unsafe class MainWindow : NativeWindow
         return hotkey is null || _hotkeyRegistered;
     }
 
+    private const int MenuKeyBaseId = 100;
+    private static readonly uint[] MenuKeys = [VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_ESCAPE];
+    private bool _menuKeysRegistered;
+
+    /// <summary>
+    /// While the menu is open, takes the arrow keys, Enter and Escape for it (the menu never has the focus).
+    /// Idempotent.
+    /// </summary>
+    public void SetMenuKeys(bool on)
+    {
+        if (on == _menuKeysRegistered) return;
+        _menuKeysRegistered = on;
+        for (int i = 0; i < MenuKeys.Length; i++)
+        {
+            if (on) RegisterHotKey(Handle, MenuKeyBaseId + i, 0, MenuKeys[i]);
+            else UnregisterHotKey(Handle, MenuKeyBaseId + i);
+        }
+    }
+
     /// <summary>Removes the tray icon right away (shutdown).</summary>
     public void RemoveTray() => _tray.Dispose();
 
@@ -143,7 +162,8 @@ internal sealed unsafe class MainWindow : NativeWindow
                 return 0;
 
             case WM_HOTKEY:
-                if ((int)wParam == MenuHotkeyId) Controller?.ToggleMenu();
+                if ((int)wParam == MenuHotkeyId) Controller?.ToggleMenuFromShortcut();
+                else if ((int)wParam is >= MenuKeyBaseId and < MenuKeyBaseId + 6) Controller?.OnMenuKey(MenuKeys[(int)wParam - MenuKeyBaseId]);
                 return 0;
 
             case AppMessages.HeadsetDone:
@@ -178,6 +198,7 @@ internal sealed unsafe class MainWindow : NativeWindow
             case WM_DESTROY:
                 _tray.Dispose();
                 SetMenuHotkey(null);
+                SetMenuKeys(false);
                 if (_deviceNotification != 0) UnregisterDeviceNotification(_deviceNotification);
                 _deviceNotification = 0;
                 PostQuitMessage(0);

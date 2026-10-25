@@ -286,6 +286,7 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         if (_current is not { } mode) return;
         _direction.Reset();
         _current = null;
+        _window.SetMenuKeys(false);
         HideHeldInput();
         mode.Exit(announce);
     }
@@ -301,6 +302,7 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         var statuses = new NodeStatuses(_pads.Detail, _headset.Detail);
         _pads.Neutral(_owner); // neutral pad while the menu owns the input
         _current = _menu;
+        _window.SetMenuKeys(true);
         _menu.Open(Config, statuses, Config.MenuShowControllers ? _registry.ConnectedTiles() : null);
         _headset.Refresh(); // refresh the status shown in the menu
     }
@@ -313,6 +315,7 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
             // Straight from the menu: it stays up under the settings window for a moment, so no frame shows neither.
             _direction.Stop();
             _current = null;
+            _window.SetMenuKeys(false);
         }
         else ToIdle();
 
@@ -571,6 +574,24 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         if (_shutDown || _current == _editor) return;
         if (_current == _menu) ToIdle();
         else OpenMenu();
+    }
+
+    /// <summary>The keyboard shortcut: like <see cref="ToggleMenu"/>, and an opening menu gets the mouse at the screen's center.</summary>
+    public void ToggleMenuFromShortcut()
+    {
+        if (_shutDown || _current == _editor) return;
+        if (_current != _menu)
+        {
+            Gdi.GetMonitorUnderCursor(out var work, out _);
+            Native.Win32.SetCursorPos(work.Left + work.Width / 2, work.Top + work.Height / 2);
+        }
+        ToggleMenu();
+    }
+
+    /// <summary>An arrow key, Enter or Escape pressed while the menu is open.</summary>
+    public void OnMenuKey(uint key)
+    {
+        if (_current == _menu) _menu.OnKey(key);
     }
 
     /// <summary>Opens the settings window (menu entry, tray); no-op when it is already open.</summary>
