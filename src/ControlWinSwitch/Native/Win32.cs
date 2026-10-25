@@ -504,7 +504,7 @@ internal static unsafe partial class Win32
     public const uint GENERIC_WRITE = 0x40000000;
     public const uint GENERIC_READ = 0x80000000, FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, OPEN_EXISTING = 3,
         FILE_FLAG_OVERLAPPED = 0x40000000;
-    public const int ERROR_IO_INCOMPLETE = 996, ERROR_IO_PENDING = 997;
+    public const int ERROR_OPERATION_ABORTED = 995, ERROR_IO_INCOMPLETE = 996, ERROR_IO_PENDING = 997, ERROR_TIMEOUT = 1460;
     public const nuint DBT_DEVICEARRIVAL = 0x8000, DBT_DEVICEREMOVECOMPLETE = 0x8004;
     public const uint DBT_DEVTYP_DEVICEINTERFACE = 5, DEVICE_NOTIFY_WINDOW_HANDLE = 0;
     [LibraryImport("kernel32.dll", SetLastError = true)] public static partial nint CreateEventW(nint attributes, int manualReset, int initialState, char* name);

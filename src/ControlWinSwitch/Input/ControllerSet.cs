@@ -99,6 +99,11 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
 
     public void OnHidSignaled(int reader) => _hid[reader].OnSignaled();
 
+    /// <summary>Signaled when the reader's write in flight completed; 0 when none is (then call <see cref="OnHidWriteSignaled"/>).</summary>
+    public nint HidWriteHandle(int reader) => _hid[reader].WriteHandle;
+
+    public void OnHidWriteSignaled(int reader) => _hid[reader].OnWriteSignaled();
+
     private int FreeSlot() => Enumerable.Range(0, Slots).FirstOrDefault(i => !Source(i).IsOpen, -1);
 
     /// <summary>

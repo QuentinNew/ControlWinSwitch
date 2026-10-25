@@ -23,6 +23,9 @@ internal interface ISettingsApp
 
     /// <summary>Opens the editor of the menu layout in use.</summary>
     void EditMenu();
+
+    /// <summary>Turns "Launch on startup" on or off in the background; the outcome is shown when it is done.</summary>
+    void SetStartOnLogon(bool enabled);
 }
 
 /// <summary>
@@ -101,17 +104,7 @@ internal sealed class SettingsHost : ISettingsHost
 
     public bool StartOnLogon => Startup.IsEnabled;
 
-    public void SetStartOnLogon(bool enabled)
-    {
-        string exe = Environment.ProcessPath ?? "";
-        var mode = Startup.Set(enabled, exe, out var error);
-        Log.Info($"Launch on startup: {(enabled ? "on" : "off")} -> {mode}{(error is null ? "" : " (" + error + ")")}");
-
-        string message = error ?? (enabled
-            ? mode == Startup.Mode.Task ? "ControlWinSwitch will start with Windows" : "ControlWinSwitch will start with Windows (without administrator rights)"
-            : "ControlWinSwitch will no longer start with Windows");
-        _toast.Show(MenuPages.Gear, message);
-    }
+    public void SetStartOnLogon(bool enabled) => _app.SetStartOnLogon(enabled);
 
     // ---- headset -------------------------------------------------------------------------------
 

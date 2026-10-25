@@ -36,6 +36,10 @@ internal sealed unsafe class VirtualPad : IDisposable
     private const uint TargetXbox360Wired = 0, TargetDualShock4Wired = 2;
     private const int NotifyBufferSize = 16;
 
+    // How long a request to the bus may take: the UI thread waits for it, so a stuck driver must not freeze the app.
+    // A report is usually taken at once; enumerating a new pad (wait-ready) takes the longest.
+    private const uint SubmitTimeoutMs = 100, ControlTimeoutMs = 1000, WaitReadyTimeoutMs = 3000, CancelWaitMs = 500;
+
     private static uint s_nextSerial = (uint)Environment.ProcessId << 8; // unique per process and plug-in: a lingering target can never collide
     private uint _serial;
 
@@ -49,6 +53,7 @@ internal sealed unsafe class VirtualPad : IDisposable
     // Rumble feedback: a pending overlapped request on the bus handle that plugged the pad, completed by the driver.
     // The bus handle is overlapped, so the synchronous calls go through Control().
     private nint _controlEvent;
+    private OVERLAPPED* _controlOverlapped;
     private nint _notifyEvent;
     private OVERLAPPED* _notifyOverlapped;
     private byte* _notifyBuffer;
@@ -80,9 +85,10 @@ internal sealed unsafe class VirtualPad : IDisposable
 
             // VIGEM_CHECK_VERSION { Size, Version = 1 }
             uint* check = stackalloc uint[2] { 8, 1 };
-            if (Control(IoctlCheckVersion, check, 8) != 0)
+            int error = Control(IoctlCheckVersion, check, 8, ControlTimeoutMs);
+            if (error != 0)
             {
-                Log.Error($"ViGEmBus version check failed (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+                Log.Error($"ViGEmBus version check failed (error {error})");
                 CloseBus();
                 return false;
             }
@@ -90,17 +96,19 @@ internal sealed unsafe class VirtualPad : IDisposable
             // VIGEM_PLUGIN_TARGET { Size = 16, SerialNo, TargetType = X360Wired (0) / DualShock4Wired (2), VendorId = 0, ProductId = 0 }
             _plugKind = Kind;
             uint* plug = stackalloc uint[4] { 16, _serial = ++s_nextSerial, _plugKind == PadKind.Ps4 ? TargetDualShock4Wired : TargetXbox360Wired, 0 };
-            if (Control(IoctlPlugin, plug, 16) != 0)
+            error = Control(IoctlPlugin, plug, 16, ControlTimeoutMs);
+            if (error != 0)
             {
-                Log.Error($"ViGEmBus refused the virtual pad (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+                Log.Error($"ViGEmBus refused the virtual pad (error {error})");
                 CloseBus();
                 return false;
             }
 
-            // VIGEM_WAIT_DEVICE_READY { Size = 8, SerialNo }: blocks until the new pad finished enumerating.
+            // VIGEM_WAIT_DEVICE_READY { Size = 8, SerialNo }: completes once the new pad finished enumerating. Not ready
+            // in time is not fatal: the first reports get ERROR_BUSY until it is.
             uint* wait = stackalloc uint[2] { 8, _serial };
-            if (Control(IoctlWaitReady, wait, 8) != 0)
-                Log.Error($"Virtual pad wait-ready failed (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+            error = Control(IoctlWaitReady, wait, 8, WaitReadyTimeoutMs);
+            if (error != 0) Log.Error($"Virtual pad wait-ready failed (error {error})");
 
             _plugged = true;
             _hasLast = false;
@@ -157,7 +165,7 @@ internal sealed unsafe class VirtualPad : IDisposable
 
     private bool Send(uint code, byte* buffer)
     {
-        int error = Control(code, buffer, 20);
+        int error = Control(code, buffer, 20, SubmitTimeoutMs);
         if (error == 0) return true;
         if (error == 170) return false; // ERROR_BUSY: not ready yet, the next report retries
         Log.Error($"Virtual pad submit failed (error {error}), unplugging");
@@ -171,7 +179,7 @@ internal sealed unsafe class VirtualPad : IDisposable
         if (_plugged && _bus != INVALID_HANDLE_VALUE)
         {
             uint* unplug = stackalloc uint[2] { 8, _serial };
-            Control(IoctlUnplug, unplug, 8);
+            Control(IoctlUnplug, unplug, 8, ControlTimeoutMs);
             Log.Info($"Virtual {KindName} pad removed");
         }
         _plugged = false;
@@ -187,21 +195,40 @@ internal sealed unsafe class VirtualPad : IDisposable
         _notifyEvent = _controlEvent = 0;
         if (_notifyOverlapped != null) NativeMemory.Free(_notifyOverlapped);
         if (_notifyBuffer != null) NativeMemory.Free(_notifyBuffer);
+        if (_controlOverlapped != null) NativeMemory.Free(_controlOverlapped);
         _notifyOverlapped = null;
         _notifyBuffer = null;
+        _controlOverlapped = null;
     }
 
-    /// <summary>DeviceIoControl on the overlapped bus handle, waited for. Returns 0, or the Win32 error.</summary>
-    private int Control(uint code, void* input, uint size)
+    /// <summary>
+    /// DeviceIoControl on the overlapped bus handle, waited for at most <paramref name="timeoutMs"/>. Returns 0, or the
+    /// Win32 error: ERROR_TIMEOUT when the driver did not answer in time (the request is then cancelled).
+    /// </summary>
+    private int Control(uint code, void* input, uint size, uint timeoutMs)
     {
         if (_controlEvent == 0) _controlEvent = CreateEventW(0, 1, 0, null);
-        OVERLAPPED overlapped = default;
-        overlapped.hEvent = _controlEvent;
+        if (_controlOverlapped == null) _controlOverlapped = (OVERLAPPED*)NativeMemory.AllocZeroed((nuint)sizeof(OVERLAPPED));
+        *_controlOverlapped = default;
+        _controlOverlapped->hEvent = _controlEvent;
         uint returned;
-        if (DeviceIoControl(_bus, code, input, size, null, 0, &returned, (nint)(&overlapped)) != 0) return 0;
+        if (DeviceIoControl(_bus, code, input, size, null, 0, &returned, (nint)_controlOverlapped) != 0) return 0;
         int error = Marshal.GetLastPInvokeError();
         if (error != ERROR_IO_PENDING) return error;
-        if (GetOverlappedResult(_bus, &overlapped, &returned, 1) != 0) return 0;
+        if (WaitForSingleObject(_controlEvent, timeoutMs) != WAIT_OBJECT_0)
+        {
+            Log.Error($"ViGEmBus did not answer within {timeoutMs} ms (IOCTL 0x{code:X})");
+            CancelIoEx(_bus, _controlOverlapped);
+            if (WaitForSingleObject(_controlEvent, CancelWaitMs) != WAIT_OBJECT_0)
+            {
+                // Not even cancelled: the request still owns the OVERLAPPED and the event, so they are left to it (closing
+                // the bus ends it). The next request gets new ones.
+                _controlOverlapped = null;
+                _controlEvent = 0;
+            }
+            return ERROR_TIMEOUT;
+        }
+        if (GetOverlappedResult(_bus, _controlOverlapped, &returned, 0) != 0) return 0;
         return Marshal.GetLastPInvokeError();
     }
 
@@ -264,9 +291,15 @@ internal sealed unsafe class VirtualPad : IDisposable
     private void StopNotify()
     {
         if (!_notifyPending) return;
-        uint n;
         CancelIoEx(_bus, _notifyOverlapped);
-        GetOverlappedResult(_bus, _notifyOverlapped, &n, 1);
+        if (WaitForSingleObject(_notifyEvent, CancelWaitMs) != WAIT_OBJECT_0)
+        {
+            // Not cancelled in time: the request keeps its buffers (closing the bus ends it); the next one gets new ones.
+            Log.Error("ViGEmBus did not cancel the rumble feedback request");
+            _notifyEvent = 0;
+            _notifyOverlapped = null;
+            _notifyBuffer = null;
+        }
         _notifyPending = false;
         Feedback?.Invoke(0, 0);
     }

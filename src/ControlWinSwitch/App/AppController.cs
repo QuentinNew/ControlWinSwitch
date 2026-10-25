@@ -1,6 +1,7 @@
 using ControlWinSwitch.Actions;
 using ControlWinSwitch.Config;
 using ControlWinSwitch.Input;
+using ControlWinSwitch.Setup;
 using ControlWinSwitch.UI;
 
 namespace ControlWinSwitch.App;
@@ -13,6 +14,7 @@ namespace ControlWinSwitch.App;
 internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISettingsApp
 {
     private const uint HideMenuDelayMs = 10; // the menu stays under the settings window this long, so no frame shows neither
+    private const uint SaveDelayMs = 500;    // config.json is written this long after the last change of a burst
     private const float StickEngage = 0.6f;
     private const char ErrorGlyph = '';
 
@@ -45,6 +47,7 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
     private readonly EditorMode _editor;
     private IMode? _current; // null = idle: the reports drive the virtual pads
     private readonly UiTimer _hideMenuTimer; // hides the menu once the settings window is up
+    private readonly UiTimer _saveTimer;     // writes config.json once the changes stop
     private bool _shutDown;
 
     public AppController(ControllerSet set, MainWindow window)
@@ -58,6 +61,10 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
 
         var error = _store.Load();
         if (error is not null) _toast.Show(ErrorGlyph, error);
+        // From now on a change is written once the burst it belongs to is over (each deadzone step, each controller
+        // joining), on a worker thread.
+        _saveTimer = _timers.Create(OnSaveTimer);
+        _store.SaveRequested = () => _saveTimer.Start(SaveDelayMs); // restarts the countdown
 
         _pads = new PadService(_store, set, _timers, _toast); // after Load: it reads the pad settings
         _pads.WatchChanged += RefreshOpenScreen;
@@ -74,6 +81,7 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         _settings = new SettingsMode(this, _direction, _store, _registry, CreateSettingsHost);
         _hideMenuTimer = _timers.Create(OnHideMenuTimer);
         ApplyMenuHotkey();
+        Startup.DetectInBackground(); // known before the Settings show the "Launch on startup" row
     }
 
     private AppConfig Config => _store.Current;
@@ -430,6 +438,24 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         ApplyConfig();
     }
 
+    private void OnSaveTimer()
+    {
+        _saveTimer.Stop();
+        nint hwnd = _window.Handle;
+        _store.FlushInBackground(_ => Native.Win32.PostMessageW(hwnd, AppMessages.ConfigSaveFailed, 0, 0));
+    }
+
+    /// <summary>AppMessages.ConfigSaveFailed, on the UI thread.</summary>
+    public void OnConfigSaveFailed() => _toast.Show(ErrorGlyph, "Cannot write config.json");
+
+    /// <summary>Writes a change still waiting for the save timer now (before Notepad opens the file, at shutdown).</summary>
+    private void FlushConfig(bool force = false)
+    {
+        _saveTimer.Stop();
+        var error = _store.Flush(force);
+        if (error is not null) _toast.Show(ErrorGlyph, error);
+    }
+
     public void ReloadConfig()
     {
         var error = _store.Load();
@@ -446,12 +472,32 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
 
     void ISettingsApp.EditMenu() => OpenMenuEditor(Config.MenuLayout);
 
+    void ISettingsApp.SetStartOnLogon(bool enabled)
+    {
+        if (_shutDown) return;
+        // schtasks.exe runs on a worker thread; a second toggle while it runs is ignored (the row shows the first one).
+        if (Startup.SetInBackground(enabled, Environment.ProcessPath ?? "", _window.Handle)) _settings.Refresh();
+    }
+
+    /// <summary>AppMessages.StartupDone, on the UI thread.</summary>
+    public void OnStartupDone(Startup.Mode mode, bool failed)
+    {
+        bool enabled = Startup.LastRequested;
+        Log.Info($"Launch on startup: {(enabled ? "on" : "off")} -> {mode}{(failed ? " (failed)" : "")}");
+        string message = failed ? "Cannot register ControlWinSwitch to start with Windows"
+            : enabled
+                ? mode == Startup.Mode.Task ? "ControlWinSwitch will start with Windows" : "ControlWinSwitch will start with Windows (without administrator rights)"
+                : "ControlWinSwitch will no longer start with Windows";
+        if (!_shutDown) _toast.Show(MenuPages.Gear, message);
+        _settings.Refresh(); // the row shows the outcome
+    }
+
     /// <summary>Opens config.json in Notepad with the user's own rights.</summary>
     public void EditConfig()
     {
         if (_shutDown) return;
         _settings.CloseIfOpen();
-        if (!File.Exists(_store.Path)) _store.Save();
+        FlushConfig(force: !File.Exists(_store.Path)); // Notepad shows the latest changes
         LaunchNotepad(_store.Path);
     }
 
@@ -516,6 +562,9 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         TryStep("hide the toast", _toast.Hide);
         TryStep("unplug the virtual pads", _pads.Shutdown); // they disappear from the games; the controllers show again
         TryStep("remove the tray icon", _window.RemoveTray);
+        // Last: the steps above may change the config. Saves after this one are written at once.
+        _store.SaveRequested = null;
+        TryStep("save the config", () => _store.Flush());
     }
 
     /// <summary>

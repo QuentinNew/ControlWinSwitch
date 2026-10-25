@@ -16,12 +16,62 @@ internal static class Startup
 
     public enum Mode { Off, Task, RunKey }
 
-    private static Mode? s_cached;
+    private const int Unknown = -1;
+    private static int s_cached = Unknown; // a Mode once known; read and written from the UI and worker threads
+    private static volatile bool s_busy;   // a change runs on its worker thread
+    private static volatile bool s_requested;
 
-    /// <summary>Where ControlWinSwitch is registered to start from (read once, then kept up to date by <see cref="Set"/>).</summary>
-    public static Mode Current => s_cached ??= Detect();
+    /// <summary>
+    /// Where ControlWinSwitch is registered to start from (read once, then kept up to date by <see cref="Set"/>). Ask early
+    /// with <see cref="DetectInBackground"/>: reading it runs schtasks.exe.
+    /// </summary>
+    public static Mode Current
+    {
+        get
+        {
+            int cached = Volatile.Read(ref s_cached);
+            if (cached != Unknown) return (Mode)cached;
+            var mode = Detect();
+            Interlocked.CompareExchange(ref s_cached, (int)mode, Unknown);
+            return mode;
+        }
+    }
 
-    public static bool IsEnabled => Current != Mode.Off;
+    /// <summary>On while it is on, or while turning it on (the change runs in the background).</summary>
+    public static bool IsEnabled => s_busy ? s_requested : Current != Mode.Off;
+
+    /// <summary>The last on / off asked for with <see cref="SetInBackground"/>.</summary>
+    public static bool LastRequested => s_requested;
+
+    /// <summary>Finds out the current mode on a worker thread, so the Settings never wait for schtasks.exe.</summary>
+    public static void DetectInBackground() =>
+        ErrorBoundary.StartWorker("startup-detect", () =>
+        {
+            var mode = Detect();
+            Interlocked.CompareExchange(ref s_cached, (int)mode, Unknown); // a change made meanwhile wins
+        });
+
+    /// <summary>
+    /// <see cref="Set"/> on a worker thread (schtasks.exe can take seconds); the outcome is posted to
+    /// <paramref name="hwnd"/> as <see cref="App.AppMessages.StartupDone"/>. False when a change is still running.
+    /// </summary>
+    public static bool SetInBackground(bool enabled, string exePath, nint hwnd)
+    {
+        if (s_busy) return false;
+        s_requested = enabled;
+        s_busy = true;
+        ErrorBoundary.StartWorker("startup", () =>
+        {
+            var mode = Set(enabled, exePath, out var error);
+            s_busy = false;
+            Native.Win32.PostMessageW(hwnd, App.AppMessages.StartupDone, (nuint)(int)mode, error is null ? 0 : 1);
+        }, onFailure: () =>
+        {
+            s_busy = false;
+            Native.Win32.PostMessageW(hwnd, App.AppMessages.StartupDone, (nuint)Math.Max(0, Volatile.Read(ref s_cached)), 1);
+        });
+        return true;
+    }
 
     /// <summary>Turns startup on or off. Returns the resulting mode; <paramref name="error"/> is set when it could not be applied.</summary>
     public static Mode Set(bool enabled, string exePath, out string? error)
@@ -50,7 +100,7 @@ internal static class Startup
 
     private static Mode Remember(Mode mode)
     {
-        s_cached = mode;
+        Volatile.Write(ref s_cached, (int)mode);
         return mode;
     }
 

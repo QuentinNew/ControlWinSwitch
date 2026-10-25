@@ -21,6 +21,12 @@ internal static class AppMessages
     /// <summary>Posted by the screenshot worker thread once the picture is saved (or failed).</summary>
     public const uint ScreenshotDone = WM_APP + 5;
 
+    /// <summary>Posted by the config writer thread when config.json could not be written.</summary>
+    public const uint ConfigSaveFailed = WM_APP + 6;
+
+    /// <summary>Posted by the startup worker thread: wParam = the resulting <c>Startup.Mode</c>, lParam = 1 on failure.</summary>
+    public const uint StartupDone = WM_APP + 7;
+
     /// <summary>Posts <paramref name="message"/> to the running instance. False when none is running.</summary>
     public static bool PostToRunningInstance(uint message)
     {

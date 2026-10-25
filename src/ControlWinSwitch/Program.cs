@@ -71,13 +71,14 @@ internal static unsafe class Program
     /// <summary>Event-driven loop: blocks until a message or a controller report arrives (~0% CPU idle).</summary>
     private static void RunMessageLoop(ControllerSet set, AppController controller)
     {
-        // Wait set: the HID readers' reports (Pro Controllers, original Joy-Cons), the Joy-Con 2 queue, the virtual pads'
-        // rumble requests, the mouse timer (signalled only while a stick moves the cursor) and the watched process
-        // (signalled when it exits). Pads, mouse and process change at run time, so the set is rebuilt on every iteration.
-        const int Slots = ControllerSet.Slots, Readers = ControllerSet.Readers, PadBase = Readers,
-            MouseId = Readers + Slots, WatchId = MouseId + 1, JoyConId = MouseId + 2;
+        // Wait set: the HID readers' reports (Pro Controllers, original Joy-Cons) and their writes in flight, the Joy-Con 2
+        // queue, the virtual pads' rumble requests, the mouse timer (signalled only while a stick moves the cursor) and the
+        // watched process (signalled when it exits). Writes, pads, mouse and process change at run time, so the set is
+        // rebuilt on every iteration.
+        const int Slots = ControllerSet.Slots, Readers = ControllerSet.Readers, WriteBase = Readers, PadBase = 2 * Readers,
+            MouseId = PadBase + Slots, WatchId = MouseId + 1, JoyConId = MouseId + 2;
         nint* handles = stackalloc nint[JoyConId + 1];
-        int* ids = stackalloc int[JoyConId + 1]; // readers, then pad rumble, then mouse, watch, Joy-Con 2s
+        int* ids = stackalloc int[JoyConId + 1]; // reads, writes, pad rumble, then mouse, watch, Joy-Con 2s
         MSG msg;
         while (true)
         {
@@ -86,6 +87,13 @@ internal static unsafe class Program
             {
                 ids[count] = i;
                 handles[count++] = set.HidEventHandle(i);
+            }
+            for (int i = 0; i < Readers; i++)
+            {
+                nint write = set.HidWriteHandle(i);
+                if (write == 0) continue;
+                ids[count] = WriteBase + i;
+                handles[count++] = write;
             }
             ids[count] = JoyConId;
             handles[count++] = set.Hub.EventHandle;
@@ -119,6 +127,7 @@ internal static unsafe class Program
                 try
                 {
                     if (id < Readers) set.OnHidSignaled(id);
+                    else if (id < PadBase) set.OnHidWriteSignaled(id - WriteBase);
                     else if (id < MouseId) controller.OnPadNotify(id - PadBase);
                     else if (id == MouseId) controller.OnMouseTick();
                     else if (id == JoyConId) set.Hub.OnSignaled();
@@ -126,7 +135,8 @@ internal static unsafe class Program
                 }
                 catch (Exception ex)
                 {
-                    ErrorBoundary.OnUiError(id < Readers ? "Controller report" : id < MouseId ? "Rumble" : id == MouseId ? "Mouse"
+                    ErrorBoundary.OnUiError(id < Readers ? "Controller report" : id < PadBase ? "Controller output"
+                        : id < MouseId ? "Rumble" : id == MouseId ? "Mouse"
                         : id == JoyConId ? "Joy-Con 2" : "Watched process", ex);
                 }
             }

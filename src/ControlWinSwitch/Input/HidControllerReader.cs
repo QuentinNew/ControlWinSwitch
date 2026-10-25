@@ -20,7 +20,8 @@ internal enum HidKind : byte { Pro, JoyConLeft, JoyConRight }
 /// </summary>
 /// <remarks>
 /// Event-driven: <see cref="EventHandle"/> is signaled when a read completes and must be one of the handles the
-/// message loop waits on; call <see cref="OnSignaled"/> when it fires. Everything runs on the UI thread.
+/// message loop waits on; call <see cref="OnSignaled"/> when it fires. Output works the same way: wait on
+/// <see cref="WriteHandle"/> while it is not 0 and call <see cref="OnWriteSignaled"/>. Everything runs on the UI thread.
 /// </remarks>
 internal sealed unsafe class HidControllerReader : IControllerSource, IDisposable
 {
@@ -38,8 +39,23 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     private bool _pending;
     private int _lastOpenError;
 
-    // Output (set full mode)
+    // Output: one overlapped write in flight, its completion seen through WriteHandle in the message loop. Subcommands
+    // wait their turn in order; rumble only keeps its latest frame (an older one is stale by the time the link is free).
+    private enum OutputKind : byte { Command, EnableVibration, Rumble }
     private readonly nint _writeEvent;
+    private readonly OVERLAPPED* _writeOverlapped = (OVERLAPPED*)NativeMemory.AllocZeroed((nuint)sizeof(OVERLAPPED));
+    private byte* _writeBuffer;
+    private int _writeCapacity;
+    private bool _writePending;
+    private bool _writeCancelled;
+    private long _writeStarted;
+    private OutputKind _writeKind;
+    private readonly Queue<(byte[] Report, OutputKind Kind)> _commands = new();
+    private byte[]? _rumble;
+    private bool _writeFailing;    // the last write failed (only the first failure of a run is logged for rumble)
+    private int _commandFailures;  // subcommand writes failed in a row
+    private const int MaxQueuedCommands = 16;
+    private const long WriteTimeoutMs = 1000;
     private uint _outputLength;
     private bool _canWrite;
     private byte _packetCounter;
@@ -69,6 +85,9 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
 
     /// <summary>Signaled when the pending read completed. Always a valid handle.</summary>
     public nint EventHandle => _event;
+
+    /// <summary>Signaled when the write in flight completed; 0 when none is. Call <see cref="OnWriteSignaled"/>.</summary>
+    public nint WriteHandle => _writePending ? _writeEvent : 0;
 
     public bool IsOpen => _file != 0;
 
@@ -209,6 +228,8 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         _lightAttempts = 0;
         _lastLightAttempt = 0;
         _lastLightCheck = 0;
+        _writeFailing = false;
+        _commandFailures = 0;
         var instance = HidHide.InstanceId(path);
         _fallbackId = instance is null ? null : "dev:" + instance;
         Log.Info($"{Name} opened (input report length {length}, output {outputLength}, write {(_canWrite ? "ok" : "unavailable")})");
@@ -244,6 +265,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
 
     private void Process(uint transferred)
     {
+        CheckWriteTimeout();
         if (transferred > 0)
         {
             if (_managed.Length < transferred) _managed = new byte[transferred];
@@ -292,6 +314,10 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         CloseHandle(_event);
         CloseHandle(_writeEvent);
         NativeMemory.Free(_overlapped);
+        NativeMemory.Free(_writeOverlapped);
+        NativeMemory.Free(_writeBuffer);
+        _writeBuffer = null;
+        _writeCapacity = 0;
     }
 
     /// <summary>
@@ -306,11 +332,8 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         _lastModeAttempt = now;
         _modeAttempts++;
 
-        var report = ProCommands.SetInputMode(_packetCounter++, ProCommands.InputModeFull, (int)_outputLength);
-        if (Write(report))
-            Log.Info($"Requested full input mode (attempt {_modeAttempts})");
-        else if (_modeAttempts >= MaxModeAttempts)
-            _canWrite = false;
+        Send(ProCommands.SetInputMode(_packetCounter++, ProCommands.InputModeFull, (int)_outputLength));
+        Log.Info($"Requested full input mode (attempt {_modeAttempts})");
     }
 
     /// <summary>Asks the controller for its MAC address. Rate limited and capped, like <see cref="RequestFullMode"/>.</summary>
@@ -321,7 +344,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         if (_infoAttempts > 0 && now - _lastInfoAttempt < ModeRetryMs) return;
         _lastInfoAttempt = now;
         _infoAttempts++;
-        Write(ProCommands.RequestDeviceInfo(_packetCounter++, (int)_outputLength));
+        Send(ProCommands.RequestDeviceInfo(_packetCounter++, (int)_outputLength));
     }
 
     // ---- stick calibration (SPI flash) -----------------------------------------------------------
@@ -356,7 +379,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         var (address, length) = _calStep == CalStep.User
             ? (StickCalibrationParser.UserAddress, StickCalibrationParser.UserLength)
             : (StickCalibrationParser.FactoryAddress, StickCalibrationParser.FactoryLength);
-        Write(ProCommands.ReadSpi(_packetCounter++, address, length, (int)_outputLength));
+        Send(ProCommands.ReadSpi(_packetCounter++, address, length, (int)_outputLength));
     }
 
     /// <summary>Asks again when a reply was lost; gives up after a few attempts (the adaptive range stays).</summary>
@@ -405,16 +428,21 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     /// <summary>Starts or stops the rumble motors. Returns false when the controller is absent or read-only.</summary>
     public bool SetRumble(bool on) => SetRumbleMotors(on ? (byte)255 : (byte)0, on ? (byte)255 : (byte)0, 100);
 
-    /// <summary>Rumbles from Xbox motor strengths (0..255) scaled by <paramref name="percent"/>; (0, 0) stops it.</summary>
+    /// <summary>
+    /// Rumbles from Xbox motor strengths (0..255) scaled by <paramref name="percent"/>; (0, 0) stops it. Queued: returns
+    /// false only when the controller is absent or read-only.
+    /// </summary>
     public bool SetRumbleMotors(byte large, byte small, int percent)
     {
         if (_file == 0 || !_canWrite) return false;
         if ((large > 0 || small > 0) && percent > 0 && !_vibrationEnabled)
         {
-            if (!Write(ProCommands.EnableVibration(_packetCounter++, (int)_outputLength))) return false;
+            // A subcommand: it goes out before the rumble frame queued below.
+            Send(ProCommands.EnableVibration(_packetCounter++, (int)_outputLength), OutputKind.EnableVibration);
             _vibrationEnabled = true;
         }
-        return Write(ProCommands.RumbleMotors(_packetCounter++, large, small, percent, (int)_outputLength));
+        Send(ProCommands.RumbleMotors(_packetCounter++, large, small, percent, (int)_outputLength), OutputKind.Rumble);
+        return true;
     }
 
     /// <summary>
@@ -429,8 +457,8 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         if (_lightAttempts > 0 && now - _lastLightAttempt < ModeRetryMs) return;
         _lastLightAttempt = now;
         _lightAttempts++;
-        if (Write(ProCommands.SetPlayerLights(_packetCounter++, _lightMask, (int)_outputLength)))
-            Log.Info($"{Name} player lights 0x{_lightMask:X2} set (attempt {_lightAttempts})");
+        Send(ProCommands.SetPlayerLights(_packetCounter++, _lightMask, (int)_outputLength));
+        Log.Info($"{Name} player lights 0x{_lightMask:X2} requested (attempt {_lightAttempts})");
     }
 
     /// <summary>
@@ -443,51 +471,133 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         long now = Environment.TickCount64;
         if (now - _lastLightCheck < LightCheckMs) return;
         _lastLightCheck = now;
-        Write(ProCommands.GetPlayerLights(_packetCounter++, (int)_outputLength));
+        Send(ProCommands.GetPlayerLights(_packetCounter++, (int)_outputLength));
     }
 
     /// <summary>A subcommand reply (input report 0x21): ack with bit 7 set at byte 13, subcommand id at byte 14.</summary>
     private static bool IsPlayerLightsAck(ReadOnlySpan<byte> r) =>
         r.Length > 14 && r[0] == 0x21 && (r[13] & 0x80) != 0 && r[14] == ProCommands.SubcommandSetPlayerLights;
 
-    /// <summary>Synchronous (bounded) overlapped write on the device handle.</summary>
-    private bool Write(byte[] report)
+    // ---- output ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Queues an output report; it goes out as soon as the write before it completed. Never waits: a slow Bluetooth link
+    /// must not hold up the reports of the other controllers. The senders retry what matters (rate limited), so a full
+    /// queue drops the new subcommand.
+    /// </summary>
+    private void Send(byte[] report, OutputKind kind = OutputKind.Command)
     {
-        var overlapped = (OVERLAPPED*)NativeMemory.AllocZeroed((nuint)sizeof(OVERLAPPED));
-        var buffer = (byte*)NativeMemory.Alloc((nuint)report.Length);
-        try
+        if (_file == 0 || !_canWrite) return;
+        if (kind == OutputKind.Rumble) _rumble = report;
+        else if (_commands.Count < MaxQueuedCommands) _commands.Enqueue((report, kind));
+        else return;
+        PumpWrites();
+    }
+
+    /// <summary>Starts the next write when none is in flight: subcommands first, then the latest rumble frame.</summary>
+    private void PumpWrites()
+    {
+        // A write that fails at once leaves nothing in flight: the next one is tried right away.
+        while (!_writePending && _file != 0 && _canWrite)
         {
-            report.CopyTo(new Span<byte>(buffer, report.Length));
-            overlapped->hEvent = _writeEvent;
-            uint written;
-            if (WriteFile(_file, buffer, (uint)report.Length, &written, (nint)overlapped) == 0)
+            if (_commands.TryDequeue(out var next)) StartWrite(next.Report, next.Kind);
+            else if (_rumble is { } frame)
             {
-                int error = Marshal.GetLastPInvokeError();
-                if (error != ERROR_IO_PENDING)
-                {
-                    Log.Error($"Set full mode: WriteFile failed (error {error})");
-                    return false;
-                }
-                if (WaitForSingleObject(_writeEvent, 1000) != WAIT_OBJECT_0)
-                {
-                    CancelIoEx(_file, overlapped);
-                    GetOverlappedResult(_file, overlapped, &written, 1);
-                    Log.Error("Set full mode: write timed out");
-                    return false;
-                }
+                _rumble = null;
+                StartWrite(frame, OutputKind.Rumble);
             }
-            if (GetOverlappedResult(_file, overlapped, &written, 0) == 0)
-            {
-                Log.Error($"Set full mode: write failed (error {Marshal.GetLastPInvokeError()})");
-                return false;
-            }
-            return true;
+            else return;
         }
-        finally
+    }
+
+    private void StartWrite(byte[] report, OutputKind kind)
+    {
+        if (_writeCapacity < report.Length)
         {
-            NativeMemory.Free(buffer);
-            NativeMemory.Free(overlapped);
+            NativeMemory.Free(_writeBuffer);
+            _writeBuffer = (byte*)NativeMemory.Alloc((nuint)report.Length);
+            _writeCapacity = report.Length;
         }
+        report.CopyTo(new Span<byte>(_writeBuffer, report.Length));
+        *_writeOverlapped = default;
+        _writeOverlapped->hEvent = _writeEvent;
+        _writeKind = kind;
+        uint written;
+        if (WriteFile(_file, _writeBuffer, (uint)report.Length, &written, (nint)_writeOverlapped) == 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            if (error != ERROR_IO_PENDING)
+            {
+                OnWriteDone(error);
+                return; // the next one goes out on the next Send or completion
+            }
+        }
+        // Completed at once or still pending: either way the event gets signaled.
+        _writePending = true;
+        _writeCancelled = false;
+        _writeStarted = Environment.TickCount64;
+    }
+
+    /// <summary>Call when <see cref="WriteHandle"/> is signaled.</summary>
+    public void OnWriteSignaled()
+    {
+        if (_file == 0 || !_writePending) return;
+        uint written;
+        int error = 0;
+        if (GetOverlappedResult(_file, _writeOverlapped, &written, 0) == 0)
+        {
+            error = Marshal.GetLastPInvokeError();
+            if (error == ERROR_IO_INCOMPLETE) return;
+        }
+        _writePending = false;
+        OnWriteDone(error);
+        PumpWrites();
+    }
+
+    /// <summary>A write still pending after <see cref="WriteTimeoutMs"/> is cancelled: its completion reports it.</summary>
+    private void CheckWriteTimeout()
+    {
+        if (!_writePending || _writeCancelled || Environment.TickCount64 - _writeStarted < WriteTimeoutMs) return;
+        _writeCancelled = true;
+        CancelIoEx(_file, _writeOverlapped);
+    }
+
+    private void OnWriteDone(int error)
+    {
+        bool rumble = _writeKind == OutputKind.Rumble;
+        if (error == 0)
+        {
+            _writeFailing = false;
+            if (!rumble) _commandFailures = 0;
+            return;
+        }
+
+        if (_writeKind == OutputKind.EnableVibration) _vibrationEnabled = false; // asked again with the next rumble
+        if (!rumble || !_writeFailing)
+            Log.Error(error == ERROR_OPERATION_ABORTED ? $"{Name}: write timed out" : $"{Name}: write failed (error {error})");
+        _writeFailing = true;
+        if (rumble || ++_commandFailures < MaxModeAttempts) return;
+
+        // A controller that refuses every subcommand can't make us spin: read-only until it reconnects.
+        Log.Error($"{Name}: {_commandFailures} writes failed in a row, no more output to this controller");
+        _canWrite = false;
+        _commands.Clear();
+        _rumble = null;
+    }
+
+    /// <summary>Cancels the write in flight and drops what waits (closing the device).</summary>
+    private void StopWrites()
+    {
+        if (_writePending)
+        {
+            uint n;
+            CancelIoEx(_file, _writeOverlapped);
+            GetOverlappedResult(_file, _writeOverlapped, &n, 1);
+            _writePending = false;
+        }
+        ResetEvent(_writeEvent); // like the read event: a signaled handle would wake the loop for nothing
+        _commands.Clear();
+        _rumble = null;
     }
 
     /// <summary>Logs which button usages the device descriptor declares (HIDP_BUTTON_CAPS is 72 bytes).</summary>
@@ -544,6 +654,7 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
             GetOverlappedResult(_file, _overlapped, &n, 1);
             _pending = false;
         }
+        StopWrites();
         CloseHandle(_file);
         _file = 0;
         // The failed read left the (manual reset) event signaled: the message loop would wake on it forever, and since it

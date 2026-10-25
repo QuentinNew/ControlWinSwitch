@@ -272,10 +272,18 @@ internal sealed class AppConfig
 [JsonSerializable(typeof(AppConfig))]
 internal sealed partial class ConfigJsonContext : JsonSerializerContext;
 
-/// <summary>Loads and saves config.json; reloads when the file changed on disk.</summary>
+/// <summary>
+/// Loads and saves config.json; reloads when the file changed on disk. Saves can be deferred (<see cref="SaveRequested"/>):
+/// a burst of changes is then written once, off the UI thread (<see cref="FlushInBackground"/>).
+/// </summary>
 internal sealed class ConfigStore
 {
+    private readonly object _fileLock = new(); // one writer at a time; guards _stamp and _writtenVersion
     private DateTime _stamp;
+    private bool _dirty;          // changed in memory, not written yet (UI thread)
+    private long _queuedVersion;  // version of the last snapshot handed to a writer (UI thread)
+    private long _writtenVersion; // version on disk: an older snapshot that comes later is not written
+    private int _writesInFlight;  // background writes not finished yet
 
     public ConfigStore(string? path = null)
     {
@@ -286,6 +294,15 @@ internal sealed class ConfigStore
     public string Path { get; }
 
     public AppConfig Current { get; private set; } = new AppConfig().Sanitize();
+
+    /// <summary>
+    /// When set, <see cref="Save"/> only marks the config changed and calls this (the app starts its save timer, then calls
+    /// <see cref="FlushInBackground"/>). When null (startup, tests), <see cref="Save"/> writes at once.
+    /// </summary>
+    public Action? SaveRequested { get; set; }
+
+    /// <summary>A change is not on disk yet (waiting for the timer, or being written).</summary>
+    public bool HasPendingSave => _dirty || Volatile.Read(ref _writesInFlight) > 0;
 
     public static AppConfig Parse(string json) =>
         (JsonSerializer.Deserialize(json, ConfigJsonContext.Default.AppConfig) ?? new AppConfig()).Sanitize();
@@ -301,20 +318,27 @@ internal sealed class ConfigStore
             if (!File.Exists(Path))
             {
                 Current = new AppConfig().Sanitize();
+                _dirty = false;
                 return Save();
             }
 
-            var stamp = File.GetLastWriteTimeUtc(Path);
-            var parsed = Parse(File.ReadAllText(Path));
-            _stamp = stamp;
+            AppConfig parsed;
+            lock (_fileLock)
+            {
+                var stamp = File.GetLastWriteTimeUtc(Path);
+                parsed = Parse(File.ReadAllText(Path));
+                _stamp = stamp;
+                _writtenVersion = _queuedVersion; // the file wins: a snapshot still on its way to disk is dropped
+            }
             Current = parsed;
+            _dirty = false;
             foreach (var note in parsed.RepairNotes) Log.Info("Menu repaired: " + note);
             return null;
         }
         catch (Exception ex)
         {
             // Keep the previous config; remember the stamp so the same broken file is reported once.
-            try { _stamp = File.GetLastWriteTimeUtc(Path); } catch { }
+            try { lock (_fileLock) _stamp = File.GetLastWriteTimeUtc(Path); } catch { }
             Log.Error("Config load failed", ex);
             return ex is JsonException ? "config.json is invalid - keeping the previous settings" : "Cannot read config.json";
         }
@@ -324,9 +348,13 @@ internal sealed class ConfigStore
     public bool ReloadIfChanged(out string? error)
     {
         error = null;
+        // Our own change is on its way to disk: the timestamp moves because of it, not because of an edit.
+        if (HasPendingSave) return false;
         try
         {
-            if (!File.Exists(Path) || File.GetLastWriteTimeUtc(Path) == _stamp) return false;
+            DateTime stamp;
+            lock (_fileLock) stamp = _stamp;
+            if (!File.Exists(Path) || File.GetLastWriteTimeUtc(Path) == stamp) return false;
         }
         catch { return false; }
 
@@ -334,24 +362,75 @@ internal sealed class ConfigStore
         return error is null;
     }
 
-    /// <summary>Writes the current config. Returns an error message, or null.</summary>
+    /// <summary>
+    /// Saves the current config: at once, or (with <see cref="SaveRequested"/>) marks it changed for the next flush.
+    /// Returns an error message, or null (always null when deferred: the flush reports errors).
+    /// </summary>
     public string? Save()
     {
-        try
+        if (SaveRequested is { } request)
         {
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-            // Write to a temp file then swap it in, so a crash mid-write never leaves a broken config.json.
-            string tmp = Path + ".tmp";
-            File.WriteAllText(tmp, Serialize(Current));
-            if (File.Exists(Path)) File.Replace(tmp, Path, Path + ".bak");
-            else File.Move(tmp, Path);
-            _stamp = File.GetLastWriteTimeUtc(Path);
+            _dirty = true;
+            request();
             return null;
         }
-        catch (Exception ex)
+        return Flush(force: true);
+    }
+
+    /// <summary>
+    /// Writes a pending change now, on this thread (also waits for a background write in flight). <paramref name="force"/>
+    /// writes even when nothing changed. Returns an error message, or null.
+    /// </summary>
+    public string? Flush(bool force = false)
+    {
+        if (!force && !HasPendingSave) return null;
+        _dirty = false;
+        return WriteSnapshot(Serialize(Current), ++_queuedVersion);
+    }
+
+    /// <summary>
+    /// Writes a pending change on a worker thread (the snapshot is taken now, on the UI thread).
+    /// <paramref name="onError"/> runs on that worker when the write fails.
+    /// </summary>
+    public void FlushInBackground(Action<string> onError)
+    {
+        if (!_dirty) return;
+        _dirty = false;
+        string json = Serialize(Current);
+        long version = ++_queuedVersion;
+        Interlocked.Increment(ref _writesInFlight);
+        ErrorBoundary.StartWorker("config-save", () =>
         {
-            Log.Error("Config save failed", ex);
-            return "Cannot write config.json";
+            try
+            {
+                if (WriteSnapshot(json, version) is { } error) onError(error);
+            }
+            finally { Interlocked.Decrement(ref _writesInFlight); }
+        });
+    }
+
+    private string? WriteSnapshot(string json, long version)
+    {
+        lock (_fileLock)
+        {
+            if (version <= _writtenVersion) return null; // a newer snapshot (or a reload) got there first
+            try
+            {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+                // Write to a temp file then swap it in, so a crash mid-write never leaves a broken config.json.
+                string tmp = Path + ".tmp";
+                File.WriteAllText(tmp, json);
+                if (File.Exists(Path)) File.Replace(tmp, Path, Path + ".bak");
+                else File.Move(tmp, Path);
+                _stamp = File.GetLastWriteTimeUtc(Path);
+                _writtenVersion = version;
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Config save failed", ex);
+                return "Cannot write config.json";
+            }
         }
     }
 }

@@ -162,6 +162,14 @@ internal sealed unsafe class MainWindow : NativeWindow
                 Controller?.OnScreenshotDone();
                 return 0;
 
+            case AppMessages.ConfigSaveFailed:
+                Controller?.OnConfigSaveFailed();
+                return 0;
+
+            case AppMessages.StartupDone:
+                Controller?.OnStartupDone((Setup.Startup.Mode)(int)wParam, lParam != 0);
+                return 0;
+
             case WM_CLOSE:
                 Controller?.Shutdown(); // pad removed, menu closed, tray icon deleted
                 DestroyWindow(Handle);
