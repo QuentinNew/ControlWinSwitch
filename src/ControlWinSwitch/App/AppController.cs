@@ -11,7 +11,7 @@ namespace ControlWinSwitch.App;
 /// The brain: decides for every controller report whether it is consumed by the app (menu, settings or
 /// mouse mode open) or forwarded to the virtual pad (idle). Also owns the config and the mouse-driven UI events.
 /// </summary>
-internal sealed class AppController : IDisposable, ISettingsHost
+internal sealed class AppController : IDisposable, ISettingsHost, ICommandHost
 {
     private const uint SliderTickMs = 15, SliderRefreshMs = 250, SliderIdleMs = 5000, SliderQuietMs = 500;
     private const uint HideMenuDelayMs = 10; // the menu stays under the settings window this long, so no frame shows neither
@@ -63,11 +63,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly PadService _pads;
     private readonly HeadsetService _headset;
     private readonly PairingService _pairing;
+    private readonly CommandRunner _commands;
 
     private bool _shutDown;
-    private bool _screenshotBusy;
-    private char _screenshotGlyph;
-    private volatile string? _screenshotResult; // written by the screenshot thread, read after ScreenshotDone
 
     private Mode _mode;
     private Dir _heldDirection;
@@ -113,6 +111,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _headset.Changed += RefreshOpenScreen;
         _pairing = new PairingService(set, _registry, window.Handle, _toast, () => _shutDown);
         _pairing.Changed += RefreshSettings;
+        _commands = new CommandRunner(this, window.Handle, _toast, _pads, _headset, _pairing, () => _shutDown);
         ApplyMenuHotkey();
 
         _overlay.RowHovered += OnMenuRowHovered;
@@ -975,153 +974,27 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _sliderIdleTimer.Start(SliderIdleMs); // restarts the countdown
     }
 
-    // ---- commands ----------------------------------------------------------------------------
+    // ---- commands (run by CommandRunner) -----------------------------------------------------
 
-    private void Execute(MenuEntry entry, MenuCommand command)
-    {
-        Log.Info($"Menu command: {command.Kind} ({entry.Label})");
-        switch (command.Kind)
-        {
-            case CommandKind.Quit:
-                PostMessageW(_window.Handle, WM_CLOSE, 0, 0);
-                break;
+    private void Execute(MenuEntry entry, MenuCommand command) => _commands.Execute(entry, command);
 
-            case CommandKind.MouseMode:
-                EnterMouse(entry.Glyph);
-                break;
+    void ICommandHost.OpenSettings() => OpenSettings();
 
-            case CommandKind.OpenSettings:
-                OpenSettings();
-                break;
+    void ICommandHost.EnterMouse(char glyph) => EnterMouse(glyph);
 
-            case CommandKind.AddController:
-                ((ISettingsHost)this).AddController();
-                break;
+    void ICommandHost.EnterSlider(MenuEntry entry, bool volume) => EnterSlider(entry, volume);
 
-            case CommandKind.Launch:
-                if (entry.Launch is { } launch) LaunchTarget(launch);
-                break;
-
-            case CommandKind.CloseMenu:
-                break; // the menu is already closed
-
-            case CommandKind.CloseWindow:
-                var error = WindowActions.CloseForeground(out string title);
-                if (error is not null) Log.Info($"Close window: {error}");
-                _toast.Show(entry.Glyph, error ?? $"Closing {title}");
-                break;
-
-            case CommandKind.Screenshot:
-                TakeScreenshot(entry);
-                break;
-
-            case CommandKind.Volume:
-            case CommandKind.Brightness:
-                EnterSlider(entry, volume: command.Kind == CommandKind.Volume);
-                break;
-
-            case CommandKind.ToggleVirtualPad:
-                TogglePad(entry.Glyph);
-                break;
-
-            case CommandKind.ToggleHeadset:
-                _headset.Toggle(entry.Glyph);
-                break;
-
-            case CommandKind.Sleep:
-            case CommandKind.Restart:
-            case CommandKind.Shutdown:
-                RunPower(PowerActions.FromCommand(command.Kind)!.Value, entry);
-                break;
-
-            default:
-                Log.Error($"Unhandled menu command {command.Kind} ({entry.Label})");
-                break;
-        }
-    }
-
-    /// <summary>The menu is already closed. Mouse mode is off and the pad state cleared before the PC goes away.</summary>
-    private void RunPower(PowerAction action, MenuEntry entry)
+    void ICommandHost.BeforePowerAction()
     {
         if (_mode == Mode.Mouse) ExitMouse(announce: false);
         _state.Reset();
-        _toast.Show(entry.Glyph, action switch
-        {
-            PowerAction.Sleep => "Sleeping...",
-            PowerAction.Restart => "Restarting...",
-            _ => "Shutting down...",
-        });
-
-        // Sleep blocks until the PC wakes, so it never runs on the UI thread.
-        nint hwnd = _window.Handle;
-        ErrorBoundary.StartWorker("power", () =>
-        {
-            var error = PowerActions.Run(action);
-            if (error is not null)
-            {
-                Log.Error($"Power {action}: {error}");
-                PostMessageW(hwnd, AppMessages.PowerFailed, 0, 0);
-            }
-        }, onFailure: () => PostMessageW(hwnd, AppMessages.PowerFailed, 0, 0));
     }
 
     /// <summary>AppMessages.PowerFailed, on the UI thread.</summary>
-    public void OnPowerFailed()
-    {
-        if (!_shutDown) _toast.Show(MenuPages.Power, "Power action failed - see log");
-    }
-
-    /// <summary>The menu is already hidden: capture now, encode and write on a worker thread.</summary>
-    private void TakeScreenshot(MenuEntry entry)
-    {
-        if (_screenshotBusy)
-        {
-            _toast.Show(entry.Glyph, "Still saving the last screenshot");
-            return;
-        }
-        _toast.Hide(); // a toast still on screen would end up in the picture
-
-        var shot = Screenshot.Capture(out var error);
-        if (shot is null)
-        {
-            Log.Error($"Screenshot: {error}");
-            _toast.Show(entry.Glyph, error ?? "Screenshot failed");
-            return;
-        }
-
-        _screenshotBusy = true;
-        _screenshotGlyph = entry.Glyph;
-        nint hwnd = _window.Handle;
-        string? folder = entry.SaveFolder;
-        bool copy = entry.CopyToClipboard;
-        ErrorBoundary.StartWorker("screenshot", () =>
-        {
-            _screenshotResult = Screenshot.Save(shot, folder, copy);
-            PostMessageW(hwnd, AppMessages.ScreenshotDone, 0, 0);
-        }, onFailure: () => PostMessageW(hwnd, AppMessages.ScreenshotDone, 0, 0)); // clears the busy flag
-    }
+    public void OnPowerFailed() => _commands.OnPowerFailed();
 
     /// <summary>AppMessages.ScreenshotDone, on the UI thread.</summary>
-    public void OnScreenshotDone()
-    {
-        _screenshotBusy = false;
-        if (!_shutDown && _screenshotResult is { } text) _toast.Show(_screenshotGlyph, text);
-        _screenshotResult = null;
-    }
-
-    private void LaunchTarget(ShortcutConfig shortcut)
-    {
-        _toast.Show(MenuPages.Play, $"Launching {shortcut.Name}");
-        var error = UnelevatedLauncher.Launch(shortcut.Target, shortcut.Args, shortcut.WorkingDir, shortcut.RunAsAdmin == true);
-        if (error is not null)
-        {
-            Log.Error($"Shortcut '{shortcut.Name}': {error}");
-            _toast.Show('', $"{shortcut.Name}: {error}");
-            return;
-        }
-
-        _pads.WatchSoon(); // the launched program may be a watched one
-    }
+    public void OnScreenshotDone() => _commands.OnScreenshotDone();
 
     // ---- virtual pad (kept by PadService) ----------------------------------------------------
 
