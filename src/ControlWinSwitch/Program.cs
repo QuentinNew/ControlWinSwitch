@@ -23,13 +23,26 @@ internal static unsafe class Program
             return 0;
         }
 
+        AppController? controller = null;
         try
         {
             using var set = new ControllerSet();
             var window = new MainWindow(set);
-            var controller = new AppController(set, window);
+            controller = new AppController(set, window);
             window.Controller = controller;
             Log.Info($"Started {typeof(Program).Assembly.GetName().Version?.ToString(3)} (elevated={IsElevated()}, hwnd=0x{window.Handle:X})");
+
+            var app = controller;
+            ErrorBoundary.Recover = app.RecoverToIdle;
+            // Any thread not started through ErrorBoundary.StartWorker (thread-pool and WinRT callbacks): the process is
+            // about to end, so only show the hidden controllers again.
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                Log.Error($"Fatal on thread '{Thread.CurrentThread.Name ?? Environment.CurrentManagedThreadId.ToString()}'",
+                    e.ExceptionObject as Exception);
+                try { app.ShowControllersAgain(); }
+                catch (Exception ex) { Log.Error("Showing the controllers again failed", ex); }
+            };
 
             set.Report += controller.OnReport;
             set.CalibrationRead += controller.OnCalibration;
@@ -49,6 +62,8 @@ internal static unsafe class Program
         catch (Exception ex)
         {
             Log.Error("Fatal", ex);
+            try { controller?.Shutdown(); } // shows the controllers again, unplugs the pads
+            catch (Exception shutdownError) { Log.Error("Shutdown after the fatal error failed", shutdownError); }
             return 1;
         }
     }
@@ -93,15 +108,27 @@ internal static unsafe class Program
             }
 
             uint r = MsgWaitForMultipleObjectsEx(count, handles, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-            if (r == uint.MaxValue) return; // WAIT_FAILED
+            if (r == uint.MaxValue)
+            {
+                Log.Error($"Message loop: wait failed (error {System.Runtime.InteropServices.Marshal.GetLastSystemError()}), quitting");
+                return;
+            }
             if (r < WAIT_OBJECT_0 + count)
             {
                 int id = ids[r - WAIT_OBJECT_0];
-                if (id < Readers) set.OnHidSignaled(id);
-                else if (id < MouseId) controller.OnPadNotify(id - PadBase);
-                else if (id == MouseId) controller.OnMouseTick();
-                else if (id == JoyConId) set.Hub.OnSignaled();
-                else controller.OnWatchedProcessExited();
+                try
+                {
+                    if (id < Readers) set.OnHidSignaled(id);
+                    else if (id < MouseId) controller.OnPadNotify(id - PadBase);
+                    else if (id == MouseId) controller.OnMouseTick();
+                    else if (id == JoyConId) set.Hub.OnSignaled();
+                    else controller.OnWatchedProcessExited();
+                }
+                catch (Exception ex)
+                {
+                    ErrorBoundary.OnUiError(id < Readers ? "Controller report" : id < MouseId ? "Rumble" : id == MouseId ? "Mouse"
+                        : id == JoyConId ? "Joy-Con 2" : "Watched process", ex);
+                }
             }
 
             while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE) != 0)

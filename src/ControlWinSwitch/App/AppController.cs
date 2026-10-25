@@ -821,10 +821,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
         {
             // Into the power plan too, or Windows puts its own value back later. Slow: on a worker thread.
             int percent = _slider.Percent;
-            new Thread(() =>
+            ErrorBoundary.StartWorker("brightness", () =>
             {
                 if (!Brightness.Save(percent)) Log.Error("Brightness: saving to the power plan failed");
-            }) { IsBackground = true, Name = "brightness" }.Start();
+            });
         }
         CloseSliderDevices();
         Log.Info($"Slider closed ({_slider.Percent})");
@@ -1060,15 +1060,16 @@ internal sealed class AppController : IDisposable, ISettingsHost
         });
 
         // Sleep blocks until the PC wakes, so it never runs on the UI thread.
-        new Thread(() =>
+        nint hwnd = _window.Handle;
+        ErrorBoundary.StartWorker("power", () =>
         {
             var error = PowerActions.Run(action);
             if (error is not null)
             {
                 Log.Error($"Power {action}: {error}");
-                PostMessageW(_window.Handle, AppMessages.PowerFailed, 0, 0);
+                PostMessageW(hwnd, AppMessages.PowerFailed, 0, 0);
             }
-        }) { IsBackground = true, Name = "power" }.Start();
+        }, onFailure: () => PostMessageW(hwnd, AppMessages.PowerFailed, 0, 0));
     }
 
     /// <summary>AppMessages.PowerFailed, on the UI thread.</summary>
@@ -1100,11 +1101,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         nint hwnd = _window.Handle;
         string? folder = entry.SaveFolder;
         bool copy = entry.CopyToClipboard;
-        new Thread(() =>
+        ErrorBoundary.StartWorker("screenshot", () =>
         {
             _screenshotResult = Screenshot.Save(shot, folder, copy);
             PostMessageW(hwnd, AppMessages.ScreenshotDone, 0, 0);
-        }) { IsBackground = true, Name = "screenshot" }.Start();
+        }, onFailure: () => PostMessageW(hwnd, AppMessages.ScreenshotDone, 0, 0)); // clears the busy flag
     }
 
     /// <summary>AppMessages.ScreenshotDone, on the UI thread.</summary>
@@ -1588,11 +1589,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _toast.Show(MenuPages.Game, "Searching... Please hold sync button");
         if (only is null) _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
         nint hwnd = _window.Handle;
-        new Thread(() =>
+        ErrorBoundary.StartWorker("pairing", () =>
         {
             var result = BluetoothPairing.PairController(only);
             PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)result, 0);
-        }) { IsBackground = true, Name = "pairing" }.Start();
+        }, onFailure: () => PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)PairResult.Failed, 0));
     }
 
     /// <summary>AppMessages.PairDone, on the UI thread.</summary>
@@ -1963,12 +1964,12 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _headsetBusy = true;
         nint hwnd = _window.Handle;
         string name = Config.HeadsetName;
-        new Thread(() =>
+        ErrorBoundary.StartWorker("headset", () =>
         {
             if (!toggle) _headsetDevices = BluetoothHeadset.ListDevices();
             var state = toggle ? BluetoothHeadset.Toggle(name) : BluetoothHeadset.GetState(name);
             PostMessageW(hwnd, AppMessages.HeadsetDone, (nuint)(int)state, toggle ? 1 : 0);
-        }) { IsBackground = true, Name = "headset" }.Start();
+        }, onFailure: () => PostMessageW(hwnd, AppMessages.HeadsetDone, (nuint)(int)HeadsetState.Failed, toggle ? 1 : 0));
     }
 
     /// <summary>AppMessages.HeadsetDone, on the UI thread.</summary>
@@ -2027,21 +2028,78 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_shutDown) return;
         _shutDown = true;
         Log.Info("Shutting down");
-        foreach (var mac in _connectedMacs)
-            if (Config.KnownControllers.TryGetValue(mac, out var known)) known.LastSeen = DateTime.UtcNow;
-        if (_connectedMacs.Count > 0) _store.Save();
-
-        StopRepeat();
-        if (_mode == Mode.Menu) CloseMenu();
-        if (_mode == Mode.Settings) CloseSettings();
-        if (_mode == Mode.Editor) CloseMenuEditor();
-        if (_mode == Mode.Slider) ExitSlider();
-        _mouse.Deactivate(); // releases held mouse buttons
+        // Step by step: one that throws must not keep the controllers hidden or the pads plugged in.
+        TryStep("save the last-seen times", () =>
+        {
+            foreach (var mac in _connectedMacs)
+                if (Config.KnownControllers.TryGetValue(mac, out var known)) known.LastSeen = DateTime.UtcNow;
+            if (_connectedMacs.Count > 0) _store.Save();
+        });
+        TryStep("close the open screen", () =>
+        {
+            StopRepeat();
+            if (_mode == Mode.Menu) CloseMenu();
+            if (_mode == Mode.Settings) CloseSettings();
+            if (_mode == Mode.Editor) CloseMenuEditor();
+            if (_mode == Mode.Slider) ExitSlider();
+        });
         _mode = Mode.Idle;
-        _toast.Hide();
-        foreach (var slot in _slots) slot.Pad.Dispose(); // unplugs the pads: they disappear from the games
-        SyncHiding(); // shutting down: shows the controllers again
-        _window.RemoveTray();
+        TryStep("release the mouse buttons", _mouse.Deactivate);
+        TryStep("hide the toast", _toast.Hide);
+        foreach (var slot in _slots) TryStep("unplug a virtual pad", slot.Pad.Dispose); // they disappear from the games
+        TryStep("show the controllers again", SyncHiding); // shutting down: hides nothing
+        TryStep("remove the tray icon", _window.RemoveTray);
+    }
+
+    /// <summary>
+    /// After an unexpected error on the UI thread: closes whatever screen is open and lets go of everything held, so a
+    /// half-done change can't leave an overlay up, a mouse button down or a button stuck on the virtual pad.
+    /// </summary>
+    public void RecoverToIdle(bool announce)
+    {
+        if (_shutDown) return;
+        var mode = _mode;
+        _mode = Mode.Idle;
+        _heldDirection = Dir.None;
+        TryStep("stop the key repeat", StopRepeat);
+        TryStep("hide the menu", () =>
+        {
+            _overlay.Hide();
+            _radialOverlay.Hide();
+        });
+        if (mode == Mode.Settings) TryStep("hide the settings", _settingsWindow.Hide);
+        if (mode == Mode.Editor) TryStep("hide the menu editor", _menuEditor.Hide);
+        TryStep("close the slider", () =>
+        {
+            KillTimer(_window.Handle, SliderTickTimerId);
+            KillTimer(_window.Handle, SliderRefreshTimerId);
+            KillTimer(_window.Handle, SliderIdleTimerId);
+            _sliderTicking = false;
+            _sliderOverlay.Hide();
+            CloseSliderDevices();
+        });
+        TryStep("release the mouse buttons", _mouse.Deactivate);
+        foreach (var slot in _slots)
+        {
+            slot.IgnoreMask = slot.State.Current; // what is held reaches the game only once released
+            slot.IgnoreSticks = true;
+            TryStep("neutralize a virtual pad", slot.Pad.SubmitNeutral);
+        }
+        if (!announce) return;
+        Log.Info($"Recovered from the error (was {mode})");
+        TryStep("show the error toast", () => _toast.Show(MenuPages.Gear, "Something went wrong - see log"));
+    }
+
+    /// <summary>Last resort when the process is about to die, from any thread: shows the hidden controllers again.</summary>
+    public void ShowControllersAgain()
+    {
+        if (_hiddenKey.Length > 0) HidHide.Apply([]);
+    }
+
+    private static void TryStep(string step, Action action)
+    {
+        try { action(); }
+        catch (Exception ex) { Log.Error($"Could not {step}", ex); }
     }
 
     public void Dispose()

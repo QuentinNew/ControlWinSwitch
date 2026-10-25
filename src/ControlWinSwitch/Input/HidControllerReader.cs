@@ -233,6 +233,17 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
         }
         _pending = false;
 
+        // finally: a handler that throws must not leave the controller without a pending read.
+        try { Process(transferred); }
+        finally
+        {
+            // A handler may have closed the device.
+            if (_file != 0) BeginRead();
+        }
+    }
+
+    private void Process(uint transferred)
+    {
         if (transferred > 0)
         {
             if (_managed.Length < transferred) _managed = new byte[transferred];
@@ -266,9 +277,6 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
                     JoyConInput?.Invoke(input, battery, charging); // a Joy-Con's simple reports are laid out otherwise: ignored
             }
         }
-
-        // A handler may have closed the device.
-        if (_file != 0) BeginRead();
     }
 
     /// <summary>Call on WM_DEVICECHANGE removal of a HID interface.</summary>

@@ -61,7 +61,7 @@ internal sealed class JoyCon2Hub : IDisposable
         foreach (var action in _draining)
         {
             try { action(); }
-            catch (Exception ex) { Log.Error("Joy-Con 2", ex); }
+            catch (Exception ex) { ErrorBoundary.OnUiError("Joy-Con 2", ex); }
         }
         _draining.Clear();
     }

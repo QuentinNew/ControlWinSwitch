@@ -62,8 +62,8 @@ internal abstract unsafe class NativeWindow
         }
         catch (Exception ex)
         {
-            // Never let an exception unwind through native code.
-            Log.Error($"WndProc 0x{msg:X}", ex);
+            // Never let an exception unwind through native code. Same policy as the message loop: log, back to idle.
+            ErrorBoundary.OnUiError($"WndProc 0x{msg:X}", ex);
             return DefWindowProcW(hwnd, msg, wParam, lParam);
         }
     }

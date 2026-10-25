@@ -168,7 +168,7 @@ internal static unsafe class BluetoothPairing
             // Answer from another thread: the pairing stack waits for this callback to return.
             ulong address = *(ulong*)(callback + 8);
             nint radio = _radio;
-            new Thread(() =>
+            ErrorBoundary.StartWorker("pairing-confirm", () =>
             {
                 var response = stackalloc byte[48];
                 new Span<byte>(response, 48).Clear();
@@ -180,7 +180,7 @@ internal static unsafe class BluetoothPairing
                 if (error == 0) return;
                 error = BluetoothSendAuthenticationResponseEx(radio, response);
                 Log.Info($"Pairing: confirmation sent with radio handle {radio:X} (error {error})");
-            }) { IsBackground = true, Name = "pairing-confirm" }.Start();
+            });
             return 1;
         }
         catch (Exception ex)
