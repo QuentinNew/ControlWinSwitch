@@ -62,8 +62,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly ControllerRegistry _registry;
     private readonly PadService _pads;
     private readonly HeadsetService _headset;
+    private readonly PairingService _pairing;
 
-    private bool _pairing;
     private bool _shutDown;
     private bool _screenshotBusy;
     private char _screenshotGlyph;
@@ -111,6 +111,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _pads.WatchChanged += RefreshOpenScreen;
         _headset = new HeadsetService(_store, window.Handle, _toast, () => _shutDown, ((ISettingsHost)this).OpenBluetoothSettings);
         _headset.Changed += RefreshOpenScreen;
+        _pairing = new PairingService(set, _registry, window.Handle, _toast, () => _shutDown);
+        _pairing.Changed += RefreshSettings;
         ApplyMenuHotkey();
 
         _overlay.RowHovered += OnMenuRowHovered;
@@ -1144,6 +1146,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>The watched process exited (its handle was signalled).</summary>
     public void OnWatchedProcessExited() => _pads.OnWatchedProcessExited();
 
+    private void RefreshSettings()
+    {
+        if (_mode == Mode.Settings) _settingsWindow.Refresh();
+    }
+
     /// <summary>Something the menu or settings show changed (pad, headset): repaints whichever is open.</summary>
     private void RefreshOpenScreen()
     {
@@ -1236,7 +1243,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    string ISettingsHost.PairingStatus => _pairing ? "Searching..." : "";
+    string ISettingsHost.PairingStatus => _pairing.Status;
 
     // ---- controllers (profiles and the known list are kept by ControllerRegistry) -------------
 
@@ -1291,58 +1298,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.CloseControllerPage() => CloseControllerPage();
 
-    void ISettingsHost.AddController() => StartPairing(only: null);
-
-    /// <summary>
-    /// Searches for a controller in sync mode: a Pro Controller or an original Joy-Con (<paramref name="only"/>: that one
-    /// only, by MAC) and, when any controller is wanted, a Joy-Con 2.
-    /// </summary>
-    private void StartPairing(string? only)
-    {
-        if (_pairing || _shutDown) return;
-        _pairing = true;
-        _pairedJoyCons = 0;
-        _toast.Show(MenuPages.Game, "Searching... Please hold sync button");
-        if (only is null) _set.Hub.StartPairing(PairWindowMs); // a Joy-Con 2 in sync mode is claimed meanwhile
-        nint hwnd = _window.Handle;
-        ErrorBoundary.StartWorker("pairing", () =>
-        {
-            var result = BluetoothPairing.PairController(only);
-            PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)result, 0);
-        }, onFailure: () => PostMessageW(hwnd, AppMessages.PairDone, (nuint)(int)PairResult.Failed, 0));
-    }
+    void ISettingsHost.AddController() => _pairing.Start(only: null);
 
     /// <summary>AppMessages.PairDone, on the UI thread.</summary>
-    public void OnPairDone(PairResult result)
-    {
-        _pairing = false;
-        _set.Hub.StopPairing();
-        if (_shutDown) return;
-        Log.Info($"Pairing: {result}");
-        _registry.RefreshRemembered();
-        if (result == PairResult.NotFound && _pairedJoyCons > 0)
-        {
-            if (_mode == Mode.Settings) _settingsWindow.Refresh();
-            return; // the Joy-Con toast said it already
-        }
-        _toast.Show(MenuPages.Game, result switch
-        {
-            PairResult.Paired => "Controller paired",
-            PairResult.NotFound => "No new controller found",
-            _ => "Pairing failed - try Windows Bluetooth settings",
-        });
-        if (_mode == Mode.Settings) _settingsWindow.Refresh();
-    }
-
-    private const int PairWindowMs = BluetoothPairing.SearchMs + 20_000; // longer than the Pro Controller search: it ends the window
-    private int _pairedJoyCons;
+    public void OnPairDone(PairResult result) => _pairing.OnDone(result);
 
     /// <summary>A Joy-Con 2 in sync mode was paired with this PC (UI thread).</summary>
-    public void OnJoyConPaired(JoyCon2Device device)
-    {
-        _pairedJoyCons++;
-        if (!_shutDown) _toast.Show(MenuPages.Game, $"{device.Name} paired");
-    }
+    public void OnJoyConPaired(JoyCon2Device device) => _pairing.OnJoyConPaired(device);
 
     /// <summary>Joy-Cons joined a slot: a new controller, or the partner of a lone Joy-Con.</summary>
     public void OnJoyConsChanged(int slot)
@@ -1383,7 +1345,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.RepairController(string key)
     {
-        StartPairing(only: _registry.UsesWindowsPairing(key) ? key : null); // a Joy-Con 2 in sync mode is claimed by the hub
+        _pairing.Start(only: _registry.UsesWindowsPairing(key) ? key : null); // a Joy-Con 2 in sync mode is claimed by the hub
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
