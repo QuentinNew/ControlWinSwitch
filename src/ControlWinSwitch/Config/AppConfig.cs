@@ -168,6 +168,18 @@ internal sealed class MenuNodeConfig
     /// <summary>Power: "sleep", "restart" or "shutdown"; null or unknown = sleep.</summary>
     public string? PowerMode { get; set; }
 
+    /// <summary>Close window: "byName" closes an app by its process name; null or unknown = the current window.</summary>
+    public string? CloseTarget { get; set; }
+
+    /// <summary>Close window by name: the process name ("steam", "Steam" or "steam.exe").</summary>
+    public string? ProcessName { get; set; }
+
+    /// <summary>Close window by name: end the process at once instead of asking its windows to close.</summary>
+    public bool? ForceQuit { get; set; }
+
+    /// <summary>Close window: ask before closing; null = ask, false = do not.</summary>
+    public bool? Confirm { get; set; }
+
     /// <summary>Folders only; a folder can hold other folders.</summary>
     public List<MenuNodeConfig>? Children { get; set; }
 
@@ -186,6 +198,10 @@ internal sealed class MenuNodeConfig
         CopyToClipboard = CopyToClipboard,
         ScreenMode = ScreenMode,
         PowerMode = PowerMode,
+        CloseTarget = CloseTarget,
+        ProcessName = ProcessName,
+        ForceQuit = ForceQuit,
+        Confirm = Confirm,
         Children =Children?.Select(c => c.Clone()).ToList(),
     };
 }

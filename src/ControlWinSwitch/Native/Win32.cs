@@ -353,6 +353,11 @@ internal static unsafe partial class Win32
     public const uint WM_RBUTTONDOWN = 0x0204;
     [LibraryImport("user32.dll", SetLastError = true)]
     public static partial nint SetWindowsHookExW(int hookId, delegate* unmanaged<int, nuint, nint, nint> proc, nint module, uint threadId);
+    public const uint GW_OWNER = 4;
+    public const int DWMWA_CLOAKED = 14;
+    [LibraryImport("user32.dll")] public static partial int EnumWindows(delegate* unmanaged<nint, nint, int> proc, nint lParam);
+    [LibraryImport("user32.dll")] public static partial nint GetWindow(nint hwnd, uint cmd);
+    [LibraryImport("dwmapi.dll")] public static partial int DwmGetWindowAttribute(nint hwnd, int attr, void* value, uint size);
     [LibraryImport("user32.dll")] public static partial int UnhookWindowsHookEx(nint hook);
     [LibraryImport("user32.dll")] public static partial nint CallNextHookEx(nint hook, int code, nuint wParam, nint lParam);
     [LibraryImport("user32.dll")] public static partial int SetDisplayConfig(uint paths, nint pathArray, uint modes, nint modeArray, uint flags);

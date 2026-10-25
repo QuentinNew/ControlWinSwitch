@@ -35,7 +35,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         "E787", "E7BA", "E7C4", "E818", "E81C", "E890", "E895", "E896", "E898", "E8C8", "E8E1", "E91B",
     ];
 
-    private enum Field { None, Name, ImagePath, Hex, Target, Args, SaveFolder }
+    private enum Field { None, Name, ImagePath, Hex, Target, Args, SaveFolder, ProcessName }
 
     private sealed class Hit
     {
@@ -75,6 +75,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
     private bool _steamOpen;      // the recently played Steam games list is open
     private List<SteamGame> _steamGames = [];
     private bool _selectOpen;     // the node's select (screen mode, power action) is open
+    private bool _windowsOpen;    // the open windows list (Close window by name) is open
+    private List<OpenWindow> _openWindows = [];
+    private int _windowsTop;      // first visible row of that list
     private RECT _selectField;    // where the select's closed field was drawn: the popup opens under it
     private bool _pipetting;     // the eyedropper is picking: the next click on the screen takes the color
     private MenuNodeConfig? _pickNode;
@@ -109,6 +112,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         Init(layout, radialTree, listTree);
         _addSlot = -1;
         _selectOpen = false;
+        _windowsOpen = false;
         _error = null;
         _dragNode = null;
         RadialIcons.Clear();
@@ -252,6 +256,11 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
                 active?.Up?.Invoke(LoWord(lParam), (short)((lParam >> 16) & 0xFFFF));
                 return 0;
             }
+            case WM_MOUSEWHEEL when _windowsOpen:
+                _windowsTop = Math.Clamp(_windowsTop - Math.Sign((short)((wParam >> 16) & 0xFFFF)),
+                    0, Math.Max(0, _openWindows.Count - WindowRows));
+                Redraw();
+                return 0;
             case WM_MOUSEWHEEL when _model.IsList:
                 _listScroll -= Math.Sign((short)((wParam >> 16) & 0xFFFF)) * 2;
                 Redraw();
@@ -301,6 +310,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         {
             if (_pendingCopy is not null) { _pendingCopy = null; Redraw(); }
             else if (_field != Field.None) { _field = Field.None; Redraw(); }
+            else if (_windowsOpen) { _windowsOpen = false; Redraw(); }
             else if (_selectOpen) { _selectOpen = false; Redraw(); }
             else if (_steamOpen) { _steamOpen = false; Redraw(); }
             else if (_addSlot >= 0) { _addSlot = -1; Redraw(); }
@@ -365,6 +375,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
                     break;
                 case Field.SaveFolder:
                     node.SaveFolder = value.Length == 0 ? null : value;
+                    break;
+                case Field.ProcessName:
+                    node.ProcessName = value.Length == 0 ? null : value;
                     break;
             }
         }
@@ -616,6 +629,11 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         if (_steamOpen)
         {
             DrawSteamPopup();
+            FlushTexts(dc);
+        }
+        if (_windowsOpen && _model.Selected is { } windowsNode)
+        {
+            DrawWindowsPopup(windowsNode);
             FlushTexts(dc);
         }
         if (_selectOpen && _model.Selected is { } selectNode && SelectFor(selectNode) is { } openSelect)
@@ -1131,7 +1149,28 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         }
 
         if (SelectFor(node) is { } select)
+        {
             DrawSelect(select, bx, by, bx + bw);
+            by += Px(62);
+        }
+
+        if (node.Type == MenuNodeTypes.CloseWindow)
+        {
+            if (CloseTargets.Parse(node.CloseTarget) == CloseTarget.ByName)
+            {
+                TextField(Field.ProcessName, "App name (process)", bx, by, bx + bw, node.ProcessName ?? "", "steam");
+                by += Px(62);
+                Button(bx, by, bx + bw, by + Px(36), "Pick an open window...", OpenWindowsList);
+                by += Px(46);
+                bool force = node.ForceQuit == true;
+                Button(bx, by, bx + bw, by + Px(36), force ? "Force quit: On" : "Force quit: Off",
+                    () => node.ForceQuit = force ? null : true, active: force);
+                by += Px(46);
+            }
+            bool confirm = node.Confirm != false;
+            Button(bx, by, bx + bw, by + Px(36), confirm ? "Confirm before closing: On" : "Confirm before closing: Off",
+                () => node.Confirm = confirm ? false : null, active: confirm);
+        }
 
         // Delete.
         int footerTop = Px(HeightDip - FooterDip);
@@ -1292,6 +1331,63 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         if (game.CoverPath is not null) node.Icon = new MenuIconConfig { Kind = "image", Path = NodeImages.Cached(game.CoverPath) };
     }
 
+    private const int WindowRows = 10;
+
+    private void OpenWindowsList()
+    {
+        CommitField();
+        _openWindows = WindowActions.OpenWindows();
+        _windowsTop = 0;
+        _windowsOpen = true;
+    }
+
+    /// <summary>The programs that have a window open now; picking one writes its process name in the selected Close window node.</summary>
+    private void DrawWindowsPopup(MenuNodeConfig node)
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+
+        AddHit(0, 0, _w, _h, (_, _) =>
+        {
+            _windowsOpen = false;
+            Redraw();
+        }, hand: false);
+
+        int shown = Math.Min(WindowRows, Math.Max(1, _openWindows.Count));
+        int rowH = Px(40), width = Px(520), height = rowH * shown + Px(52);
+        var center = RingCenter;
+        int l = center.X - width / 2, t = Math.Max(Px(HeaderDip + 8), center.Y - height / 2);
+
+        RoundRect(l - Px(2), t - Px(2), l + width + Px(2), t + height + Px(2), Px(14), Rim);
+        RoundRect(l, t, l + width, t + height, Px(12), Panel);
+        Text(fonts.Detail, Gdi.Dim, "Open windows", l, t + Px(6), l + width, t + Px(40), DT_CENTER | oneLine);
+        AddHit(l, t, l + width, t + height, null, hand: false);
+
+        if (_openWindows.Count == 0)
+        {
+            Text(fonts.Detail, Gdi.Dim, "No open window found", l, t + Px(44), l + width, t + Px(44) + rowH, DT_CENTER | oneLine);
+            return;
+        }
+
+        _windowsTop = Math.Clamp(_windowsTop, 0, Math.Max(0, _openWindows.Count - shown));
+        for (int i = 0; i < shown; i++)
+        {
+            var window = _openWindows[_windowsTop + i];
+            int rt = t + Px(46) + i * rowH;
+            int right = l + width - Px(8);
+            RoundRect(l + Px(8), rt, right, rt + rowH - Px(4), Px(8), PanelLight);
+            Text(fonts.Detail, Gdi.TextColor, ProcessList.DisplayName(window.Process), l + Px(20), rt, l + Px(190), rt + rowH - Px(4),
+                DT_LEFT | oneLine | DT_END_ELLIPSIS);
+            Text(fonts.Footer, Gdi.Dim, window.Title, l + Px(200), rt, right - Px(12), rt + rowH - Px(4), DT_LEFT | oneLine | DT_END_ELLIPSIS);
+            AddHit(l + Px(8), rt, right, rt + rowH - Px(4), (_, _) =>
+            {
+                node.ProcessName = window.Process;
+                _windowsOpen = false;
+                Redraw();
+            });
+        }
+    }
+
     private void DrawSteamPopup()
     {
         var fonts = Gdi.GetFonts(_dpi);
@@ -1343,6 +1439,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         MenuNodeTypes.ChangeScreen => new("Screen mode", ScreenModes.All.Select(ScreenModes.Label).ToArray(),
             Array.IndexOf(ScreenModes.All, ScreenModes.Parse(node.ScreenMode)),
             i => node.ScreenMode = ScreenModes.ToConfig(ScreenModes.All[i])),
+        MenuNodeTypes.CloseWindow => new("Close", CloseTargets.All.Select(CloseTargets.Label).ToArray(),
+            Array.IndexOf(CloseTargets.All, CloseTargets.Parse(node.CloseTarget)),
+            i => node.CloseTarget = CloseTargets.ToConfig(CloseTargets.All[i])),
         MenuNodeTypes.Power => new("Power action", PowerActions.All.Select(PowerActions.Label).ToArray(),
             Array.IndexOf(PowerActions.All, PowerActions.Parse(node.PowerMode)),
             i => node.PowerMode = PowerActions.ToConfig(PowerActions.All[i])),

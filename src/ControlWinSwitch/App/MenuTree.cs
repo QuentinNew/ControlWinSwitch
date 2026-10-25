@@ -23,7 +23,7 @@ internal static class NodeKinds
         new(MenuNodeTypes.VirtualPad, "Virtual pad", MenuPages.Game, CommandKind.ToggleVirtualPad, Status: NodeStatus.VirtualPad, ActiveWhen: "On"),
         new(MenuNodeTypes.Headset, "Headset", MenuPages.Headphone, CommandKind.ToggleHeadset, Status: NodeStatus.Headset, ActiveWhen: "Connected"),
         new(MenuNodeTypes.AddController, "Add controller", MenuPages.Add, CommandKind.AddController),
-        new(MenuNodeTypes.CloseWindow, "Close window", MenuPages.CloseWindow, CommandKind.CloseWindow, "Close the current window?"),
+        new(MenuNodeTypes.CloseWindow, "Close window", MenuPages.CloseWindow, CommandKind.CloseWindow),
         new(MenuNodeTypes.Screenshot, "Screenshot", MenuPages.Camera, CommandKind.Screenshot),
         new(MenuNodeTypes.Volume, "Volume", MenuPages.Volume, CommandKind.Volume),
         new(MenuNodeTypes.Brightness, "Brightness", MenuPages.Brightness, CommandKind.Brightness),
@@ -89,7 +89,7 @@ internal static class MenuTree
         {
             Label = label, Glyph = glyph, Slot = slot, Color = color, Icon = icon,
             Command = new(kind.Command),
-            ConfirmPrompt = node.Type == MenuNodeTypes.Power ? PowerActions.ConfirmPrompt(PowerActions.Parse(node.PowerMode)) : kind.ConfirmPrompt,
+            ConfirmPrompt = ConfirmPromptOf(node, kind),
             Detail = detail,
             Active = activeWhen is null ? null : () => detail?.Invoke() == activeWhen,
             Launch = isShortcut
@@ -99,8 +99,20 @@ internal static class MenuTree
             CopyToClipboard = node.CopyToClipboard == true,
             ScreenMode = ScreenModes.Parse(node.ScreenMode),
             PowerMode = PowerActions.Parse(node.PowerMode),
+            CloseTarget = CloseTargets.Parse(node.CloseTarget),
+            ProcessName = node.ProcessName?.Trim() ?? "",
+            ForceQuit = node.ForceQuit == true,
         };
     }
+
+    /// <summary>The yes/no question before a node runs, or null when it runs at once.</summary>
+    private static string? ConfirmPromptOf(MenuNodeConfig node, NodeKind kind) => node.Type switch
+    {
+        MenuNodeTypes.Power => PowerActions.ConfirmPrompt(PowerActions.Parse(node.PowerMode)),
+        MenuNodeTypes.CloseWindow => node.Confirm == false ? null
+            : WindowActions.ConfirmPrompt(CloseTargets.Parse(node.CloseTarget), node.ProcessName ?? "", node.ForceQuit == true),
+        _ => kind.ConfirmPrompt,
+    };
 
     /// <summary>The icon a node has when none is configured: Power nodes have one per action.</summary>
     internal static char DefaultGlyph(MenuNodeConfig node) => node.Type == MenuNodeTypes.Power

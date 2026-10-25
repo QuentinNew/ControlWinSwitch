@@ -63,6 +63,11 @@ internal sealed class MenuEntry
     /// <summary>Power entries (<see cref="CommandKind.Power"/>): what to do.</summary>
     public PowerAction PowerMode { get; init; } = PowerAction.Sleep;
 
+    /// <summary>Close window entries (<see cref="CommandKind.CloseWindow"/>): which window, or which app by process name.</summary>
+    public CloseTarget CloseTarget { get; init; } = CloseTarget.Current;
+    public string ProcessName { get; init; } = "";
+    public bool ForceQuit { get; init; }
+
     /// <summary>The node's own color (COLORREF) as shown when highlighted; null = theme colors.</summary>
     public uint? Color { get; init; }
 

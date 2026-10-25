@@ -62,9 +62,7 @@ internal sealed class CommandRunner(ICommandHost host, nint hwnd, Toast toast, P
                 break; // the menu is already closed
 
             case CommandKind.CloseWindow:
-                var error = WindowActions.CloseForeground(out string title);
-                if (error is not null) Log.Info($"Close window: {error}");
-                toast.Show(entry.Glyph, error ?? $"Closing {title}");
+                CloseWindow(entry);
                 break;
 
             case CommandKind.Screenshot:
@@ -162,6 +160,23 @@ internal sealed class CommandRunner(ICommandHost host, nint hwnd, Toast toast, P
         _screenshotBusy = false;
         if (!shutDown() && _screenshotResult is { } text) toast.Show(_screenshotGlyph, text);
         _screenshotResult = null;
+    }
+
+    /// <summary>The menu is already closed: close the foreground window, or the app the node names.</summary>
+    private void CloseWindow(MenuEntry entry)
+    {
+        string? error;
+        string message;
+        if (entry.CloseTarget == CloseTarget.ByName)
+            error = WindowActions.CloseByName(entry.ProcessName, entry.ForceQuit, out message);
+        else
+        {
+            error = WindowActions.CloseForeground(out string title);
+            message = $"Closing {title}";
+        }
+
+        if (error is not null) Log.Info($"Close window: {error}");
+        toast.Show(error is null ? entry.Glyph : ErrorGlyph, error ?? message);
     }
 
     /// <summary>The menu is already closed: apply the node's Win+P mode and say how it went.</summary>
