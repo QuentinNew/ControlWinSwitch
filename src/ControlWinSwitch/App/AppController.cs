@@ -61,15 +61,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly ConfigStore _store = new();
     private readonly ControllerRegistry _registry;
     private readonly PadService _pads;
+    private readonly HeadsetService _headset;
 
     private bool _pairing;
     private bool _shutDown;
-    private HeadsetState _headsetState;
-    private bool _headsetBusy;
     private bool _screenshotBusy;
     private char _screenshotGlyph;
     private volatile string? _screenshotResult; // written by the screenshot thread, read after ScreenshotDone
-    private volatile IReadOnlyList<string> _headsetDevices = [];
 
     private Mode _mode;
     private Dir _heldDirection;
@@ -110,7 +108,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (error is not null) _toast.Show('', error);
 
         _pads = new PadService(_store, set, _timers, _toast); // after Load: it reads the pad settings
-        _pads.WatchChanged += OnWatchChanged;
+        _pads.WatchChanged += RefreshOpenScreen;
+        _headset = new HeadsetService(_store, window.Handle, _toast, () => _shutDown, ((ISettingsHost)this).OpenBluetoothSettings);
+        _headset.Changed += RefreshOpenScreen;
         ApplyMenuHotkey();
 
         _overlay.RowHovered += OnMenuRowHovered;
@@ -342,7 +342,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Slider) ExitSlider();
 
         ReloadConfigIfChanged();
-        var statuses = new NodeStatuses(_pads.Detail, HeadsetDetail);
+        var statuses = new NodeStatuses(_pads.Detail, _headset.Detail);
         _radialShown = Config.MenuLayout == MenuLayouts.Radial;
         _pads.Neutral(_owner); // neutral pad while the menu owns the input
         _mode = Mode.Menu;
@@ -362,7 +362,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _overlay.Show(_menu, Config.MenuShowControllers ? _registry.ConnectedTiles() : null);
         }
         Log.Info(_radialShown ? "Menu opened (radial)" : "Menu opened");
-        StartHeadsetWork(toggle: false); // refresh the status shown in the menu
+        _headset.Refresh(); // refresh the status shown in the menu
     }
 
     private void CloseMenu()
@@ -569,7 +569,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _settingsWindow.Show(_settings);
         if (fromMenu) _hideMenuTimer.Start(HideMenuDelayMs); // hidden shortly after the settings window is up
         Log.Info("Settings opened");
-        StartHeadsetWork(toggle: false); // refresh the status shown on the Headset tab
+        _headset.Refresh(); // refresh the status shown on the Headset tab
     }
 
     private void OnHideMenuTimer()
@@ -1023,9 +1023,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 break;
 
             case CommandKind.ToggleHeadset:
-                if (_headsetBusy) break;
-                _toast.Show(entry.Glyph, _headsetState == HeadsetState.Connected ? "Disconnecting headset..." : "Connecting headset...");
-                StartHeadsetWork(toggle: true);
+                _headset.Toggle(entry.Glyph);
                 break;
 
             case CommandKind.Sleep:
@@ -1146,8 +1144,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>The watched process exited (its handle was signalled).</summary>
     public void OnWatchedProcessExited() => _pads.OnWatchedProcessExited();
 
-    /// <summary>A watched process started or closed: the pad's state shows in the menu and settings.</summary>
-    private void OnWatchChanged()
+    /// <summary>Something the menu or settings show changed (pad, headset): repaints whichever is open.</summary>
+    private void RefreshOpenScreen()
     {
         if (_mode == Mode.Menu) RefreshMenu();
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
@@ -1212,9 +1210,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
     // ISettingsHost
     string ISettingsHost.ConfigPath => _store.Path;
 
-    IReadOnlyList<string> ISettingsHost.HeadsetDevices => _headsetDevices;
+    IReadOnlyList<string> ISettingsHost.HeadsetDevices => _headset.Devices;
 
-    string ISettingsHost.HeadsetStatus =>_headsetBusy ? "Working..." : HeadsetDetail() ?? "Unknown";
+    string ISettingsHost.HeadsetStatus => _headset.Status;
 
     bool ISettingsHost.ControllerConnected(int slot) => _window.ControllerConnected(slot);
 
@@ -1490,12 +1488,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.OpenLog() => OpenLog();
 
-    void ISettingsHost.ToggleHeadset()
-    {
-        if (_headsetBusy) return;
-        _toast.Show(MenuPages.Headphone, _headsetState == HeadsetState.Connected ? "Disconnecting headset..." : "Connecting headset...");
-        StartHeadsetWork(toggle: true);
-    }
+    void ISettingsHost.ToggleHeadset() => _headset.Toggle(MenuPages.Headphone);
 
     bool ISettingsHost.PadEnabled => _pads.Enabled;
 
@@ -1548,64 +1541,10 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
     }
 
-    // ---- headset -----------------------------------------------------------------------------
-
-    private string? HeadsetDetail() => _headsetBusy ? "..." : _headsetState switch
-    {
-        HeadsetState.Connected => "Connected",
-        HeadsetState.Disconnected => "Disconnected",
-        HeadsetState.NotFound => "Not paired",
-        HeadsetState.Failed => "Error",
-        HeadsetState.Connecting => "Connecting...",
-        _ => null,
-    };
-
-    /// <summary>Runs the (blocking) headset query or toggle on a worker thread and posts the outcome back.</summary>
-    private void StartHeadsetWork(bool toggle)
-    {
-        if (_headsetBusy || _shutDown) return;
-        _headsetBusy = true;
-        nint hwnd = _window.Handle;
-        string name = Config.HeadsetName;
-        ErrorBoundary.StartWorker("headset", () =>
-        {
-            if (!toggle) _headsetDevices = BluetoothHeadset.ListDevices();
-            var state = toggle ? BluetoothHeadset.Toggle(name) : BluetoothHeadset.GetState(name);
-            PostMessageW(hwnd, AppMessages.HeadsetDone, (nuint)(int)state, toggle ? 1 : 0);
-        }, onFailure: () => PostMessageW(hwnd, AppMessages.HeadsetDone, (nuint)(int)HeadsetState.Failed, toggle ? 1 : 0));
-    }
+    // ---- window-level entry points -------------------------------------------------------------
 
     /// <summary>AppMessages.HeadsetDone, on the UI thread.</summary>
-    public void OnHeadsetDone(HeadsetState state, bool wasToggle)
-    {
-        _headsetBusy = false;
-        if (_shutDown) return;
-        _headsetState = state;
-        Log.Info($"Headset: {state}");
-
-        if (wasToggle)
-        {
-            const char glyph = MenuPages.Headphone;
-            switch (state)
-            {
-                case HeadsetState.Connected: _toast.Show(glyph, "Headset connected"); break;
-                case HeadsetState.Disconnected: _toast.Show(glyph, "Headset disconnected"); break;
-                case HeadsetState.Connecting: break; // no toast: the menu row shows it
-                case HeadsetState.NotFound:
-                    _toast.Show(glyph, string.IsNullOrWhiteSpace(Config.HeadsetName) ? "Set the headset name in Settings" : "Headset not paired");
-                    break;
-                default:
-                    _toast.Show(glyph, "Headset failed - opening Bluetooth settings");
-                    if (_mode == Mode.Settings) CloseSettings();
-                    BluetoothHeadset.OpenBluetoothSettings();
-                    break;
-            }
-        }
-        if (_mode == Mode.Menu) RefreshMenu();
-        if (_mode == Mode.Settings) _settingsWindow.Refresh();
-    }
-
-    // ---- window-level entry points -------------------------------------------------------------
+    public void OnHeadsetDone(HeadsetState state, bool wasToggle) => _headset.OnDone(state, wasToggle);
 
     /// <summary>Opens the menu (tray, second launch); no-op when it is already open.</summary>
     public void ShowMenu()
