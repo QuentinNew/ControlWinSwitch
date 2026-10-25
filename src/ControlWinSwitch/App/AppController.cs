@@ -787,7 +787,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (value < 0)
         {
             CloseSliderDevices();
-            string error = volume ? "No audio output device" : "No screen with adjustable brightness";
+            string error = volume ? "No audio output device" : "This screen's brightness can't be changed";
             Log.Info($"Slider: {error}");
             _toast.Show(entry.Glyph, error);
             return;
@@ -817,7 +817,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mode = Mode.Idle;
         HideHeldInput();
         _sliderOverlay.Hide();
-        if (_brightness is not null && _sliderChanged)
+        if (_brightness is { SavesToPowerPlan: true } && _sliderChanged)
         {
             // Into the power plan too, or Windows puts its own value back later. Slow: on a worker thread.
             int percent = _slider.Percent;

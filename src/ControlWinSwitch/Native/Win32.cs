@@ -75,6 +75,20 @@ internal struct MONITORINFO
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal unsafe struct MONITORINFOEXW
+{
+    public MONITORINFO Info;
+    public fixed char szDevice[32];
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct PHYSICAL_MONITOR
+{
+    public nint hPhysicalMonitor;
+    public fixed char szPhysicalMonitorDescription[128];
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct OVERLAPPED
 {
     public nuint Internal, InternalHigh;
@@ -322,6 +336,16 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial int GetCursorPos(POINT* pt);
     [LibraryImport("user32.dll")] public static partial nint MonitorFromPoint(POINT pt, uint flags);
     [LibraryImport("user32.dll")] public static partial int GetMonitorInfoW(nint monitor, MONITORINFO* info);
+    [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")] public static partial int GetMonitorInfoExW(nint monitor, MONITORINFOEXW* info);
+    [LibraryImport("user32.dll")] public static partial int GetDisplayConfigBufferSizes(uint flags, uint* paths, uint* modes);
+    [LibraryImport("user32.dll")] public static partial int QueryDisplayConfig(uint flags, uint* paths, void* pathArray, uint* modes, void* modeArray, nint topology);
+    [LibraryImport("user32.dll")] public static partial int DisplayConfigGetDeviceInfo(void* packet);
+    public const uint QDC_ONLY_ACTIVE_PATHS = 2;
+    [LibraryImport("dxva2.dll")] public static partial int GetNumberOfPhysicalMonitorsFromHMONITOR(nint monitor, uint* count);
+    [LibraryImport("dxva2.dll")] public static partial int GetPhysicalMonitorsFromHMONITOR(nint monitor, uint count, PHYSICAL_MONITOR* monitors);
+    [LibraryImport("dxva2.dll")] public static partial int DestroyPhysicalMonitor(nint monitor);
+    [LibraryImport("dxva2.dll")] public static partial int GetMonitorBrightness(nint monitor, uint* min, uint* current, uint* max);
+    [LibraryImport("dxva2.dll")] public static partial int SetMonitorBrightness(nint monitor, uint value);
     [LibraryImport("user32.dll")] public static partial nint BeginPaint(nint hwnd, PAINTSTRUCT* ps);
     [LibraryImport("user32.dll")] public static partial int EndPaint(nint hwnd, PAINTSTRUCT* ps);
     [LibraryImport("user32.dll")] public static partial int GetClientRect(nint hwnd, RECT* rect);

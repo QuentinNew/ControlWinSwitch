@@ -88,6 +88,26 @@ public class SliderModelTests
     }
 
     [Theory]
+    [InlineData(0u, 100u, 50, 50u)]
+    [InlineData(10u, 60u, 50, 35u)]
+    [InlineData(0u, 255u, 100, 255u)]
+    public void DDC_values_scale_to_the_monitor_range(uint min, uint max, int percent, uint expected)
+    {
+        Assert.Equal(expected, DdcBrightness.FromPercent(percent, min, max));
+        Assert.Equal(percent, DdcBrightness.ToPercent(expected, min, max));
+    }
+
+    [Theory]
+    [InlineData(11u, true)]         // embedded DisplayPort (laptop panel)
+    [InlineData(0x80000000u, true)] // internal
+    [InlineData(5u, false)]         // HDMI
+    [InlineData(10u, false)]        // DisplayPort cable
+    public void Built_in_screens_are_told_by_their_connection(uint technology, bool builtIn)
+    {
+        Assert.Equal(builtIn, Brightness.IsBuiltIn(technology));
+    }
+
+    [Theory]
     [InlineData(47, 50)]
     [InlineData(43, 40)]
     [InlineData(100, 100)]
