@@ -13,12 +13,8 @@ namespace ControlWinSwitch.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1, WatchTimerId = 4, HideMenuTimerId = 5,
-        SliderTickTimerId = 6, SliderRefreshTimerId = 7, SliderIdleTimerId = 8;
     private const uint SliderTickMs = 15, SliderRefreshMs = 250, SliderIdleMs = 5000, SliderQuietMs = 500;
     private const uint HideMenuDelayMs = 10; // the menu stays under the settings window this long, so no frame shows neither
-    // One timer per controller slot: the settings rumble test (10..13) and the game rumble refresh (20..23).
-    private const nuint RumbleTimerBase = 10, GameRumbleTimerBase = 20;
     private const uint RumbleMs = 400, GameRumbleRefreshMs = 80;
     private const uint WatchPollMs = 5000, WatchFastPollMs = 1000, WatchFastWindowMs = 15000;
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
@@ -64,7 +60,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private Volume? _volume;         // open while the Volume slider is shown
     private Brightness? _brightness; // open while the Brightness slider is shown
     private char _sliderGlyph;
-    private bool _sliderTicking;     // the stick timer runs
     private bool _sliderChanged;     // the value was changed since the slider opened
     private long _sliderLastTick, _sliderLastInput;
     private readonly ConfigStore _store = new();
@@ -88,7 +83,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     private Mode _mode;
     private Dir _heldDirection;
-    private bool _repeatTimerArmed;
+
+    private readonly TimerService _timers;
+    private readonly UiTimer _repeatTimer;        // key-repeat of the held direction (menu, settings, slider)
+    private readonly UiTimer _watchTimer;         // process watcher poll
+    private readonly UiTimer _hideMenuTimer;      // hides the menu once the settings window is up
+    private readonly UiTimer _sliderTickTimer, _sliderRefreshTimer, _sliderIdleTimer;
+    private readonly UiTimer[] _rumbleTestTimers = new UiTimer[ControllerSet.Slots]; // ends the settings rumble test
+    private readonly UiTimer[] _gameRumbleTimers = new UiTimer[ControllerSet.Slots]; // refreshes a game's rumble
 
     public AppController(ControllerSet set, MainWindow window)
     {
@@ -96,11 +98,26 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _window = window;
         _mouse = new MouseMode(() => _state, _mouseOutput, () => _store.Current.Mouse);
         _settings = SettingsPages.Create(_store, this);
+
+        _timers = new TimerService(window.Handle);
+        _repeatTimer = _timers.Create(OnRepeatTimer);
+        _watchTimer = _timers.Create(CheckProcesses);
+        _hideMenuTimer = _timers.Create(OnHideMenuTimer);
+        _sliderTickTimer = _timers.Create(OnSliderTick);
+        _sliderRefreshTimer = _timers.Create(OnSliderRefresh);
+        _sliderIdleTimer = _timers.Create(OnSliderIdle);
+
         for (int i = 0; i < _slots.Length; i++)
         {
             int slot = i;
             _slots[slot] = new Slot();
             _slots[slot].Pad.Feedback += (large, small) => OnPadFeedback(slot, large, small);
+            _rumbleTestTimers[slot] = _timers.Create(() =>
+            {
+                _rumbleTestTimers[slot].Stop();
+                _window.SetRumble(slot, false);
+            });
+            _gameRumbleTimers[slot] = _timers.Create(() => ApplyGameRumble(slot, restartTimer: false));
         }
 
         var error = _store.Load();
@@ -297,37 +314,17 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    /// <summary>WM_TIMER of the main window: key-repeat of the held direction.</summary>
-    public void OnTimer(nuint id)
+    /// <summary>WM_TIMER of the main window.</summary>
+    public void OnTimer(nuint id) => _timers.Dispatch(id);
+
+    /// <summary>Key-repeat of the held direction.</summary>
+    private void OnRepeatTimer()
     {
-        if (id == WatchTimerId)
+        if (_mode == Mode.Slider)
         {
-            CheckProcesses();
+            OnSliderRepeat();
             return;
         }
-        if (id == HideMenuTimerId)
-        {
-            KillTimer(_window.Handle, id);
-            if (_mode == Mode.Settings) HideMenu();
-            return;
-        }
-        if (id >= GameRumbleTimerBase && id < GameRumbleTimerBase + (nuint)_slots.Length)
-        {
-            ApplyGameRumble((int)(id - GameRumbleTimerBase), restartTimer: false);
-            return;
-        }
-        if (id >= RumbleTimerBase && id < RumbleTimerBase + (nuint)_slots.Length)
-        {
-            KillTimer(_window.Handle, id);
-            _window.SetRumble((int)(id - RumbleTimerBase), false);
-            return;
-        }
-        if (id is SliderTickTimerId or SliderRefreshTimerId or SliderIdleTimerId || (id == RepeatTimerId && _mode == Mode.Slider))
-        {
-            OnSliderTimer(id);
-            return;
-        }
-        if (id != RepeatTimerId) return;
         bool menu = _mode == Mode.Menu, settings = _mode == Mode.Settings;
         if ((!menu && !settings) || _heldDirection == Dir.None)
         {
@@ -343,7 +340,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
 
         ApplyDirection(_heldDirection);
-        SetTimer(_window.Handle, RepeatTimerId, RepeatNextMs, 0); // same id: replaces the timer with the faster interval
+        _repeatTimer.Start(RepeatNextMs); // restarts it with the faster interval
     }
 
     // ---- menu --------------------------------------------------------------------------------
@@ -580,9 +577,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
         _settingsWindow.Show(_settings);
-        if (fromMenu) SetTimer(_window.Handle, HideMenuTimerId, HideMenuDelayMs, 0); // hidden shortly after the settings window is up
+        if (fromMenu) _hideMenuTimer.Start(HideMenuDelayMs); // hidden shortly after the settings window is up
         Log.Info("Settings opened");
         StartHeadsetWork(toggle: false); // refresh the status shown on the Headset tab
+    }
+
+    private void OnHideMenuTimer()
+    {
+        _hideMenuTimer.Stop();
+        if (_mode == Mode.Settings) HideMenu();
     }
 
     private void CloseSettings()
@@ -666,8 +669,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (direction == Dir.None) return;
 
         ApplyDirection(direction);
-        _repeatTimerArmed = true;
-        SetTimer(_window.Handle, RepeatTimerId, RepeatFirstMs, 0);
+        _repeatTimer.Start(RepeatFirstMs);
     }
 
     private void ApplyDirection(Dir direction)
@@ -734,9 +736,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     private void StopRepeat()
     {
-        if (!_repeatTimerArmed) return;
-        KillTimer(_window.Handle, RepeatTimerId);
-        _repeatTimerArmed = false;
+        if (_repeatTimer.Running) _repeatTimer.Stop();
     }
 
     /// <summary>Hides the owner's held buttons and sticks from the game until they are released.</summary>
@@ -801,18 +801,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mode = Mode.Slider;
         _heldDirection = ReadSliderDpad(); // a D-pad already held must be released first
         _sliderOverlay.Show(SliderGlyph, value, muted);
-        SetTimer(_window.Handle, SliderRefreshTimerId, SliderRefreshMs, 0);
+        _sliderRefreshTimer.Start(SliderRefreshMs);
         TouchSlider();
         Log.Info($"Slider opened ({(volume ? "volume" : "brightness")} {value})");
     }
 
     private void ExitSlider()
     {
-        KillTimer(_window.Handle, SliderTickTimerId);
-        KillTimer(_window.Handle, SliderRefreshTimerId);
-        KillTimer(_window.Handle, SliderIdleTimerId);
+        StopSliderTimers();
         StopRepeat();
-        _sliderTicking = false;
         _heldDirection = Dir.None;
         _mode = Mode.Idle;
         HideHeldInput();
@@ -828,6 +825,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         CloseSliderDevices();
         Log.Info($"Slider closed ({_slider.Percent})");
+    }
+
+    private void StopSliderTimers()
+    {
+        _sliderTickTimer.Stop();
+        _sliderRefreshTimer.Stop();
+        _sliderIdleTimer.Stop();
     }
 
     private void CloseSliderDevices()
@@ -866,17 +870,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
             if (direction != Dir.None)
             {
                 StepSlider(direction);
-                _repeatTimerArmed = true;
-                SetTimer(_window.Handle, RepeatTimerId, RepeatFirstMs, 0);
+                _repeatTimer.Start(RepeatFirstMs);
             }
         }
 
         // Left stick: moved by a timer while tilted, so the speed doesn't depend on how often the controller reports.
-        if (!_sliderTicking && _slider.StickActive(_state.Left.X))
+        if (!_sliderTickTimer.Running && _slider.StickActive(_state.Left.X))
         {
-            _sliderTicking = true;
             _sliderLastTick = Environment.TickCount64;
-            SetTimer(_window.Handle, SliderTickTimerId, SliderTickMs, 0);
+            _sliderTickTimer.Start(SliderTickMs);
         }
     }
 
@@ -888,62 +890,63 @@ internal sealed class AppController : IDisposable, ISettingsHost
         return Dir.None;
     }
 
-    private void OnSliderTimer(nuint id)
+    /// <summary>Key-repeat while the slider is open (the repeat timer is shared with the menu and settings).</summary>
+    private void OnSliderRepeat()
     {
-        if (_mode != Mode.Slider)
+        if (_heldDirection == Dir.None)
         {
-            KillTimer(_window.Handle, id);
-            if (id == SliderTickTimerId) _sliderTicking = false;
+            StopRepeat();
             return;
         }
+        StepSlider(_heldDirection);
+        _repeatTimer.Start(RepeatNextMs); // the faster interval
+    }
 
-        switch (id)
+    /// <summary>A slider timer that ticks after the slider closed stops itself.</summary>
+    private bool SliderGone(UiTimer timer)
+    {
+        if (_mode == Mode.Slider) return false;
+        timer.Stop();
+        return true;
+    }
+
+    private void OnSliderTick()
+    {
+        if (SliderGone(_sliderTickTimer)) return;
+        long now = Environment.TickCount64;
+        float seconds = Math.Min(0.1f, (now - _sliderLastTick) / 1000f);
+        _sliderLastTick = now;
+        float x = _state.Left.X;
+        if (!_slider.StickActive(x))
         {
-            case RepeatTimerId:
-                if (_heldDirection == Dir.None)
-                {
-                    StopRepeat();
-                    return;
-                }
-                StepSlider(_heldDirection);
-                SetTimer(_window.Handle, RepeatTimerId, RepeatNextMs, 0); // same id: the faster interval
-                break;
-
-            case SliderTickTimerId:
-                long now = Environment.TickCount64;
-                float seconds = Math.Min(0.1f, (now - _sliderLastTick) / 1000f);
-                _sliderLastTick = now;
-                float x = _state.Left.X;
-                if (!_slider.StickActive(x))
-                {
-                    KillTimer(_window.Handle, SliderTickTimerId);
-                    _sliderTicking = false;
-                    return;
-                }
-                if (_slider.Move(x, seconds, boost: _state.Held(Buttons.ZR), slow: _state.Held(Buttons.ZL))) ApplySlider();
-                else TouchSlider();
-                break;
-
-            case SliderRefreshTimerId:
-                // Changes made elsewhere (keyboard keys, another default device), only while the user isn't moving it.
-                if (Environment.TickCount64 - _sliderLastInput < SliderQuietMs) return;
-                int value = -1;
-                bool muted = false;
-                if (_volume is not null)
-                {
-                    _volume.Reacquire();
-                    value = _volume.Get(out muted);
-                }
-                else if (_brightness is not null) value = _brightness.Get();
-                if (value < 0) return;
-                _slider.Sync(value, muted);
-                RefreshSlider();
-                break;
-
-            case SliderIdleTimerId:
-                ExitSlider();
-                break;
+            _sliderTickTimer.Stop();
+            return;
         }
+        if (_slider.Move(x, seconds, boost: _state.Held(Buttons.ZR), slow: _state.Held(Buttons.ZL))) ApplySlider();
+        else TouchSlider();
+    }
+
+    private void OnSliderRefresh()
+    {
+        if (SliderGone(_sliderRefreshTimer)) return;
+        // Changes made elsewhere (keyboard keys, another default device), only while the user isn't moving it.
+        if (Environment.TickCount64 - _sliderLastInput < SliderQuietMs) return;
+        int value = -1;
+        bool muted = false;
+        if (_volume is not null)
+        {
+            _volume.Reacquire();
+            value = _volume.Get(out muted);
+        }
+        else if (_brightness is not null) value = _brightness.Get();
+        if (value < 0) return;
+        _slider.Sync(value, muted);
+        RefreshSlider();
+    }
+
+    private void OnSliderIdle()
+    {
+        if (!SliderGone(_sliderIdleTimer)) ExitSlider();
     }
 
     private void StepSlider(Dir direction)
@@ -977,7 +980,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private void TouchSlider()
     {
         _sliderLastInput = Environment.TickCount64;
-        SetTimer(_window.Handle, SliderIdleTimerId, SliderIdleMs, 0); // same id: restarts the countdown
+        _sliderIdleTimer.Start(SliderIdleMs); // restarts the countdown
     }
 
     // ---- commands ----------------------------------------------------------------------------
@@ -1235,12 +1238,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         bool poll = Config.VirtualPad.DisableWhileRunning.Count > 0 && _watchHandle == 0;
         if (!poll)
         {
-            KillTimer(_window.Handle, WatchTimerId);
+            _watchTimer.Stop();
             return;
         }
 
-        uint interval = Environment.TickCount64 < _fastPollUntil ? WatchFastPollMs : WatchPollMs;
-        SetTimer(_window.Handle, WatchTimerId, interval, 0); // same id: replaces the interval
+        _watchTimer.Start(Environment.TickCount64 < _fastPollUntil ? WatchFastPollMs : WatchPollMs); // replaces the interval
     }
 
     private PadKind ConfiguredKind => Config.VirtualPad.Type == PadTypes.Ps4 ? PadKind.Ps4 : PadKind.Xbox;
@@ -1390,9 +1392,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
         int percent = Config.VirtualPad.Rumble;
         bool active = percent > 0 && (slot.GameLarge > 0 || slot.GameSmall > 0);
         _window.SetRumbleMotors(index, active ? slot.GameLarge : (byte)0, active ? slot.GameSmall : (byte)0, percent);
-        nuint timer = GameRumbleTimerBase + (nuint)index;
-        if (!active) KillTimer(_window.Handle, timer);
-        else if (restartTimer) SetTimer(_window.Handle, timer, GameRumbleRefreshMs, 0);
+        if (!active) _gameRumbleTimers[index].Stop();
+        else if (restartTimer) _gameRumbleTimers[index].Start(GameRumbleRefreshMs);
     }
 
     // ISettingsHost
@@ -1407,7 +1408,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     void ISettingsHost.RumbleController(int slot)
     {
         if (!_window.SetRumble(slot, true)) return;
-        SetTimer(_window.Handle, RumbleTimerBase + (nuint)slot, RumbleMs, 0);
+        _rumbleTestTimers[slot].Start(RumbleMs);
     }
 
     void ISettingsHost.OpenDeadzoneCalibration()
@@ -2071,10 +2072,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (mode == Mode.Editor) TryStep("hide the menu editor", _menuEditor.Hide);
         TryStep("close the slider", () =>
         {
-            KillTimer(_window.Handle, SliderTickTimerId);
-            KillTimer(_window.Handle, SliderRefreshTimerId);
-            KillTimer(_window.Handle, SliderIdleTimerId);
-            _sliderTicking = false;
+            StopSliderTimers();
             _sliderOverlay.Hide();
             CloseSliderDevices();
         });
