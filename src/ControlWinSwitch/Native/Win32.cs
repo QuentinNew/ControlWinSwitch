@@ -215,6 +215,13 @@ internal struct TOKEN_PRIVILEGES
     public uint Attributes;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct SYSTEM_POWER_STATUS
+{
+    public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag;
+    public uint BatteryLifeTime, BatteryFullLifeTime;
+}
+
 internal static unsafe partial class Win32
 {
     // ---- Messages / constants -------------------------------------------------------------
@@ -468,6 +475,7 @@ internal static unsafe partial class Win32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial int WriteFile(nint file, void* buffer, uint bytes, uint* written, nint overlapped);
     [LibraryImport("kernel32.dll")] public static partial uint WaitForSingleObject(nint handle, uint milliseconds);
+    [LibraryImport("kernel32.dll")] public static partial int GetSystemPowerStatus(SYSTEM_POWER_STATUS* status);
     public const uint GENERIC_WRITE = 0x40000000;
     public const uint GENERIC_READ = 0x80000000, FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, OPEN_EXISTING = 3,
         FILE_FLAG_OVERLAPPED = 0x40000000;
@@ -536,6 +544,11 @@ internal static unsafe partial class Win32
     [LibraryImport("bthprops.cpl")] public static partial uint BluetoothSetServiceState(nint radio, byte* info, Guid* service, uint flags);
 
     // ---- misc -----------------------------------------------------------------------------
+    [LibraryImport("powrprof.dll")] public static partial uint PowerGetActiveScheme(nint root, Guid** scheme);
+    [LibraryImport("powrprof.dll")] public static partial uint PowerSetActiveScheme(nint root, Guid* scheme);
+    [LibraryImport("powrprof.dll")] public static partial uint PowerWriteACValueIndex(nint root, Guid* scheme, Guid* subgroup, Guid* setting, uint value);
+    [LibraryImport("powrprof.dll")] public static partial uint PowerWriteDCValueIndex(nint root, Guid* scheme, Guid* subgroup, Guid* setting, uint value);
+    [LibraryImport("kernel32.dll")] public static partial nint LocalFree(void* memory);
     [LibraryImport("powrprof.dll")] public static partial byte SetSuspendState(byte hibernate, byte force, byte wakeupEventsDisabled);
     [LibraryImport("user32.dll", SetLastError = true)] public static partial int ExitWindowsEx(uint flags, uint reason);
     [LibraryImport("shell32.dll")] public static partial int Shell_NotifyIconW(uint message, NOTIFYICONDATAW* data);

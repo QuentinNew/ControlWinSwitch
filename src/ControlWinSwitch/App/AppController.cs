@@ -13,7 +13,9 @@ namespace ControlWinSwitch.App;
 /// </summary>
 internal sealed class AppController : IDisposable, ISettingsHost
 {
-    private const nuint RepeatTimerId = 1, WatchTimerId = 4, HideMenuTimerId = 5;
+    private const nuint RepeatTimerId = 1, WatchTimerId = 4, HideMenuTimerId = 5,
+        SliderTickTimerId = 6, SliderRefreshTimerId = 7, SliderIdleTimerId = 8;
+    private const uint SliderTickMs = 15, SliderRefreshMs = 250, SliderIdleMs = 5000, SliderQuietMs = 500;
     private const uint HideMenuDelayMs = 10; // the menu stays under the settings window this long, so no frame shows neither
     // One timer per controller slot: the settings rumble test (10..13) and the game rumble refresh (20..23).
     private const nuint RumbleTimerBase = 10, GameRumbleTimerBase = 20;
@@ -22,7 +24,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
 
-    private enum Mode { Idle, Menu, Mouse, Settings, Editor }
+    private enum Mode { Idle, Menu, Mouse, Settings, Editor, Slider }
 
     private enum Dir { None, Up, Down, Left, Right }
 
@@ -57,6 +59,14 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private readonly SettingsWindow _settingsWindow = new();
     private readonly SettingsModel _settings;
     private readonly Toast _toast = new();
+    private readonly SliderModel _slider = new();
+    private readonly SliderOverlay _sliderOverlay = new();
+    private Volume? _volume;         // open while the Volume slider is shown
+    private Brightness? _brightness; // open while the Brightness slider is shown
+    private char _sliderGlyph;
+    private bool _sliderTicking;     // the stick timer runs
+    private bool _sliderChanged;     // the value was changed since the slider opened
+    private long _sliderLastTick, _sliderLastInput;
     private readonly ConfigStore _store = new();
     private readonly PadGate _gate = new();
 
@@ -167,6 +177,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         }
         if (_shutDown) return;
         if (_mode == Mode.Mouse) ExitMouse(announce: false);
+        else if (_mode == Mode.Slider) ExitSlider();
     }
 
     /// <summary>Report handler: updates the slot's state, then drives the current mode.</summary>
@@ -204,6 +215,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 case Mode.Mouse: ExitMouse(announce: true); break;
                 case Mode.Settings: CloseSettings(); break;
                 case Mode.Editor: CloseMenuEditor(); break; // Capture closes the editor without saving
+                case Mode.Slider: ExitSlider(); break;
                 default: OpenMenu(); break;
             }
             return;
@@ -221,6 +233,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
                 break;
             case Mode.Mouse:
                 _mouse.OnReport();
+                break;
+            case Mode.Slider:
+                HandleSliderInput();
                 break;
             default:
                 Forward(slot);
@@ -274,6 +289,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             if (_mode == Mode.Menu) CloseMenu();
             else if (_mode == Mode.Settings) CloseSettings();
             else if (_mode == Mode.Mouse) ExitMouse(announce: false);
+            else if (_mode == Mode.Slider) ExitSlider();
         }
         gone.IgnoreMask = Buttons.None;
         gone.IgnoreSticks = false;
@@ -306,6 +322,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _window.SetRumble((int)(id - RumbleTimerBase), false);
             return;
         }
+        if (id is SliderTickTimerId or SliderRefreshTimerId or SliderIdleTimerId || (id == RepeatTimerId && _mode == Mode.Slider))
+        {
+            OnSliderTimer(id);
+            return;
+        }
         if (id != RepeatTimerId) return;
         bool menu = _mode == Mode.Menu, settings = _mode == Mode.Settings;
         if ((!menu && !settings) || _heldDirection == Dir.None)
@@ -331,6 +352,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         if (_mode == Mode.Mouse) _mouse.Deactivate(); // tray / second launch while the mouse is on
         if (_mode == Mode.Settings) CloseSettings();
+        if (_mode == Mode.Slider) ExitSlider();
 
         ReloadConfigIfChanged();
         var statuses = new NodeStatuses(PadDetail, HeadsetDetail);
@@ -547,6 +569,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private void OpenSettings()
     {
         if (_mode == Mode.Mouse) _mouse.Deactivate();
+        if (_mode == Mode.Slider) ExitSlider();
         bool fromMenu = _mode == Mode.Menu;
         if (fromMenu) StopRepeat();
 
@@ -744,6 +767,219 @@ internal sealed class AppController : IDisposable, ISettingsHost
         Log.Info("Mouse mode off");
     }
 
+    // ---- volume / brightness slider ----------------------------------------------------------
+
+    /// <summary>The menu is already closed. Opens the slider on the current value; a toast when there is nothing to control.</summary>
+    private void EnterSlider(MenuEntry entry, bool volume)
+    {
+        int value;
+        bool muted = false;
+        if (volume)
+        {
+            _volume = Volume.Open();
+            value = _volume?.Get(out muted) ?? -1;
+        }
+        else
+        {
+            _brightness = Brightness.Open();
+            value = _brightness?.Get() ?? -1;
+        }
+        if (value < 0)
+        {
+            CloseSliderDevices();
+            string error = volume ? "No audio output device" : "No screen with adjustable brightness";
+            Log.Info($"Slider: {error}");
+            _toast.Show(entry.Glyph, error);
+            return;
+        }
+
+        _sliderGlyph = entry.Glyph;
+        _slider.Reset(value, muted);
+        _sliderChanged = false;
+        _pad.SubmitNeutral(); // neutral pad while the slider owns the input
+        _toast.Hide();
+        _mode = Mode.Slider;
+        _heldDirection = ReadSliderDpad(); // a D-pad already held must be released first
+        _sliderOverlay.Show(SliderGlyph, value, muted);
+        SetTimer(_window.Handle, SliderRefreshTimerId, SliderRefreshMs, 0);
+        TouchSlider();
+        Log.Info($"Slider opened ({(volume ? "volume" : "brightness")} {value})");
+    }
+
+    private void ExitSlider()
+    {
+        KillTimer(_window.Handle, SliderTickTimerId);
+        KillTimer(_window.Handle, SliderRefreshTimerId);
+        KillTimer(_window.Handle, SliderIdleTimerId);
+        StopRepeat();
+        _sliderTicking = false;
+        _heldDirection = Dir.None;
+        _mode = Mode.Idle;
+        HideHeldInput();
+        _sliderOverlay.Hide();
+        if (_brightness is not null && _sliderChanged)
+        {
+            // Into the power plan too, or Windows puts its own value back later. Slow: on a worker thread.
+            int percent = _slider.Percent;
+            new Thread(() =>
+            {
+                if (!Brightness.Save(percent)) Log.Error("Brightness: saving to the power plan failed");
+            }) { IsBackground = true, Name = "brightness" }.Start();
+        }
+        CloseSliderDevices();
+        Log.Info($"Slider closed ({_slider.Percent})");
+    }
+
+    private void CloseSliderDevices()
+    {
+        _volume?.Dispose();
+        _volume = null;
+        _brightness?.Dispose();
+        _brightness = null;
+    }
+
+    /// <summary>The muted speaker while the volume is muted, the node's own glyph otherwise.</summary>
+    private char SliderGlyph => _volume is not null && _slider.Muted ? MenuPages.Mute : _sliderGlyph;
+
+    private void HandleSliderInput()
+    {
+        if (_state.Pressed(Buttons.A) || _state.Pressed(Buttons.B))
+        {
+            ExitSlider();
+            return;
+        }
+
+        if (_volume is not null && _state.Pressed(Buttons.Y))
+        {
+            _slider.Muted = !_slider.Muted;
+            _volume.SetMute(_slider.Muted);
+            TouchSlider();
+            RefreshSlider();
+        }
+
+        // D-pad: one percent per press, repeated while held.
+        var direction = ReadSliderDpad();
+        if (direction != _heldDirection)
+        {
+            _heldDirection = direction;
+            StopRepeat();
+            if (direction != Dir.None)
+            {
+                StepSlider(direction);
+                _repeatTimerArmed = true;
+                SetTimer(_window.Handle, RepeatTimerId, RepeatFirstMs, 0);
+            }
+        }
+
+        // Left stick: moved by a timer while tilted, so the speed doesn't depend on how often the controller reports.
+        if (!_sliderTicking && _slider.StickActive(_state.Left.X))
+        {
+            _sliderTicking = true;
+            _sliderLastTick = Environment.TickCount64;
+            SetTimer(_window.Handle, SliderTickTimerId, SliderTickMs, 0);
+        }
+    }
+
+    private Dir ReadSliderDpad()
+    {
+        var held = _state.Current;
+        if ((held & Buttons.Left) != 0) return Dir.Left;
+        if ((held & Buttons.Right) != 0) return Dir.Right;
+        return Dir.None;
+    }
+
+    private void OnSliderTimer(nuint id)
+    {
+        if (_mode != Mode.Slider)
+        {
+            KillTimer(_window.Handle, id);
+            if (id == SliderTickTimerId) _sliderTicking = false;
+            return;
+        }
+
+        switch (id)
+        {
+            case RepeatTimerId:
+                if (_heldDirection == Dir.None)
+                {
+                    StopRepeat();
+                    return;
+                }
+                StepSlider(_heldDirection);
+                SetTimer(_window.Handle, RepeatTimerId, RepeatNextMs, 0); // same id: the faster interval
+                break;
+
+            case SliderTickTimerId:
+                long now = Environment.TickCount64;
+                float seconds = Math.Min(0.1f, (now - _sliderLastTick) / 1000f);
+                _sliderLastTick = now;
+                float x = _state.Left.X;
+                if (!_slider.StickActive(x))
+                {
+                    KillTimer(_window.Handle, SliderTickTimerId);
+                    _sliderTicking = false;
+                    return;
+                }
+                if (_slider.Move(x, seconds, boost: _state.Held(Buttons.ZR), slow: _state.Held(Buttons.ZL))) ApplySlider();
+                else TouchSlider();
+                break;
+
+            case SliderRefreshTimerId:
+                // Changes made elsewhere (keyboard keys, another default device), only while the user isn't moving it.
+                if (Environment.TickCount64 - _sliderLastInput < SliderQuietMs) return;
+                int value = -1;
+                bool muted = false;
+                if (_volume is not null)
+                {
+                    _volume.Reacquire();
+                    value = _volume.Get(out muted);
+                }
+                else if (_brightness is not null) value = _brightness.Get();
+                if (value < 0) return;
+                _slider.Sync(value, muted);
+                RefreshSlider();
+                break;
+
+            case SliderIdleTimerId:
+                ExitSlider();
+                break;
+        }
+    }
+
+    private void StepSlider(Dir direction)
+    {
+        if (_slider.Step(direction == Dir.Right ? 1 : -1)) ApplySlider();
+        else TouchSlider();
+    }
+
+    /// <summary>Sends the shown value to the system. Changing the volume unmutes it, like the keyboard keys.</summary>
+    private void ApplySlider()
+    {
+        int percent = _slider.Percent;
+        if (_volume is not null)
+        {
+            if (_slider.Muted)
+            {
+                _slider.Muted = false;
+                _volume.SetMute(false);
+            }
+            _volume.Set(percent);
+        }
+        else _brightness?.Set(percent);
+        _sliderChanged = true;
+        TouchSlider();
+        RefreshSlider();
+    }
+
+    private void RefreshSlider() => _sliderOverlay.Update(SliderGlyph, _slider.Percent, _slider.Muted);
+
+    /// <summary>Input on the slider: it stays open another 5 s, and outside changes wait a little.</summary>
+    private void TouchSlider()
+    {
+        _sliderLastInput = Environment.TickCount64;
+        SetTimer(_window.Handle, SliderIdleTimerId, SliderIdleMs, 0); // same id: restarts the countdown
+    }
+
     // ---- commands ----------------------------------------------------------------------------
 
     private void Execute(MenuEntry entry, MenuCommand command)
@@ -782,6 +1018,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
             case CommandKind.Screenshot:
                 TakeScreenshot(entry);
+                break;
+
+            case CommandKind.Volume:
+            case CommandKind.Brightness:
+                EnterSlider(entry, volume: command.Kind == CommandKind.Volume);
                 break;
 
             case CommandKind.ToggleVirtualPad:
@@ -1575,6 +1816,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Mouse) _mouse.Deactivate();
         if (_mode == Mode.Menu) CloseMenu();
         if (_mode == Mode.Settings) CloseSettings();
+        if (_mode == Mode.Slider) ExitSlider();
 
         _pad.SubmitNeutral(); // neutral pad while the editor is open
         _heldDirection = Dir.None;
@@ -1793,6 +2035,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Menu) CloseMenu();
         if (_mode == Mode.Settings) CloseSettings();
         if (_mode == Mode.Editor) CloseMenuEditor();
+        if (_mode == Mode.Slider) ExitSlider();
         _mouse.Deactivate(); // releases held mouse buttons
         _mode = Mode.Idle;
         _toast.Hide();

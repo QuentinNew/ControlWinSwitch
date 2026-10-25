@@ -24,6 +24,8 @@ internal static class NodeKinds
         new(MenuNodeTypes.AddController, "Add controller", MenuPages.Add, CommandKind.AddController),
         new(MenuNodeTypes.CloseWindow, "Close window", MenuPages.CloseWindow, CommandKind.CloseWindow, "Close the current window?"),
         new(MenuNodeTypes.Screenshot, "Screenshot", MenuPages.Camera, CommandKind.Screenshot),
+        new(MenuNodeTypes.Volume, "Volume", MenuPages.Volume, CommandKind.Volume),
+        new(MenuNodeTypes.Brightness, "Brightness", MenuPages.Brightness, CommandKind.Brightness),
         new(MenuNodeTypes.Sleep, "Sleep", MenuPages.Sleep, CommandKind.Sleep, "Put the PC to sleep?"),
         new(MenuNodeTypes.Restart, "Restart", MenuPages.Restart, CommandKind.Restart, "Restart the PC?"),
         new(MenuNodeTypes.Shutdown, "Shut down", MenuPages.Power, CommandKind.Shutdown, "Shut down the PC?"),

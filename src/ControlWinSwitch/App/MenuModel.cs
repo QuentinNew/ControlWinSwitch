@@ -18,6 +18,8 @@ internal enum CommandKind
     CloseWindow,
     Launch,
     Screenshot,
+    Volume,
+    Brightness,
 }
 
 internal readonly record struct MenuCommand(CommandKind Kind, int Arg = 0);
@@ -187,6 +189,7 @@ internal sealed class MenuModel
 internal static class MenuPages
 {
     // Segoe Fluent Icons code points.
+    internal const char Volume = '', Mute = '', Brightness = '';
     internal const char Camera = '';
     internal const char Add = '';
     internal const char Folder = '', Close = '', CloseWindow = '';
