@@ -21,10 +21,17 @@ internal sealed unsafe class SliderOverlay : NativeWindow
     private int _value;
     private bool _muted;
     private uint _dpi = 96;
+    private bool _dragging;
+
+    /// <summary>The mouse set the value (click or drag on the bar), in percent.</summary>
+    public event Action<int>? ValueSet;
+
+    /// <summary>The mouse wheel turned: +1 per notch up, -1 per notch down.</summary>
+    public event Action<int>? Scrolled;
 
     public SliderOverlay()
     {
-        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT);
+        Create(ClassName, WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
 
         int round = DWMWCP_ROUND;
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(int));
@@ -56,6 +63,11 @@ internal sealed unsafe class SliderOverlay : NativeWindow
 
     public void Hide()
     {
+        if (_dragging)
+        {
+            _dragging = false;
+            ReleaseCapture();
+        }
         ShowWindow(Handle, SW_HIDE);
         K32EmptyWorkingSet(GetCurrentProcess());
     }
@@ -71,8 +83,41 @@ internal sealed unsafe class SliderOverlay : NativeWindow
                 return 1;
             case WM_MOUSEACTIVATE:
                 return MA_NOACTIVATE;
+            case WM_LBUTTONDOWN:
+                _dragging = true;
+                SetCapture(Handle);
+                SetFromX(LoWord(lParam));
+                return 0;
+            case WM_MOUSEMOVE when _dragging:
+                SetFromX(LoWord(lParam));
+                return 0;
+            case WM_LBUTTONUP when _dragging:
+                _dragging = false;
+                ReleaseCapture();
+                return 0;
+            case WM_MOUSEWHEEL:
+                Scrolled?.Invoke((short)((wParam >> 16) & 0xFFFF) > 0 ? 1 : -1);
+                return 0;
         }
         return base.WndProc(msg, wParam, lParam);
+    }
+
+    /// <summary>The bar's usable span (where the thumb's center can go), in client pixels.</summary>
+    private void BarSpan(int width, out int left, out int right)
+    {
+        int thumb = Px(ThumbDip);
+        left = Px(BarLeftDip) + thumb / 2;
+        right = width - Px(RightPadDip + NumberDip) - thumb / 2;
+    }
+
+    private void SetFromX(int x)
+    {
+        RECT client;
+        GetClientRect(Handle, &client);
+        BarSpan(client.Right - client.Left, out int left, out int right);
+        if (right <= left) return;
+        int percent = (int)Math.Round(100.0 * (x - left) / (right - left));
+        ValueSet?.Invoke(Math.Clamp(percent, 0, 100));
     }
 
     private int Px(int dip) => (int)Math.Round(dip * _dpi / 96.0);
@@ -89,11 +134,9 @@ internal sealed unsafe class SliderOverlay : NativeWindow
         if (_glyph != '\0')
             Gdi.Text(dc, fonts.Glyph, _muted ? Gdi.Dim : Gdi.TextColor, _glyph.ToString(), Px(GlyphLeftDip), 0, Px(GlyphLeftDip + GlyphDip), h, DT_CENTER | oneLine);
 
-        int left = Px(BarLeftDip), right = w - Px(RightPadDip + NumberDip);
+        BarSpan(w, out int left, out int right); // the thumb stays inside the bar's ends
         int barH = Px(BarHeightDip), top = (h - barH) / 2;
         int thumb = Px(ThumbDip);
-        left += thumb / 2; // the thumb stays inside the bar's ends
-        right -= thumb / 2;
         Gdi.RoundedFill(dc, Gdi.DimBrush, left, top, right, top + barH, barH);
         int filled = left + (right - left) * Math.Clamp(_value, 0, 100) / 100;
         if (filled - left >= barH) Gdi.RoundedFill(dc, _muted ? MutedBrush : Gdi.SelectionBrush, left, top, filled, top + barH, barH);

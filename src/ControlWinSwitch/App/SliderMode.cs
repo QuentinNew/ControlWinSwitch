@@ -11,6 +11,7 @@ namespace ControlWinSwitch.App;
 internal sealed class SliderMode : IMode
 {
     private const uint TickMs = 15, RefreshMs = 250, IdleMs = 5000, QuietMs = 500;
+    private const int WheelStep = 2; // percent per wheel notch, like the keyboard volume keys
 
     private readonly IModeHost _host;
     private readonly DirectionRepeat _direction;
@@ -32,6 +33,16 @@ internal sealed class SliderMode : IMode
         _tickTimer = timers.Create(OnTick);
         _refreshTimer = timers.Create(OnRefresh);
         _idleTimer = timers.Create(OnIdle);
+        _overlay.ValueSet += percent =>
+        {
+            if (_slider.Set(percent)) Apply();
+            else Touch();
+        };
+        _overlay.Scrolled += notches =>
+        {
+            if (_slider.Step(notches * WheelStep)) Apply();
+            else Touch();
+        };
     }
 
     private ControllerState State => _host.State;

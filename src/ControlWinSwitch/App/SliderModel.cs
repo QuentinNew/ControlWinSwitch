@@ -32,6 +32,14 @@ internal sealed class SliderModel
         Muted = muted;
     }
 
+    /// <summary>Mouse: jump to a value. True when the shown value changed.</summary>
+    public bool Set(int percent)
+    {
+        int before = Percent;
+        _value = Math.Clamp(percent, 0, 100);
+        return Percent != before;
+    }
+
     /// <summary>D-pad: one percent up or down from the shown value. True when the shown value changed.</summary>
     public bool Step(int delta)
     {
