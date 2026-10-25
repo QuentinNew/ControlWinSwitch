@@ -37,6 +37,13 @@ internal static class ErrorBoundary
         catch (Exception recoverError) { if (first) Log.Error("Recovering from the error failed", recoverError); }
     }
 
+    /// <summary>Runs one step of a cleanup: an exception is logged, so the next steps still run.</summary>
+    public static void TryStep(string step, Action action)
+    {
+        try { action(); }
+        catch (Exception ex) { Log.Error($"Could not {step}", ex); }
+    }
+
     /// <summary>
     /// Starts a background thread whose exceptions are logged instead of ending the process. <paramref name="onFailure"/>
     /// runs after the log line, typically to post the "done" message the UI thread waits for.

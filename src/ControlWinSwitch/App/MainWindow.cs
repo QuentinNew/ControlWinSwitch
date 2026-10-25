@@ -43,8 +43,6 @@ internal sealed unsafe class MainWindow : NativeWindow
 
     public bool SetRumble(int slot, bool on) => _set.Source(slot).SetRumble(on);
 
-    public bool SetRumbleMotors(int slot, byte large, byte small, int percent) => _set.Source(slot).SetRumbleMotors(large, small, percent);
-
     public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_set.OpenCount));
 
     private const int MenuHotkeyId = 1;

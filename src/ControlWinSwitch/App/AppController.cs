@@ -15,8 +15,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 {
     private const uint SliderTickMs = 15, SliderRefreshMs = 250, SliderIdleMs = 5000, SliderQuietMs = 500;
     private const uint HideMenuDelayMs = 10; // the menu stays under the settings window this long, so no frame shows neither
-    private const uint RumbleMs = 400, GameRumbleRefreshMs = 80;
-    private const uint WatchPollMs = 5000, WatchFastPollMs = 1000, WatchFastWindowMs = 15000;
+    private const uint RumbleMs = 400;
     private const uint RepeatFirstMs = 400, RepeatNextMs = 110;
     private const float StickEngage = 0.6f, StickRelease = 0.4f;
 
@@ -29,21 +28,18 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private char _mouseGlyph;
     private readonly ControllerSet _set;
 
-    /// <summary>What belongs to one controller: its state, its virtual pad and what a game asks of its motors.</summary>
+    /// <summary>What belongs to one controller: its state and what of it is hidden from its virtual pad.</summary>
     private sealed class Slot
     {
         public readonly ControllerState State = new();
-        public readonly VirtualPad Pad = new();
         public Buttons IgnoreMask; // buttons still held from the menu: hidden from the game until released
         public bool IgnoreSticks;  // sticks used in the menu: hidden until back near center
-        public byte GameLarge, GameSmall;
     }
 
     private readonly Slot[] _slots = new Slot[ControllerSet.Slots];
     private int _owner; // the controller that has the menu / mouse mode / settings (the last one heard while idle)
     private Slot Owner => _slots[_owner];
     private ControllerState _state => Owner.State;
-    private VirtualPad _pad => Owner.Pad;
     private readonly MainWindow _window;
     private readonly MenuModel _menu = new();
     private readonly MenuOverlay _overlay = new();
@@ -64,16 +60,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private long _sliderLastTick, _sliderLastInput;
     private readonly ConfigStore _store = new();
     private readonly ControllerRegistry _registry;
-    private readonly PadGate _gate = new();
-
-    private nint _watchHandle;        // the watched process we wait on (0 = none, polling instead)
-    private bool _watchRunning;
-    private string _watchName = "";   // list entry of the process that matched
-    private long _fastPollUntil;      // Environment.TickCount64 until which the poll is fast (after a shortcut launch)
+    private readonly PadService _pads;
 
     private bool _pairing;
-    private bool _padEnabled;
-    private bool _padFailed;
     private bool _shutDown;
     private HeadsetState _headsetState;
     private bool _headsetBusy;
@@ -87,11 +76,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     private readonly TimerService _timers;
     private readonly UiTimer _repeatTimer;        // key-repeat of the held direction (menu, settings, slider)
-    private readonly UiTimer _watchTimer;         // process watcher poll
     private readonly UiTimer _hideMenuTimer;      // hides the menu once the settings window is up
     private readonly UiTimer _sliderTickTimer, _sliderRefreshTimer, _sliderIdleTimer;
     private readonly UiTimer[] _rumbleTestTimers = new UiTimer[ControllerSet.Slots]; // ends the settings rumble test
-    private readonly UiTimer[] _gameRumbleTimers = new UiTimer[ControllerSet.Slots]; // refreshes a game's rumble
 
     public AppController(ControllerSet set, MainWindow window)
     {
@@ -103,7 +90,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         _timers = new TimerService(window.Handle);
         _repeatTimer = _timers.Create(OnRepeatTimer);
-        _watchTimer = _timers.Create(CheckProcesses);
         _hideMenuTimer = _timers.Create(OnHideMenuTimer);
         _sliderTickTimer = _timers.Create(OnSliderTick);
         _sliderRefreshTimer = _timers.Create(OnSliderRefresh);
@@ -113,22 +99,18 @@ internal sealed class AppController : IDisposable, ISettingsHost
         {
             int slot = i;
             _slots[slot] = new Slot();
-            _slots[slot].Pad.Feedback += (large, small) => OnPadFeedback(slot, large, small);
             _rumbleTestTimers[slot] = _timers.Create(() =>
             {
                 _rumbleTestTimers[slot].Stop();
                 _window.SetRumble(slot, false);
             });
-            _gameRumbleTimers[slot] = _timers.Create(() => ApplyGameRumble(slot, restartTimer: false));
         }
 
         var error = _store.Load();
         if (error is not null) _toast.Show('', error);
 
-        // Start-up: a watched process may already be running.
-        _watchRunning = ProbeProcesses();
-        _padEnabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
-        UpdateWatchTimer();
+        _pads = new PadService(_store, set, _timers, _toast); // after Load: it reads the pad settings
+        _pads.WatchChanged += OnWatchChanged;
         ApplyMenuHotkey();
 
         _overlay.RowHovered += OnMenuRowHovered;
@@ -172,9 +154,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
     // ---- loop hooks --------------------------------------------------------------------------
 
     /// <summary>Waitable timer handle for the message loop; signalled only while a stick moves the mouse.</summary>
-    public nint PadNotifyHandle(int slot) => _slots[slot].Pad.NotifyHandle;
+    public nint PadNotifyHandle(int slot) => _pads.NotifyHandle(slot);
 
-    public void OnPadNotify(int slot) => _slots[slot].Pad.OnNotifySignaled();
+    public void OnPadNotify(int slot) => _pads.OnNotify(slot);
 
     public nint MouseTimerHandle => _mouseOutput.TimerHandle;
 
@@ -279,7 +261,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         StopRepeat();
         _heldDirection = Dir.None;
         _owner = slot;
-        _pad.SubmitNeutral(); // neutral pad while the menu owns the input
+        _pads.Neutral(_owner); // neutral pad while the menu owns the input
         return true;
     }
 
@@ -290,8 +272,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         gone.State.ClearCalibration();
         _window.UpdateTray();
         if (_shutDown) return;
-        gone.Pad.Detach(); // re-plugged on the next report
-        SyncHiding();
+        _pads.OnControllerRemoved(slot); // re-plugged on the next report
         if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Strip } strip && strip.Slot == slot) CloseControllerPage();
         int heir = Config.MenuAnyController && _mode is Mode.Menu or Mode.Settings
             ? Enumerable.Range(0, _slots.Length).FirstOrDefault(i => i != slot && _window.ControllerConnected(i), -1) : -1;
@@ -301,7 +282,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             StopRepeat();
             _heldDirection = Dir.None;
             _owner = heir;
-            _pad.SubmitNeutral();
+            _pads.Neutral(_owner);
         }
         else if (slot == _owner)
         {
@@ -354,9 +335,9 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Slider) ExitSlider();
 
         ReloadConfigIfChanged();
-        var statuses = new NodeStatuses(PadDetail, HeadsetDetail);
+        var statuses = new NodeStatuses(_pads.Detail, HeadsetDetail);
         _radialShown = Config.MenuLayout == MenuLayouts.Radial;
-        _pad.SubmitNeutral(); // neutral pad while the menu owns the input
+        _pads.Neutral(_owner); // neutral pad while the menu owns the input
         _mode = Mode.Menu;
         if (_radialShown)
         {
@@ -575,7 +556,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         ReloadConfigIfChanged();
         SyncKnown();
         _registry.RefreshRemembered();
-        _pad.SubmitNeutral();
+        _pads.Neutral(_owner);
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
         _settingsWindow.Show(_settings);
@@ -753,7 +734,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private void EnterMouse(char glyph)
     {
         _mouseGlyph = glyph;
-        _pad.SubmitNeutral(); // neutral pad while the mouse owns the input
+        _pads.Neutral(_owner); // neutral pad while the mouse owns the input
         _mode = Mode.Mouse;
         _mouse.Activate(_state.Current);
         _toast.Show(glyph, "Mouse mode - Capture to exit");
@@ -798,7 +779,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _sliderGlyph = entry.Glyph;
         _slider.Reset(value, muted);
         _sliderChanged = false;
-        _pad.SubmitNeutral(); // neutral pad while the slider owns the input
+        _pads.Neutral(_owner); // neutral pad while the slider owns the input
         _toast.Hide();
         _mode = Mode.Slider;
         _heldDirection = ReadSliderDpad(); // a D-pad already held must be released first
@@ -1132,189 +1113,45 @@ internal sealed class AppController : IDisposable, ISettingsHost
             return;
         }
 
-        // The launched program may be a watched one: look again right away and then every second for a while.
-        _fastPollUntil = Environment.TickCount64 + WatchFastWindowMs;
-        CheckProcesses();
+        _pads.WatchSoon(); // the launched program may be a watched one
     }
 
-    // ---- virtual pad -------------------------------------------------------------------------
+    // ---- virtual pad (kept by PadService) ----------------------------------------------------
 
-    public bool PadEnabled => _padEnabled;
+    public bool PadEnabled => _pads.Enabled;
 
     public void TogglePad(char glyph)
     {
         if (_shutDown) return;
-        UserSetPad(!_padEnabled);
-        _toast.Show(glyph, _padFailed ? "Virtual pad unavailable (ViGEmBus?)"
-            : _padEnabled ? "Virtual pad: on" : "Virtual pad: off");
+        _pads.UserSet(!_pads.Enabled);
+        _toast.Show(glyph, _pads.Failed ? "Virtual pad unavailable (ViGEmBus?)"
+            : _pads.Enabled ? "Virtual pad: on" : "Virtual pad: off");
         if (_mode == Mode.Menu) RefreshMenu(); // the pad row shows its state
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    /// <summary>
-    /// The user's choice (menu, tray, settings). It wins over the process watcher; it is only saved to the
-    /// config while no watched process runs, so a choice made during Steam stays runtime-only.
-    /// </summary>
-    private void UserSetPad(bool enabled)
-    {
-        _gate.ManualOverride();
-        SetPadEnabled(enabled);
-        if (!_watchRunning)
-        {
-            Config.VirtualPad.Enabled = enabled;
-            _store.Save();
-        }
-    }
-
     /// <summary>Note shown next to the pad in the menu and tray while a watched process holds it off.</summary>
-    public string? PadNote => _gate.HeldOff ? ProcessList.DisplayName(_watchName) : null;
-
-    // ---- process watcher ---------------------------------------------------------------------
+    public string? PadNote => _pads.Note;
 
     /// <summary>Handle of the watched process for the message loop (0 = none).</summary>
-    public nint WatchHandle => _watchHandle;
+    public nint WatchHandle => _pads.WatchHandle;
 
     /// <summary>The watched process exited (its handle was signalled).</summary>
-    public void OnWatchedProcessExited()
+    public void OnWatchedProcessExited() => _pads.OnWatchedProcessExited();
+
+    /// <summary>A watched process started or closed: the pad's state shows in the menu and settings.</summary>
+    private void OnWatchChanged()
     {
-        CloseWatchHandle();
-        CheckProcesses();
-    }
-
-    private void CloseWatchHandle()
-    {
-        if (_watchHandle == 0) return;
-        CloseHandle(_watchHandle);
-        _watchHandle = 0;
-    }
-
-    /// <summary>Looks for a watched process and keeps the wait handle in line. Returns whether one runs.</summary>
-    private bool ProbeProcesses()
-    {
-        var names = Config.VirtualPad.DisableWhileRunning;
-        if (names.Count == 0)
-        {
-            CloseWatchHandle();
-            return false;
-        }
-
-        int pid = ProcessList.FindRunning(names, out var matched);
-        if (pid == 0)
-        {
-            CloseWatchHandle();
-            return false;
-        }
-
-        _watchName = matched;
-        if (_watchHandle == 0) _watchHandle = OpenProcess(SYNCHRONIZE, 0, (uint)pid); // 0 on failure: the poll covers it
-        return true;
-    }
-
-    /// <summary>Poll tick, process exit or list change: apply the result to the pad.</summary>
-    private void CheckProcesses()
-    {
-        if (_shutDown) return;
-        bool running = ProbeProcesses();
-        UpdateWatchTimer();
-        if (running == _watchRunning) return;
-        _watchRunning = running;
-
-        string name = ProcessList.DisplayName(_watchName);
-        Log.Info($"Watched process {name}: {(running ? "running" : "closed")}");
-        switch (_gate.OnRunningChanged(running, _padEnabled))
-        {
-            case PadGate.Change.Disable:
-                SetPadEnabled(false);
-                break;
-            case PadGate.Change.Enable:
-                SetPadEnabled(true);
-                break;
-        }
         if (_mode == Mode.Menu) RefreshMenu();
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    /// <summary>Poll only while there is something to wait for and no handle to wait on.</summary>
-    private void UpdateWatchTimer()
-    {
-        bool poll = Config.VirtualPad.DisableWhileRunning.Count > 0 && _watchHandle == 0;
-        if (!poll)
-        {
-            _watchTimer.Stop();
-            return;
-        }
-
-        _watchTimer.Start(Environment.TickCount64 < _fastPollUntil ? WatchFastPollMs : WatchPollMs); // replaces the interval
-    }
-
-    private PadKind ConfiguredKind => Config.VirtualPad.Type == PadTypes.Ps4 ? PadKind.Ps4 : PadKind.Xbox;
-
-    private void SetPadEnabled(bool enabled)
-    {
-        _padEnabled = enabled;
-        _padFailed = false;
-        var kind = ConfiguredKind;
-        for (int i = 0; i < _slots.Length; i++)
-        {
-            var pad = _slots[i].Pad;
-            if (pad.IsAttached && pad.PluggedKind != kind) pad.Detach();
-            pad.Kind = kind;
-            if (!enabled) _slots[i].Pad.Detach();
-            else if (_set.Source(i).IsOpen && !_slots[i].Pad.Attach()) _padFailed = true;
-        }
-        SyncHiding();
-    }
-
-    // ---- hiding the physical controllers (HidHide) -----------------------------------------
-
-    private string _hiddenKey = "";   // the set of paths last applied (to skip identical requests)
-    private bool _hideFailed;
-
-    /// <summary>Hides the controllers that currently drive a virtual pad, and shows every other one again.</summary>
-    private void SyncHiding()
-    {
-        var wanted = new List<string>();
-        if (_padEnabled && !_padFailed && !_shutDown && Config.VirtualPad.HidePhysical)
-        {
-            for (int i = 0; i < _slots.Length; i++)
-                if (_slots[i].Pad.IsAttached) wanted.AddRange(_set.Source(i).HidPaths);
-        }
-        wanted.Sort(StringComparer.OrdinalIgnoreCase);
-        string key = string.Join('|', wanted);
-        if (key == _hiddenKey && !_hideFailed) return;
-
-        var error = HidHide.Apply(wanted);
-        _hiddenKey = key;
-        bool failedBefore = _hideFailed;
-        _hideFailed = error is not null;
-        if (error is not null)
-        {
-            Log.Error($"Hiding the physical controller: {error}");
-            if (!failedBefore) _toast.Show('', error);
-        }
-    }
-
-    private string? PadDetail() => !_padEnabled ? (_gate.HeldOff ? $"Off ({ProcessList.DisplayName(_watchName)})" : "Off") : _padFailed ? "Unavailable" : "On";
-
     /// <summary>The state is not consumed: it drives the virtual pad.</summary>
     private void Forward(int index)
     {
-        var slot = _slots[index];
-        if (!_padEnabled || _padFailed) return;
-        if (!slot.Pad.IsAttached && !slot.Pad.Attach())
-        {
-            _padFailed = true;
-            _toast.Show(MenuPages.Game, "Virtual pad unavailable (ViGEmBus?)");
-            return;
-        }
-        var paths = _set.Source(index).HidPaths;
-        for (int i = 0; i < paths.Count; i++)
-            if (!_hiddenKey.Contains(paths[i], StringComparison.OrdinalIgnoreCase))
-            {
-                SyncHiding(); // just attached
-                break;
-            }
+        if (!_pads.Prepare(index)) return;
 
+        var slot = _slots[index];
         var state = slot.State;
         slot.IgnoreMask &= state.Current;
         var left = state.Left;
@@ -1327,11 +1164,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         left = left.WithDeadzone(_registry.StickDeadzone(index, right: false));
         right = right.WithDeadzone(_registry.StickDeadzone(index, right: true));
-
-        var held = state.Current & ~slot.IgnoreMask;
-        var pad = Config.VirtualPad;
-        if (slot.Pad.PluggedKind == PadKind.Ps4) slot.Pad.Submit(Ds4Mapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
-        else slot.Pad.Submit(XInputMapper.Map(held, left, right, pad.SwapAB, pad.SwapXY));
+        _pads.Submit(index, state.Current & ~slot.IgnoreMask, left, right);
     }
 
     // ---- config ------------------------------------------------------------------------------
@@ -1352,14 +1185,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Brings the running parts in line with the current config.</summary>
     private void ApplyConfig()
     {
-        // A file edit / reload is a fresh start for the watcher too (the list may have changed).
-        _watchRunning = ProbeProcesses();
-        bool enabled = _gate.Apply(Config.VirtualPad.Enabled, _watchRunning);
-        UpdateWatchTimer();
-        if (enabled != _padEnabled) SetPadEnabled(enabled);
-        else if (_padEnabled && _slots.Any(s => s.Pad.IsAttached && s.Pad.PluggedKind != ConfiguredKind)) SetPadEnabled(true); // the kind changed
-        else SyncHiding(); // the Hide setting may have changed
-        for (int i = 0; i < _slots.Length; i++) ApplyGameRumble(i, restartTimer: false); // the Rumble setting may have changed (0 stops it at once)
+        _pads.ApplyConfig();
         ApplyMenuHotkey();
     }
 
@@ -1374,28 +1200,6 @@ internal sealed class AppController : IDisposable, ISettingsHost
         Hotkey? hotkey = Hotkey.TryParse(text, out var parsed) ? parsed : null;
         if (_window.SetMenuHotkey(hotkey)) Log.Info($"Menu shortcut: {(text.Length == 0 ? "none" : text)}");
         else _toast.Show(MenuPages.Gear, $"{text} is already used by another app");
-    }
-
-    /// <summary>A game set a virtual pad's motors: forward them to its Pro Controller, scaled by the Rumble setting.</summary>
-    private void OnPadFeedback(int slot, byte large, byte small)
-    {
-        _slots[slot].GameLarge = large;
-        _slots[slot].GameSmall = small;
-        ApplyGameRumble(slot, restartTimer: true);
-    }
-
-    /// <summary>
-    /// The controller keeps vibrating only while it keeps receiving rumble reports: refresh them while the game
-    /// asks for any, and send a neutral one when it stops.
-    /// </summary>
-    private void ApplyGameRumble(int index, bool restartTimer)
-    {
-        var slot = _slots[index];
-        int percent = Config.VirtualPad.Rumble;
-        bool active = percent > 0 && (slot.GameLarge > 0 || slot.GameSmall > 0);
-        _window.SetRumbleMotors(index, active ? slot.GameLarge : (byte)0, active ? slot.GameSmall : (byte)0, percent);
-        if (!active) _gameRumbleTimers[index].Stop();
-        else if (restartTimer) _gameRumbleTimers[index].Start(GameRumbleRefreshMs);
     }
 
     // ISettingsHost
@@ -1628,7 +1432,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) CloseSettings();
         if (_mode == Mode.Slider) ExitSlider();
 
-        _pad.SubmitNeutral(); // neutral pad while the editor is open
+        _pads.Neutral(_owner); // neutral pad while the editor is open
         _heldDirection = Dir.None;
         _mode = Mode.Editor;
         _menuEditor.Show(layout, Config.RadialMenu ?? [], Config.ListMenu ?? []);
@@ -1686,36 +1490,19 @@ internal sealed class AppController : IDisposable, ISettingsHost
         StartHeadsetWork(toggle: true);
     }
 
-    bool ISettingsHost.PadEnabled => _padEnabled;
+    bool ISettingsHost.PadEnabled => _pads.Enabled;
 
-    int ISettingsHost.PadMode => !_padEnabled ? 0 : Config.VirtualPad.Type == PadTypes.Ps4 ? 2 : 1;
+    int ISettingsHost.PadMode => _pads.Mode;
 
-    void ISettingsHost.SetPadMode(int mode)
-    {
-        if (mode == ((ISettingsHost)this).PadMode) return;
-        if (mode > 0)
-        {
-            string type = mode == 2 ? PadTypes.Ps4 : PadTypes.Xbox;
-            if (Config.VirtualPad.Type != type)
-            {
-                Config.VirtualPad.Type = type;
-                if (!_watchRunning) _store.Save();
-            }
-        }
-        UserSetPad(mode > 0); // also re-plugs the pads already in when the kind changed
-    }
+    void ISettingsHost.SetPadMode(int mode) => _pads.SetMode(mode);
 
     void ISettingsHost.SetPad(bool enabled)
     {
-        if (enabled == _padEnabled) return;
-        UserSetPad(enabled);
+        if (enabled == _pads.Enabled) return;
+        _pads.UserSet(enabled);
     }
 
-    void ISettingsHost.WatchListChanged()
-    {
-        // Re-evaluate against the new list: an emptied list gives the pad back, a new entry may take it.
-        CheckProcesses();
-    }
+    void ISettingsHost.WatchListChanged() => _pads.WatchListChanged();
 
     void ISettingsHost.EditText(string current, Action<string> commit) => _settingsWindow.BeginEdit(current, commit);
 
@@ -1850,8 +1637,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _mode = Mode.Idle;
         TryStep("release the mouse buttons", _mouse.Deactivate);
         TryStep("hide the toast", _toast.Hide);
-        foreach (var slot in _slots) TryStep("unplug a virtual pad", slot.Pad.Dispose); // they disappear from the games
-        TryStep("show the controllers again", SyncHiding); // shutting down: hides nothing
+        TryStep("unplug the virtual pads", _pads.Shutdown); // they disappear from the games; the controllers show again
         TryStep("remove the tray icon", _window.RemoveTray);
     }
 
@@ -1884,7 +1670,11 @@ internal sealed class AppController : IDisposable, ISettingsHost
         {
             slot.IgnoreMask = slot.State.Current; // what is held reaches the game only once released
             slot.IgnoreSticks = true;
-            TryStep("neutralize a virtual pad", slot.Pad.SubmitNeutral);
+        }
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            int index = i;
+            TryStep("neutralize a virtual pad", () => _pads.Neutral(index));
         }
         if (!announce) return;
         Log.Info($"Recovered from the error (was {mode})");
@@ -1894,19 +1684,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
     /// <summary>Last resort when the process is about to die, from any thread: shows the hidden controllers again.</summary>
     public void ShowControllersAgain()
     {
-        if (_hiddenKey.Length > 0) HidHide.Apply([]);
+        _pads.ShowControllersAgain();
     }
 
-    private static void TryStep(string step, Action action)
-    {
-        try { action(); }
-        catch (Exception ex) { Log.Error($"Could not {step}", ex); }
-    }
+    private static void TryStep(string step, Action action) => ErrorBoundary.TryStep(step, action);
 
     public void Dispose()
     {
         _mouse.Deactivate();
         _mouseOutput.Dispose();
-        foreach (var slot in _slots) slot.Pad.Dispose();
+        _pads.Dispose();
     }
 }
