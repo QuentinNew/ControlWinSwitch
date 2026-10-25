@@ -123,7 +123,6 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
     {
         _slots[slot].State.Update(report);
         if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
-        if (_registry.KnownSyncDue) SyncKnown(); // a MAC read late, half of a Joy-Con pair gone
         _settings.OnAnyReport(slot);
 
         // The open mode belongs to one controller; the others keep playing.
@@ -220,11 +219,22 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         _settings.Refresh();
     }
 
-    /// <summary>Joy-Cons joined a slot: a new controller, or the partner of a lone Joy-Con.</summary>
+    /// <summary>The Joy-Cons of a slot changed: a new controller, the partner of a lone Joy-Con, or one of a pair left.</summary>
     public void OnJoyConsChanged(int slot)
     {
         _window.UpdateTray();
-        if (!_shutDown) _settings.Refresh();
+        if (_shutDown) return;
+        SyncKnown();
+        _settings.Refresh();
+    }
+
+    /// <summary>A Pro Controller told its MAC address: its profile moves to it, and it joins the known list.</summary>
+    public void OnControllerIdentified(int slot)
+    {
+        if (_shutDown) return;
+        _registry.MigrateProfile(slot);
+        SyncKnown();
+        _settings.Refresh(); // its name and picture
     }
 
     /// <summary>Records the controllers that connected or went away, and keeps the open controller page in line.</summary>

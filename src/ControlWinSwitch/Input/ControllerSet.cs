@@ -31,8 +31,11 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
     /// <summary>The slot's controller went away.</summary>
     public event Action<int>? ControllerRemoved;
 
-    /// <summary>Joy-Cons joined a slot (a new slot, or a partner for a lone one).</summary>
+    /// <summary>The Joy-Cons of a slot changed: some joined (a new slot, or a partner for a lone one), or one of a pair left.</summary>
     public event Action<int>? JoyConsChanged;
+
+    /// <summary>The slot's Pro Controller told its MAC address: its <see cref="IControllerSource.Id"/> is now the MAC.</summary>
+    public event Action<int>? ControllerIdentified;
 
     public ControllerSet()
     {
@@ -48,6 +51,11 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
             {
                 int slot = Array.IndexOf(_pro, hid);
                 if (slot >= 0) CalibrationRead?.Invoke(slot, cal);
+            };
+            hid.Identified += () =>
+            {
+                int slot = Array.IndexOf(_pro, hid);
+                if (slot >= 0) ControllerIdentified?.Invoke(slot); // a Joy-Con only joins a slot once identified
             };
             hid.ControllerRemoved += () =>
             {
@@ -65,6 +73,7 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
             var joy = _joy[slot] = new JoyConSlot(slot);
             joy.Report += report => Report?.Invoke(slot, report);
             joy.CalibrationRead += cal => CalibrationRead?.Invoke(slot, cal);
+            joy.PartnerLeft += () => JoyConsChanged?.Invoke(slot);
             joy.ControllerRemoved += () =>
             {
                 _refused.Clear();

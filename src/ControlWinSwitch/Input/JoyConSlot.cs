@@ -24,6 +24,9 @@ internal sealed class JoyConSlot : IControllerSource
     /// <summary>Raised when the last Joy-Con of the slot is gone.</summary>
     public event Action? ControllerRemoved;
 
+    /// <summary>Raised when one Joy-Con of a pair is gone (the other carries on alone).</summary>
+    public event Action? PartnerLeft;
+
     public bool IsOpen => _left is not null || _right is not null;
 
     /// <summary>The Joy-Cons in the slot (left first).</summary>
@@ -72,7 +75,11 @@ internal sealed class JoyConSlot : IControllerSource
         else if (device == _right) (_right, _rightInput) = (null, null);
         else return;
 
-        if (IsOpen) LayoutChanged();
+        if (IsOpen)
+        {
+            LayoutChanged();
+            PartnerLeft?.Invoke();
+        }
         else
         {
             HidPaths = [];
@@ -107,16 +114,19 @@ internal sealed class JoyConSlot : IControllerSource
         // The battery badge shows the emptier Joy-Con.
         int battery = -1;
         bool charging = false;
-        foreach (var (d, half) in new[] { (_left, left), (_right, right) })
-        {
-            if (d is null || half is not { } h) continue;
-            var (level, charge) = d.Battery(h);
-            if (level < 0 || (battery >= 0 && level >= battery)) continue;
-            battery = level;
-            charging = charge;
-        }
+        TakeEmptier(_left, left, ref battery, ref charging);
+        TakeEmptier(_right, right, ref battery, ref charging);
 
         Report?.Invoke(JoyCon2Mapper.Map(left, right, lc, rc, battery, charging));
+    }
+
+    private static void TakeEmptier(IJoyCon? device, JoyCon2Input? half, ref int battery, ref bool charging)
+    {
+        if (device is null || half is not { } h) return;
+        var (level, charge) = device.Battery(h);
+        if (level < 0 || (battery >= 0 && level >= battery)) return;
+        battery = level;
+        charging = charge;
     }
 
     private static (int X, int Y) Center(IJoyCon? d) =>

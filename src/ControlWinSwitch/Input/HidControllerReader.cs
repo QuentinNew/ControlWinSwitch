@@ -135,6 +135,9 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
     /// <summary>Raised when the controller goes away (disconnected, or the read failed).</summary>
     public event Action? ControllerRemoved;
 
+    /// <summary>Raised once the MAC address was read: <see cref="Id"/> changed from the temporary id to it.</summary>
+    public event Action? Identified;
+
     /// <summary>Device path of the open controller (null when closed).</summary>
     public string? Path => _path;
 
@@ -281,8 +284,10 @@ internal sealed unsafe class HidControllerReader : IControllerSource, IDisposabl
             }
             if (ProCommands.TryParseDeviceInfo(bytes.Span, out var mac))
             {
-                if (_mac != mac) Log.Info($"{Name} identified ({mac})");
+                if (_mac == mac) return;
+                Log.Info($"{Name} identified ({mac})");
                 _mac = mac;
+                Identified?.Invoke();
             }
             else if (ProCommands.TryParseSpiRead(bytes.Span, out var address, out var spi))
                 OnSpiRead(address, spi);

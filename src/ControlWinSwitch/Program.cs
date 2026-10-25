@@ -48,6 +48,7 @@ internal static unsafe class Program
             set.CalibrationRead += controller.OnCalibration;
             set.ControllerRemoved += controller.OnControllerRemoved;
             set.JoyConsChanged += controller.OnJoyConsChanged;
+            set.ControllerIdentified += controller.OnControllerIdentified;
             set.Hub.DevicePaired += controller.OnJoyConPaired;
 
             set.TryOpen();

@@ -11,14 +11,11 @@ namespace ControlWinSwitch.App;
 /// </summary>
 internal sealed class ControllerRegistry
 {
-    private const long KnownSyncMs = 1000;
-
     private readonly ConfigStore _store;
     private readonly IControllerSlots _slots;
     private readonly Func<int, ControllerState> _stateOf;
     private readonly Func<List<RememberedController>> _readRemembered;
 
-    private long _lastKnownSync;
     private readonly HashSet<string> _connectedMacs = [];
     private List<RememberedController> _remembered = [];
 
@@ -37,25 +34,25 @@ internal sealed class ControllerRegistry
 
     /// <summary>
     /// The id a controller's profile is stored under: its MAC address, or the temporary instance id until the MAC is
-    /// known. A profile (and picture) saved under the temporary id moves to the MAC once that is known.
+    /// known (see <see cref="MigrateProfile"/>). A plain lookup: it runs on every report.
     /// </summary>
-    public string? Key(int slot)
+    public string? Key(int slot) => _slots.Source(slot).Id;
+
+    /// <summary>
+    /// Call once the slot's controller told its MAC: a profile (and picture) saved under the temporary id moves to the MAC.
+    /// </summary>
+    public void MigrateProfile(int slot)
     {
         var source = _slots.Source(slot);
-        var id = source.Id;
-        if (id is null) return null;
-        if (source.HasMac && source.FallbackId is { } old && old != id)
+        if (!source.HasMac || source.Id is not { } id || source.FallbackId is not { } old || old == id) return;
+        bool moved = false;
+        if (Config.Controllers.Remove(old, out var profile) && !Config.Controllers.ContainsKey(id))
         {
-            bool moved = false;
-            if (Config.Controllers.Remove(old, out var profile) && !Config.Controllers.ContainsKey(id))
-            {
-                Config.Controllers[id] = profile;
-                moved = true;
-            }
-            if (ControllerPictures.Has(old) && !ControllerPictures.Has(id)) ControllerPictures.Move(old, id);
-            if (moved) _store.Save();
+            Config.Controllers[id] = profile;
+            moved = true;
         }
-        return id;
+        if (ControllerPictures.Has(old) && !ControllerPictures.Has(id)) ControllerPictures.Move(old, id);
+        if (moved) _store.Save();
     }
 
     public SlotTile TileOf(int slot)
@@ -100,16 +97,12 @@ internal sealed class ControllerRegistry
     /// The deadzone of a slot's stick. A Joy-Con keeps its own stick's deadzone (the left one in its left field, the right
     /// one in its right field), whichever Joy-Con it is paired with.
     /// </summary>
-    public float StickDeadzone(int slot, bool right)
-    {
-        Key(slot); // moves a profile saved under the temporary id
-        return _slots.Source(slot).StickProfile(right) is ({ } key, var rightField) && Config.Controllers.TryGetValue(key, out var profile)
+    public float StickDeadzone(int slot, bool right) =>
+        _slots.Source(slot).StickProfile(right) is ({ } key, var rightField) && Config.Controllers.TryGetValue(key, out var profile)
             ? (rightField ? profile.RightDeadzone : profile.LeftDeadzone) : 0f;
-    }
 
     public void SetStickDeadzone(int slot, bool right, float value)
     {
-        Key(slot);
         if (_slots.Source(slot).StickProfile(right) is not ({ } key, var rightField)) return;
         var profile = ProfileOf(key);
         value = Math.Clamp(value, 0f, 0.5f);
@@ -134,17 +127,13 @@ internal sealed class ControllerRegistry
 
     // ---- known controllers (the paired list of the Controller tab) ----------------------------
 
-    /// <summary>A second has passed since the last <see cref="SyncKnown"/> (a MAC read late, half of a Joy-Con pair gone).</summary>
-    public bool KnownSyncDue => Environment.TickCount64 - _lastKnownSync >= KnownSyncMs;
-
     /// <summary>
     /// Records the controllers that connected or went away since the last call: a new one joins the known list, and
     /// each one's last-seen time is set when it connects and when it goes. Returns the MACs that joined, or null when
-    /// nothing changed.
+    /// nothing changed. Call it when the slots change (a controller identified, Joy-Cons joined or left, one removed).
     /// </summary>
     public List<string>? SyncKnown()
     {
-        _lastKnownSync = Environment.TickCount64;
         var current = new Dictionary<string, string>();
         for (int slot = 0; slot < ControllerSet.Slots; slot++)
             foreach (var (mac, kind) in _slots.Devices(slot)) current[mac] = kind;

@@ -37,6 +37,9 @@ internal sealed class PadService : IDisposable
 
     private string _hiddenKey = "";   // the set of paths last applied (to skip identical requests)
     private bool _hideFailed;
+    // The paths of the plugged-in pads' controllers when hiding was last synced, hidden or not: a path missing here is a
+    // pad just plugged in. Checked on every report, so a set lookup.
+    private readonly HashSet<string> _syncedPaths = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A watched process started or closed, which may have switched the pads: the menu and settings show it.</summary>
     public event Action? WatchChanged;
@@ -176,7 +179,7 @@ internal sealed class PadService : IDisposable
         }
         var paths = _set.Source(slot).HidPaths;
         for (int i = 0; i < paths.Count; i++)
-            if (!_hiddenKey.Contains(paths[i], StringComparison.OrdinalIgnoreCase))
+            if (!_syncedPaths.Contains(paths[i]))
             {
                 SyncHiding(); // just attached
                 break;
@@ -308,12 +311,12 @@ internal sealed class PadService : IDisposable
     /// <summary>Hides the controllers that currently drive a virtual pad, and shows every other one again.</summary>
     private void SyncHiding()
     {
+        _syncedPaths.Clear();
+        for (int i = 0; i < _pads.Length; i++)
+            if (_pads[i].IsAttached) _syncedPaths.UnionWith(_set.Source(i).HidPaths);
+
         var wanted = new List<string>();
-        if (_enabled && !_failed && !_shutDown && Config.VirtualPad.HidePhysical)
-        {
-            for (int i = 0; i < _pads.Length; i++)
-                if (_pads[i].IsAttached) wanted.AddRange(_set.Source(i).HidPaths);
-        }
+        if (_enabled && !_failed && !_shutDown && Config.VirtualPad.HidePhysical) wanted.AddRange(_syncedPaths);
         wanted.Sort(StringComparer.OrdinalIgnoreCase);
         string key = string.Join('|', wanted);
         if (key == _hiddenKey && !_hideFailed) return;

@@ -84,6 +84,7 @@ public class ControllerRegistryTests : IDisposable
         source.HasMac = true;
         source.FallbackId = "dev:1";
 
+        _registry.MigrateProfile(0);
         Assert.Equal("AA", _registry.Key(0));
         Assert.Equal("Mine", _registry.ProfileName("AA"));
         Assert.False(_store.Current.Controllers.ContainsKey("dev:1"));
