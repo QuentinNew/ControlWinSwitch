@@ -35,3 +35,13 @@ internal interface IControllerSource
     /// <summary>Rumbles from Xbox motor strengths (0..255) scaled by <paramref name="percent"/>; (0, 0) stops it.</summary>
     bool SetRumbleMotors(byte large, byte small, int percent);
 }
+
+/// <summary>The controller slots as the app reads them: <see cref="ControllerSet"/> in the app, a fake in tests.</summary>
+internal interface IControllerSlots
+{
+    /// <summary>What drives the slot (a closed source when the slot is free).</summary>
+    IControllerSource Source(int slot);
+
+    /// <summary>The physical controllers in the slot whose MAC is known, with their kind.</summary>
+    IEnumerable<(string Mac, string Kind)> Devices(int slot);
+}

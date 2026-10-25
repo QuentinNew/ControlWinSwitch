@@ -686,6 +686,6 @@ public class SettingsModelTests
     public void Last_connection_is_shown_as_a_short_age(int seconds, string expected)
     {
         var now = new DateTime(2026, 10, 19, 12, 0, 0, DateTimeKind.Utc);
-        Assert.Equal(expected, AppController.Ago(now.AddSeconds(-seconds), now));
+        Assert.Equal(expected, ControllerRegistry.Ago(now.AddSeconds(-seconds), now));
     }
 }

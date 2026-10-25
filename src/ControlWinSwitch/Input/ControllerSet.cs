@@ -6,7 +6,7 @@ namespace ControlWinSwitch.Input;
 /// <see cref="HidControllerReader"/> each. The readers are a pool: one opens whatever Nintendo HID controller comes. The
 /// events carry the slot index.
 /// </summary>
-internal sealed class ControllerSet : IDisposable
+internal sealed class ControllerSet : IControllerSlots, IDisposable
 {
     public const int Slots = 4;
 

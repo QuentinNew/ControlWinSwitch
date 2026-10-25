@@ -63,6 +63,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     private bool _sliderChanged;     // the value was changed since the slider opened
     private long _sliderLastTick, _sliderLastInput;
     private readonly ConfigStore _store = new();
+    private readonly ControllerRegistry _registry;
     private readonly PadGate _gate = new();
 
     private nint _watchHandle;        // the watched process we wait on (0 = none, polling instead)
@@ -98,6 +99,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _window = window;
         _mouse = new MouseMode(() => _state, _mouseOutput, () => _store.Current.Mouse);
         _settings = SettingsPages.Create(_store, this);
+        _registry = new ControllerRegistry(_store, set, slot => _slots[slot].State);
 
         _timers = new TimerService(window.Handle);
         _repeatTimer = _timers.Create(OnRepeatTimer);
@@ -138,7 +140,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _radialOverlay.NodeHovered += OnRadialNodeHovered;
         _radialOverlay.NodeClicked += OnRadialNodeClicked;
         _radialOverlay.BackRequested += () => { if (_mode == Mode.Menu && _radialShown) BackMenu(); };
-        _settingsWindow.Tile = TileOf;
+        _settingsWindow.Tile = _registry.TileOf;
         _settingsWindow.PictureEditRequested += (slot, second) =>
         {
             ((ISettingsHost)this).ChooseControllerPicture(slot, second);
@@ -149,7 +151,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
             ((ISettingsHost)this).RemoveControllerPicture(slot, second);
             _settingsWindow.Refresh();
         };
-        _settingsWindow.PairedTile = PairedTileOf;
+        _settingsWindow.PairedTile = _registry.PairedTileOf;
         _settingsWindow.PairedPictureEditRequested += key =>
         {
             ChoosePicture(key);
@@ -202,7 +204,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
     {
         _slots[slot].State.Update(report);
         if (_shutDown) return; // reports still queued while the window closes must not re-plug the pad
-        if (Environment.TickCount64 - _lastKnownSync >= KnownSyncMs) SyncKnown(); // a MAC read late, half of a Joy-Con pair gone
+        if (_registry.KnownSyncDue) SyncKnown(); // a MAC read late, half of a Joy-Con pair gone
 
         if (_mode == Mode.Settings && _settings.Tab.Calibration is { } calibration && calibration.Slot == slot)
         {
@@ -363,13 +365,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
             _radialStick.CardinalBias = Config.RadialCardinalBias * MathF.PI / 180f;
             _radialStick.Reset(); // a stick already tilted must come back to the center first
             _heldDirection = Dir.None;
-            _radialOverlay.Show(_radial, Config.MenuShowControllers ? ConnectedTiles() : null);
+            _radialOverlay.Show(_radial, Config.MenuShowControllers ? _registry.ConnectedTiles() : null);
         }
         else
         {
             _menu.Reset(MenuTree.ToPage("ControlWinSwitch", Config.ListMenu ?? [], statuses, slotted: false));
             _heldDirection = ReadDirection(horizontal: false); // a stick already tilted must be released first, not scroll on open
-            _overlay.Show(_menu, Config.MenuShowControllers ? ConnectedTiles() : null);
+            _overlay.Show(_menu, Config.MenuShowControllers ? _registry.ConnectedTiles() : null);
         }
         Log.Info(_radialShown ? "Menu opened (radial)" : "Menu opened");
         StartHeadsetWork(toggle: false); // refresh the status shown in the menu
@@ -572,7 +574,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
         ReloadConfigIfChanged();
         SyncKnown();
-        RefreshRemembered();
+        _registry.RefreshRemembered();
         _pad.SubmitNeutral();
         _heldDirection = ReadDirection(horizontal: true);
         _mode = Mode.Settings;
@@ -1323,8 +1325,8 @@ internal sealed class AppController : IDisposable, ISettingsHost
             else left = right = default;
         }
 
-        left = left.WithDeadzone(StickDeadzone(index, right: false));
-        right = right.WithDeadzone(StickDeadzone(index, right: true));
+        left = left.WithDeadzone(_registry.StickDeadzone(index, right: false));
+        right = right.WithDeadzone(_registry.StickDeadzone(index, right: true));
 
         var held = state.Current & ~slot.IgnoreMask;
         var pad = Config.VirtualPad;
@@ -1427,125 +1429,29 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     string ISettingsHost.PairingStatus => _pairing ? "Searching..." : "";
 
-    // ---- per-controller profile (name, picture, battery) -----------------------------------
+    // ---- controllers (profiles and the known list are kept by ControllerRegistry) -------------
 
     private long _lastCalibrationPaint;
     private SettingItem? _pageStrip; // the strip row of the open controller page: its Slot is the controller being edited
 
-    /// <summary>
-    /// The id a controller's profile is stored under: its MAC address, or the temporary instance id until the MAC is
-    /// known. A profile (and picture) saved under the temporary id moves to the MAC once that is known.
-    /// </summary>
-    private string? ControllerKey(int slot)
-    {
-        var source = _set.Source(slot);
-        var id = source.Id;
-        if (id is null) return null;
-        if (source.HasMac && source.FallbackId is { } old && old != id)
-        {
-            bool moved = false;
-            if (Config.Controllers.Remove(old, out var profile) && !Config.Controllers.ContainsKey(id))
-            {
-                Config.Controllers[id] = profile;
-                moved = true;
-            }
-            if (ControllerPictures.Has(old) && !ControllerPictures.Has(id)) ControllerPictures.Move(old, id);
-            if (moved) _store.Save();
-        }
-        return id;
-    }
+    float ISettingsHost.ControllerDeadzone(int slot, bool right) => _registry.StickDeadzone(slot, right);
 
-    private SlotTile TileOf(int slot)
-    {
-        bool connected = ((ISettingsHost)this).ControllerConnected(slot);
-        if (!connected) return default;
-        var key = ControllerKey(slot);
-        string name = key is not null && Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
-        var state = _slots[slot].State;
-        // A Joy-Con pair: each Joy-Con shows its own picture, turned upright (pictured sideways, the left one is turned a
-        // quarter clockwise, the right one a quarter counterclockwise).
-        var partner = _set.Source(slot).PartnerId;
-        nint image = key is null ? 0 : partner is null ? ControllerPictures.Get(key) : ControllerPictures.GetRotated(key, clockwise: true);
-        nint image2 = partner is null ? 0 : ControllerPictures.GetRotated(partner, clockwise: false);
-        return new SlotTile(true, name.Length > 0 ? name : $"Controller {slot + 1}", state.Battery, state.Charging,
-            image, partner is not null, image2);
-    }
+    void ISettingsHost.SetControllerDeadzone(int slot, bool right, float value) => _registry.SetStickDeadzone(slot, right, value);
 
-    /// <summary>The tiles of the connected controllers, in slot order.</summary>
-    private List<SlotTile> ConnectedTiles()
-    {
-        var tiles = new List<SlotTile>();
-        for (int slot = 0; slot < _slots.Length; slot++)
-            if (TileOf(slot) is { Connected: true } tile) tiles.Add(tile);
-        return tiles;
-    }
-
-    /// <summary>The profile of a controller (created when missing).</summary>
-    private ControllerProfile ProfileOf(string key)
-    {
-        if (!Config.Controllers.TryGetValue(key, out var profile)) Config.Controllers[key] = profile = new ControllerProfile();
-        return profile;
-    }
-
-    /// <summary>Forgets a profile that holds nothing.</summary>
-    private void PruneProfile(string key)
-    {
-        if (Config.Controllers.TryGetValue(key, out var profile) && profile.IsDefault)
-            Config.Controllers.Remove(key);
-    }
-
-    /// <summary>
-    /// The deadzone of a slot's stick. A Joy-Con keeps its own stick's deadzone (the left one in its left field, the right
-    /// one in its right field), whichever Joy-Con it is paired with.
-    /// </summary>
-    private float StickDeadzone(int slot, bool right)
-    {
-        ControllerKey(slot); // moves a profile saved under the temporary id
-        return _set.Source(slot).StickProfile(right) is ({ } key, var rightField) && Config.Controllers.TryGetValue(key, out var profile)
-            ? (rightField ? profile.RightDeadzone : profile.LeftDeadzone) : 0f;
-    }
-
-    float ISettingsHost.ControllerDeadzone(int slot, bool right) => StickDeadzone(slot, right);
-
-    void ISettingsHost.SetControllerDeadzone(int slot, bool right, float value)
-    {
-        ControllerKey(slot);
-        if (_set.Source(slot).StickProfile(right) is not ({ } key, var rightField)) return;
-        var profile = ProfileOf(key);
-        value = Math.Clamp(value, 0f, 0.5f);
-        if (rightField) profile.RightDeadzone = value; else profile.LeftDeadzone = value;
-        PruneProfile(key);
-        _store.Save();
-    }
-
-    string ISettingsHost.ControllerName(int slot) => ControllerKey(slot) is { } key ? ProfileName(key) : "";
+    string ISettingsHost.ControllerName(int slot) => _registry.Key(slot) is { } key ? _registry.ProfileName(key) : "";
 
     void ISettingsHost.SetControllerName(int slot, string name)
     {
-        if (ControllerKey(slot) is { } key) SetProfileName(key, name);
+        if (_registry.Key(slot) is { } key) _registry.SetProfileName(key, name);
     }
 
-    private string ProfileName(string key) => Config.Controllers.TryGetValue(key, out var profile) ? profile.Name : "";
+    string ISettingsHost.ProfileName(string key) => _registry.ProfileName(key);
 
-    private void SetProfileName(string key, string name)
-    {
-        name = name.Trim();
-        if (name.Length > 24) name = name[..24];
-        ProfileOf(key).Name = name;
-        PruneProfile(key);
-        _store.Save();
-    }
-
-    string ISettingsHost.ProfileName(string key) => ProfileName(key);
-
-    void ISettingsHost.SetProfileName(string key, string name) => SetProfileName(key, name);
-
-    /// <summary>The id a picture is stored under: the slot's, or the right Joy-Con's of a pair.</summary>
-    private string? PictureKey(int slot, bool second) => second ? _set.Source(slot).PartnerId : ControllerKey(slot);
+    void ISettingsHost.SetProfileName(string key, string name) => _registry.SetProfileName(key, name);
 
     void ISettingsHost.ChooseControllerPicture(int slot, bool second)
     {
-        if (PictureKey(slot, second) is { } key) ChoosePicture(key);
+        if (_registry.PictureKey(slot, second) is { } key) ChoosePicture(key);
     }
 
     private void ChoosePicture(string key)
@@ -1558,7 +1464,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.RemoveControllerPicture(int slot, bool second)
     {
-        if (PictureKey(slot, second) is { } key) ControllerPictures.Remove(key);
+        if (_registry.PictureKey(slot, second) is { } key) ControllerPictures.Remove(key);
     }
 
     void ISettingsHost.OpenControllerPage(int slot)
@@ -1604,7 +1510,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _set.Hub.StopPairing();
         if (_shutDown) return;
         Log.Info($"Pairing: {result}");
-        RefreshRemembered();
+        _registry.RefreshRemembered();
         if (result == PairResult.NotFound && _pairedJoyCons > 0)
         {
             if (_mode == Mode.Settings) _settingsWindow.Refresh();
@@ -1638,45 +1544,15 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     // ---- known controllers (the paired list of the Controller tab) ----------------------------
 
-    private const long KnownSyncMs = 1000;
-    private long _lastKnownSync;
-    private readonly HashSet<string> _connectedMacs = [];
-    private List<RememberedController> _remembered = [];
-
-    /// <summary>
-    /// Records the controllers that connected or went away since the last call: a new one joins the known list, and
-    /// each one's last-seen time is set when it connects and when it goes.
-    /// </summary>
+    /// <summary>Records the controllers that connected or went away, and keeps the open controller page in line.</summary>
     private void SyncKnown()
     {
-        _lastKnownSync = Environment.TickCount64;
-        var current = new Dictionary<string, string>();
-        for (int slot = 0; slot < _slots.Length; slot++)
-            foreach (var (mac, kind) in _set.Devices(slot)) current[mac] = kind;
-
-        var now = DateTime.UtcNow;
-        var joined = new List<string>();
-        foreach (var (mac, kind) in current)
-        {
-            if (!_connectedMacs.Add(mac)) continue;
-            if (!Config.KnownControllers.TryGetValue(mac, out var known)) Config.KnownControllers[mac] = known = new KnownController();
-            known.Kind = kind;
-            known.LastSeen = now;
-            joined.Add(mac);
-        }
-        var left = _connectedMacs.Where(mac => !current.ContainsKey(mac)).ToList();
-        foreach (var mac in left)
-        {
-            _connectedMacs.Remove(mac);
-            if (Config.KnownControllers.TryGetValue(mac, out var known)) known.LastSeen = now;
-        }
-        if (joined.Count == 0 && left.Count == 0) return;
-        _store.Save();
+        if (_registry.SyncKnown() is not { } joined) return;
 
         // The paired controller being edited connected: edit it as a connected controller.
         if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } page && page.Key is { } key && joined.Contains(key))
         {
-            int slot = Enumerable.Range(0, _slots.Length).FirstOrDefault(i => _set.Devices(i).Any(d => d.Mac == key), -1);
+            int slot = _registry.SlotOf(key);
             CloseControllerPage();
             if (slot >= 0) ((ISettingsHost)this).OpenControllerPage(slot);
         }
@@ -1684,80 +1560,13 @@ internal sealed class AppController : IDisposable, ISettingsHost
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
-    /// <summary>Reads the Pro Controllers and original Joy-Cons Windows remembers; one the app has not seen yet joins the known list.</summary>
-    private void RefreshRemembered()
-    {
-        _remembered = BluetoothPairing.RememberedControllers();
-        bool added = false;
-        foreach (var controller in _remembered)
-        {
-            if (Config.KnownControllers.ContainsKey(controller.Mac)) continue;
-            Config.KnownControllers[controller.Mac] = new KnownController
-            {
-                Kind = controller.Kind,
-                LastSeen = controller.LastUsed == DateTime.MinValue ? DateTime.UtcNow : controller.LastUsed,
-            };
-            added = true;
-        }
-        if (added) _store.Save();
-    }
+    IReadOnlyList<string> ISettingsHost.PairedControllers => _registry.PairedControllers;
 
-    /// <summary>Windows remembers the controller: a Pro Controller or an original Joy-Con (a Joy-Con 2 never is).</summary>
-    private bool PairedInWindows(string key) => _remembered.Exists(c => c.Mac == key);
-
-    /// <summary>The known controllers that are not connected (a Pro Controller only while Windows remembers it), last seen first.</summary>
-    IReadOnlyList<string> ISettingsHost.PairedControllers
-    {
-        get
-        {
-            var list = new List<(string Mac, DateTime Seen)>();
-            foreach (var (mac, known) in Config.KnownControllers)
-            {
-                if (_connectedMacs.Contains(mac)) continue;
-                if (known.Kind == ControllerKinds.Pro && !PairedInWindows(mac)) continue;
-                list.Add((mac, known.LastSeen));
-            }
-            list.Sort((a, b) => b.Seen.CompareTo(a.Seen));
-            return list.ConvertAll(e => e.Mac);
-        }
-    }
-
-    private string KindOf(string key) => Config.KnownControllers.TryGetValue(key, out var known) ? known.Kind : ControllerKinds.Pro;
-
-    string ISettingsHost.PairedDisplayName(string key) =>
-        ProfileName(key) is { Length: > 0 } name ? name : ControllerKinds.DefaultName(KindOf(key));
-
-    private SlotTile PairedTileOf(string key)
-    {
-        var seen = Config.KnownControllers.TryGetValue(key, out var known) ? known.LastSeen : DateTime.MinValue;
-        return new SlotTile(true, ((ISettingsHost)this).PairedDisplayName(key), -1, false, ControllerPictures.Get(key), Ago: Ago(seen));
-    }
-
-    /// <summary>"now", "5m", "3h", "2d", "4mo", "1y": how long ago a controller was last connected (empty when unknown).</summary>
-    internal static string Ago(DateTime seen, DateTime? now = null)
-    {
-        if (seen == DateTime.MinValue) return "";
-        var span = (now ?? DateTime.UtcNow) - seen;
-        return span.TotalMinutes < 1 ? "now"
-            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes}m"
-            : span.TotalDays < 1 ? $"{(int)span.TotalHours}h"
-            : span.TotalDays < 30 ? $"{(int)span.TotalDays}d"
-            : span.TotalDays < 365 ? $"{(int)(span.TotalDays / 30)}mo"
-            : $"{(int)(span.TotalDays / 365)}y";
-    }
+    string ISettingsHost.PairedDisplayName(string key) => _registry.PairedDisplayName(key);
 
     void ISettingsHost.ForgetController(string key)
     {
-        if (KindOf(key) == ControllerKinds.Pro || PairedInWindows(key))
-        {
-            if (!BluetoothPairing.Forget(key)) _toast.Show(MenuPages.Game, "Could not forget the controller");
-            RefreshRemembered();
-        }
-        if (KindOf(key) != ControllerKinds.Pro)
-        {
-            Config.KnownControllers.Remove(key); // a Joy-Con comes back when it connects (an original one once paired again)
-            _store.Save();
-        }
+        if (!_registry.Forget(key)) _toast.Show(MenuPages.Game, "Could not forget the controller");
         // Forgotten from its own page: back to the Controller tab.
         if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } page && page.Key == key) CloseControllerPage();
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
@@ -1765,21 +1574,20 @@ internal sealed class AppController : IDisposable, ISettingsHost
 
     void ISettingsHost.RepairController(string key)
     {
-        if (KindOf(key) == ControllerKinds.Pro || PairedInWindows(key)) StartPairing(only: key);
-        else StartPairing(only: null); // a Joy-Con 2 in sync mode is claimed by the hub
+        StartPairing(only: _registry.UsesWindowsPairing(key) ? key : null); // a Joy-Con 2 in sync mode is claimed by the hub
         if (_mode == Mode.Settings) _settingsWindow.Refresh();
     }
 
     void ISettingsHost.OpenPairedPage(string key)
     {
-        if (!((ISettingsHost)this).PairedControllers.Contains(key)) return;
+        if (!_registry.PairedControllers.Contains(key)) return;
         _settings.OpenSub(SettingsPages.PairedPage(this, key, out _pageStrip));
     }
 
     /// <summary>The paired page has nothing left to show: back to the Controller tab.</summary>
     private void ClosePairedPageIfEmpty()
     {
-        if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } && ((ISettingsHost)this).PairedControllers.Count == 0)
+        if (_settings.InSubPage && _pageStrip is { Kind: SettingKind.Paired } && _registry.PairedControllers.Count == 0)
             CloseControllerPage();
     }
 
@@ -2030,12 +1838,7 @@ internal sealed class AppController : IDisposable, ISettingsHost
         _shutDown = true;
         Log.Info("Shutting down");
         // Step by step: one that throws must not keep the controllers hidden or the pads plugged in.
-        TryStep("save the last-seen times", () =>
-        {
-            foreach (var mac in _connectedMacs)
-                if (Config.KnownControllers.TryGetValue(mac, out var known)) known.LastSeen = DateTime.UtcNow;
-            if (_connectedMacs.Count > 0) _store.Save();
-        });
+        TryStep("save the last-seen times", _registry.SaveLastSeen);
         TryStep("close the open screen", () =>
         {
             StopRepeat();
