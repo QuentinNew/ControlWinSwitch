@@ -168,8 +168,8 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
     private bool _lookForJoyCons;
 
     /// <summary>
-    /// The Controller tab of the settings is on screen: Joy-Con 2s are looked for meanwhile (a paired one connects when a
-    /// button wakes it). Otherwise the Bluetooth LE scan only runs while "Add new controller" searches.
+    /// Joy-Con 2s are looked for (a paired one connects when a button wakes it): set from the "Search Joy-Con 2" setting.
+    /// Otherwise the Bluetooth LE scan only runs while "Add new controller" searches.
     /// </summary>
     public bool LookForJoyCons
     {
@@ -183,7 +183,7 @@ internal sealed class ControllerSet : IControllerSlots, IDisposable
     }
 
     /// <summary>
-    /// Scans for Joy-Con 2s while the Controller tab is shown and one could still find a slot (a free one, or a lone
+    /// Scans for Joy-Con 2s while asked to (<see cref="LookForJoyCons"/>) and one could still find a slot (a free one, or a lone
     /// Joy-Con waiting for a partner). The pairing window of "Add new controller" scans on its own.
     /// </summary>
     private void UpdateScanning()

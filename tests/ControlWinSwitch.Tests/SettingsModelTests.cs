@@ -325,6 +325,25 @@ public class SettingsModelTests
     }
 
     [Fact]
+    public void Virtual_pad_tab_chooses_when_to_search_joycon_2s()
+    {
+        var (m, store, host) = Create();
+        m.SetTab(2);
+        for (int i = 0; i < 4; i++) m.Move(1);
+        Assert.Equal("Search Joy-Con 2", m.CurrentItem!.Label);
+        Assert.Equal("On Controller Tab", m.CurrentItem.Value());
+
+        m.Adjust(1);
+        Assert.Equal("Always", m.CurrentItem.Value());
+        Assert.Equal(JoyCon2Searches.Always, store.Current.VirtualPad.JoyCon2Search);
+        Assert.Equal(1, host.Changes);
+
+        m.Activate(); // cycles and wraps
+        Assert.Equal(JoyCon2Searches.Never, store.Current.VirtualPad.JoyCon2Search);
+        Assert.Equal("Never", m.CurrentItem.Value());
+    }
+
+    [Fact]
     public void Tab_navigation_wraps()
     {
         var (m, _, _) = Create();

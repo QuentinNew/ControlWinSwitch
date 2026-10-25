@@ -78,9 +78,10 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
         _mouse = new MouseControlMode(this, _toast, MouseConfig);
         _slider = new SliderMode(this, _direction, _timers, _toast);
         _editor = new EditorMode(this, _store, _toast, SaveConfig);
-        _settings = new SettingsMode(this, _direction, _store, _registry, CreateSettingsHost, shown => set.LookForJoyCons = shown);
+        _settings = new SettingsMode(this, _direction, _store, _registry, CreateSettingsHost, OnControllerTabShown);
         _hideMenuTimer = _timers.Create(OnHideMenuTimer);
         ApplyMenuHotkey();
+        ApplyJoyConSearch();
         Startup.DetectInBackground(); // known before the Settings show the "Launch on startup" row
     }
 
@@ -426,6 +427,30 @@ internal sealed class AppController : IDisposable, IModeHost, ICommandHost, ISet
     {
         _pads.ApplyConfig();
         ApplyMenuHotkey();
+        ApplyJoyConSearch();
+    }
+
+    private bool _controllerTabShown;
+
+    private void OnControllerTabShown(bool shown)
+    {
+        _controllerTabShown = shown;
+        ApplyJoyConSearch();
+    }
+
+    /// <summary>
+    /// Looks for Joy-Con 2s as the "Search Joy-Con 2" setting says: never, while the Controller tab of the settings is
+    /// shown, or always. "Add new controller" looks for them during its search whatever the setting.
+    /// </summary>
+    private void ApplyJoyConSearch()
+    {
+        if (_shutDown) return;
+        _set.LookForJoyCons = Config.VirtualPad.JoyCon2Search switch
+        {
+            JoyCon2Searches.Always => true,
+            JoyCon2Searches.ControllerTab => _controllerTabShown,
+            _ => false,
+        };
     }
 
     private string? _menuHotkey; // the shortcut registered last (null = not yet)

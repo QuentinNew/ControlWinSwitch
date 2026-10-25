@@ -516,6 +516,9 @@ internal static class SettingsPages
             SettingItem.Toggle("Swap A / B", () => cfg().VirtualPad.SwapAB, v => { cfg().VirtualPad.SwapAB = v; Changed(); }),
             SettingItem.Toggle("Swap X / Y", () => cfg().VirtualPad.SwapXY, v => { cfg().VirtualPad.SwapXY = v; Changed(); }),
             SettingItem.Number("Rumble", () => cfg().VirtualPad.Rumble, v => { cfg().VirtualPad.Rumble = (int)v; Changed(); }, 0, 100, 10, "0", "%"),
+            SettingItem.Choice("Search Joy-Con 2", ["Never", "On Controller Tab", "Always"],
+                () => Array.IndexOf(JoyCon2Searches.All, cfg().VirtualPad.JoyCon2Search),
+                i => { cfg().VirtualPad.JoyCon2Search = JoyCon2Searches.All[i]; Changed(); }),
             SettingItem.Text("Pad off while running",
                 () => cfg().VirtualPad.DisableWhileRunning.Count == 0 ? "(off)" : ProcessList.Format(cfg().VirtualPad.DisableWhileRunning),
                 () => host.EditText(ProcessList.Format(cfg().VirtualPad.DisableWhileRunning), v =>

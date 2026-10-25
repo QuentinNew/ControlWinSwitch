@@ -32,6 +32,16 @@ public class ConfigTests
     }
 
     [Fact]
+    public void JoyCon2_search_defaults_to_the_controller_tab_and_ignores_case()
+    {
+        Assert.Equal(JoyCon2Searches.ControllerTab, ConfigStore.Parse("{}").VirtualPad.JoyCon2Search);
+        Assert.Equal(JoyCon2Searches.Always, ConfigStore.Parse("""{ "virtualPad": { "joyCon2Search": " ALWAYS " } }""").VirtualPad.JoyCon2Search);
+        Assert.Equal(JoyCon2Searches.Never, ConfigStore.Parse("""{ "virtualPad": { "joyCon2Search": "never" } }""").VirtualPad.JoyCon2Search);
+        Assert.Equal(JoyCon2Searches.ControllerTab, ConfigStore.Parse("""{ "virtualPad": { "joyCon2Search": "sometimes" } }""").VirtualPad.JoyCon2Search);
+        Assert.Equal(JoyCon2Searches.ControllerTab, ConfigStore.Parse("""{ "virtualPad": { "joyCon2Search": null } }""").VirtualPad.JoyCon2Search);
+    }
+
+    [Fact]
     public void Serialization_round_trips()
     {
         var c = new AppConfig();

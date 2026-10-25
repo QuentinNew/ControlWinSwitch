@@ -68,7 +68,7 @@ internal sealed class JoyCon2Hub : IDisposable
     }
 
     /// <summary>
-    /// Scans while asked to (the Controller tab of the settings is shown and a slot can take a Joy-Con), and during the
+    /// Scans while asked to (as the "Search Joy-Con 2" setting says, while a slot can take a Joy-Con), and during the
     /// pairing window (UI thread). The adapter is looked up on the first start.
     /// </summary>
     public void SetScanning(bool scan)

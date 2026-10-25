@@ -22,11 +22,29 @@ internal sealed class VirtualPadConfig
 
     /// <summary>The pad is switched off while one of these processes runs (empty = feature off).</summary>
     public List<string> DisableWhileRunning { get; set; } = ["steam.exe"];
+
+    /// <summary>
+    /// When Joy-Con 2s are looked for (Bluetooth LE scan): one of <see cref="JoyCon2Searches"/>. "Add new controller"
+    /// always looks for them while it searches.
+    /// </summary>
+    public string JoyCon2Search { get; set; } = JoyCon2Searches.ControllerTab;
 }
 
 internal static class PadTypes
 {
     public const string Xbox = "xbox", Ps4 = "ps4";
+}
+
+/// <summary>Values of <see cref="VirtualPadConfig.JoyCon2Search"/>, in the order the settings list them.</summary>
+internal static class JoyCon2Searches
+{
+    public const string Never = "never", ControllerTab = "controllerTab", Always = "always";
+
+    public static readonly string[] All = [Never, ControllerTab, Always];
+
+    /// <summary>A known value whatever its case; anything else is the default.</summary>
+    public static string Normalize(string? value) =>
+        Array.Find(All, v => string.Equals(v, value?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? ControllerTab;
 }
 
 /// <summary>What the user set for one physical controller, keyed by its id (MAC address) in <see cref="AppConfig.Controllers"/>.</summary>
@@ -229,6 +247,7 @@ internal sealed class AppConfig
         VirtualPad ??= new();
         VirtualPad.Type = string.Equals(VirtualPad.Type?.Trim(), PadTypes.Ps4, StringComparison.OrdinalIgnoreCase) ? PadTypes.Ps4 : PadTypes.Xbox;
         VirtualPad.Rumble = Math.Clamp(VirtualPad.Rumble, 0, 100);
+        VirtualPad.JoyCon2Search = JoyCon2Searches.Normalize(VirtualPad.JoyCon2Search);
         VirtualPad.DisableWhileRunning ??= [];
         VirtualPad.DisableWhileRunning = VirtualPad.DisableWhileRunning
             .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())
