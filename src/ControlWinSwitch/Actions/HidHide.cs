@@ -25,10 +25,15 @@ internal static unsafe class HidHide
     /// </summary>
     public static string? Apply(IReadOnlyCollection<string> interfacePaths)
     {
-        var device = CreateFileW(ControlDevice, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | 4, 0, OPEN_EXISTING, 0, 0);
+        var device = Open();
+        int error = device == INVALID_HANDLE_VALUE ? Marshal.GetLastPInvokeError() : 0;
+        if (error == ERROR_ACCESS_DENIED && CloseConfigClient())
+        {
+            device = Open();
+            error = device == INVALID_HANDLE_VALUE ? Marshal.GetLastPInvokeError() : 0;
+        }
         if (device == INVALID_HANDLE_VALUE)
         {
-            int error = Marshal.GetLastPInvokeError();
             return error switch
             {
                 2 => interfacePaths.Count == 0 ? null : "HidHide is not installed (error 2)",
@@ -67,6 +72,36 @@ internal static unsafe class HidHide
         {
             CloseHandle(device);
         }
+    }
+
+    private static nint Open() =>
+        CreateFileW(ControlDevice, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | 4, 0, OPEN_EXISTING, 0, 0);
+
+    /// <summary>
+    /// Closes the "HidHide Configuration Client v..." window, which holds the control device, and waits for its
+    /// process to exit. Returns true if it was open.
+    /// </summary>
+    private static bool CloseConfigClient()
+    {
+        var title = stackalloc char[128];
+        for (nint hwnd = FindWindowExW(0, 0, null, null); hwnd != 0; hwnd = FindWindowExW(0, hwnd, null, null))
+        {
+            int length = GetWindowTextW(hwnd, title, 128);
+            if (!new ReadOnlySpan<char>(title, length).StartsWith("HidHide Configuration Client", StringComparison.OrdinalIgnoreCase))
+                continue;
+            uint pid = 0;
+            GetWindowThreadProcessId(hwnd, &pid);
+            var process = pid != 0 ? OpenProcess(SYNCHRONIZE, 0, pid) : 0;
+            Log.Info("HidHide: closing the HidHide Configuration Client");
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            if (process != 0)
+            {
+                WaitForSingleObject(process, 3000);
+                CloseHandle(process);
+            }
+            return true; // the window is gone: continuing from its handle would not work
+        }
+        return false;
     }
 
     private static string Fail(string what)

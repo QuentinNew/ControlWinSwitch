@@ -357,6 +357,7 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial uint RegisterWindowMessageW(string name);
     [LibraryImport("user32.dll")] public static partial int ChangeWindowMessageFilterEx(nint hwnd, uint msg, uint action, nint changeInfo);
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial nint FindWindowW(string? className, string? windowName);
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] public static partial nint FindWindowExW(nint parent, nint childAfter, string? className, string? windowName);
     [LibraryImport("user32.dll")] public static partial uint GetWindowThreadProcessId(nint hwnd, uint* pid);
     [LibraryImport("user32.dll")] public static partial nint GetShellWindow();
     [LibraryImport("user32.dll")] public static partial nint CreatePopupMenu();
