@@ -110,14 +110,14 @@ internal sealed class ShortcutConfig
 /// <summary>Values of <see cref="MenuNodeConfig.Type"/>.</summary>
 internal static class MenuNodeTypes
 {
-    public const string Close = "close", Quit = "quit", Sleep = "sleep", Restart = "restart", Shutdown = "shutdown",
+    public const string Close = "close", Quit = "quit", Power = "power",
         Settings = "settings", Headset = "headset", MouseMode = "mouseMode", VirtualPad = "virtualPad",
         Folder = "folder", Shortcut = "shortcut", AddController = "addController", CloseWindow = "closeWindow",
-        Screenshot = "screenshot", Volume = "volume", Brightness = "brightness";
+        Screenshot = "screenshot", Volume = "volume", Brightness = "brightness", ChangeScreen = "changeScreen";
 
     public static readonly string[] All =
-        [Close, Quit, Sleep, Restart, Shutdown, Settings, Headset, MouseMode, VirtualPad, AddController, CloseWindow, Screenshot,
-            Volume, Brightness, Folder, Shortcut];
+        [Close, Quit, Power, Settings, Headset, MouseMode, VirtualPad, AddController, CloseWindow, Screenshot,
+            Volume, Brightness, ChangeScreen, Folder, Shortcut];
 }
 
 /// <summary>Icon of a radial node. Only "glyph" is drawn for now; "auto" and "image" are kept as written.</summary>
@@ -162,6 +162,12 @@ internal sealed class MenuNodeConfig
     /// <summary>Screenshots: also put the picture on the clipboard.</summary>
     public bool? CopyToClipboard { get; set; }
 
+    /// <summary>Change screen: "pcOnly", "duplicate", "extend" or "secondOnly"; null or unknown = extend.</summary>
+    public string? ScreenMode { get; set; }
+
+    /// <summary>Power: "sleep", "restart" or "shutdown"; null or unknown = sleep.</summary>
+    public string? PowerMode { get; set; }
+
     /// <summary>Folders only; a folder can hold other folders.</summary>
     public List<MenuNodeConfig>? Children { get; set; }
 
@@ -178,6 +184,8 @@ internal sealed class MenuNodeConfig
         RunAsAdmin = RunAsAdmin,
         SaveFolder = SaveFolder,
         CopyToClipboard = CopyToClipboard,
+        ScreenMode = ScreenMode,
+        PowerMode = PowerMode,
         Children =Children?.Select(c => c.Clone()).ToList(),
     };
 }

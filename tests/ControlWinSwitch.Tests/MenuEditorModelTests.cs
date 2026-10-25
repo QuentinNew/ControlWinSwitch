@@ -172,7 +172,7 @@ public class ListEditorModelTests
         var m = List(Node("settings"), Node("quit"));
 
         Assert.Equal([0, 1], m.Nodes.Select(n => n.Slot));
-        for (int i = 0; i < 20; i++) Assert.NotNull(m.Add(MenuNodeTypes.Sleep, int.MaxValue));
+        for (int i = 0; i < 20; i++) Assert.NotNull(m.Add(MenuNodeTypes.Power, int.MaxValue));
         Assert.Equal(22, m.Nodes.Count);
         Assert.Equal(Enumerable.Range(0, 22), m.Nodes.Select(n => n.Slot));
     }
@@ -182,7 +182,7 @@ public class ListEditorModelTests
     {
         var m = List(Node("settings", "a"), Node("quit", "b"));
 
-        var added = m.Add(MenuNodeTypes.Sleep, 1)!;
+        var added = m.Add(MenuNodeTypes.Power, 1)!;
 
         Assert.Equal(["a", null, "b"], m.Nodes.Select(n => n.Name));
         Assert.Same(added, m.Selected);
@@ -192,7 +192,7 @@ public class ListEditorModelTests
     [Fact]
     public void MoveTo_reorders_and_renumbers()
     {
-        var m = List(Node("settings", "a"), Node("quit", "b"), Node("sleep", "c"));
+        var m = List(Node("settings", "a"), Node("quit", "b"), Node("power", "c"));
 
         Assert.True(m.MoveTo(m.Nodes[2], 0));
 
@@ -235,7 +235,7 @@ public class ListEditorModelTests
     [Fact]
     public void Delete_renumbers_a_list()
     {
-        var m = List(Node("settings"), Node("quit"), Node("sleep"));
+        var m = List(Node("settings"), Node("quit"), Node("power"));
 
         m.Delete(m.Nodes[0]);
 
@@ -259,7 +259,7 @@ public class ListEditorModelTests
         {
             new() { Type = "quit", Slot = 5, Name = "q" },
             new() { Type = "settings", Slot = 1, Name = "s" },
-            new() { Type = "folder", Slot = 3, Name = "f", Children = [new() { Type = "sleep", Slot = 4, Name = "z" }, new() { Type = "restart", Slot = 2, Name = "r" }] },
+            new() { Type = "folder", Slot = 3, Name = "f", Children = [new() { Type = "power", Slot = 4, Name = "z" }, new() { Type = "screenshot", Slot = 2, Name = "r" }] },
         };
 
         var list = MenuEditorModel.Convert(radial, MenuLayouts.List, out int dropped);
@@ -277,7 +277,7 @@ public class ListEditorModelTests
         var folder = new MenuNodeConfig
         {
             Type = "folder", Name = "f",
-            Children = Enumerable.Range(0, 9).Select(i => new MenuNodeConfig { Type = "sleep", Name = $"c{i}" }).ToList(),
+            Children = Enumerable.Range(0, 9).Select(i => new MenuNodeConfig { Type = "power", Name = $"c{i}" }).ToList(),
         };
         var list = new List<MenuNodeConfig> { folder };
         list.AddRange(Enumerable.Range(0, 9).Select(i => new MenuNodeConfig { Type = "quit", Name = $"n{i}" }));
@@ -295,7 +295,7 @@ public class ListEditorModelTests
     public void Dropping_a_folder_counts_its_contents_too()
     {
         var list = Enumerable.Range(0, 8).Select(i => new MenuNodeConfig { Type = "quit" }).ToList();
-        list.Add(new MenuNodeConfig { Type = "folder", Children = [new() { Type = "sleep" }, new() { Type = "restart" }] });
+        list.Add(new MenuNodeConfig { Type = "folder", Children = [new() { Type = "power" }, new() { Type = "screenshot" }] });
 
         MenuEditorModel.Convert(list, MenuLayouts.Radial, out int dropped);
 

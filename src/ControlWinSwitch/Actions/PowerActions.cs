@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using ControlWinSwitch.Native;
-using ControlWinSwitch.App;
 using static ControlWinSwitch.Native.Win32;
 
 namespace ControlWinSwitch.Actions;
@@ -19,12 +18,33 @@ internal static unsafe class PowerActions
         _ => 0,
     };
 
-    public static PowerAction? FromCommand(CommandKind kind) => kind switch
+    public static readonly PowerAction[] All = [PowerAction.Sleep, PowerAction.Restart, PowerAction.Shutdown];
+
+    /// <summary>The action written in a Power node's config; null, empty or unknown text = Sleep.</summary>
+    public static PowerAction Parse(string? text) => All.FirstOrDefault(a => Key(a) == text, PowerAction.Sleep);
+
+    /// <summary>What goes in the config. Sleep is the default, so it is stored as null.</summary>
+    public static string? ToConfig(PowerAction action) => action == PowerAction.Sleep ? null : Key(action);
+
+    public static string Label(PowerAction action) => action switch
     {
-        CommandKind.Sleep => PowerAction.Sleep,
-        CommandKind.Restart => PowerAction.Restart,
-        CommandKind.Shutdown => PowerAction.Shutdown,
-        _ => null,
+        PowerAction.Restart => "Restart",
+        PowerAction.Shutdown => "Shut down",
+        _ => "Sleep",
+    };
+
+    public static string ConfirmPrompt(PowerAction action) => action switch
+    {
+        PowerAction.Restart => "Restart the PC?",
+        PowerAction.Shutdown => "Shut down the PC?",
+        _ => "Put the PC to sleep?",
+    };
+
+    private static string Key(PowerAction action) => action switch
+    {
+        PowerAction.Restart => "restart",
+        PowerAction.Shutdown => "shutdown",
+        _ => "sleep",
     };
 
     /// <summary>

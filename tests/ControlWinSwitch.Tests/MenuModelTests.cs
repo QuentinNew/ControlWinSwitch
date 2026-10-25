@@ -123,20 +123,20 @@ public class MenuModelTests
     [Fact]
     public void Confirmation_A_runs_the_command()
     {
-        var m = Open(Entry("shutdown", kind: CommandKind.Shutdown, confirm: "Shut down the PC?"));
+        var m = Open(Entry("shutdown", kind: CommandKind.Power, confirm: "Shut down the PC?"));
 
         Assert.Null(m.Accept());
         Assert.True(m.IsConfirming);
         Assert.Equal("Shut down the PC?", m.ConfirmPrompt);
 
-        Assert.Equal(new MenuCommand(CommandKind.Shutdown), m.Accept());
+        Assert.Equal(new MenuCommand(CommandKind.Power), m.Accept());
         Assert.False(m.IsConfirming);
     }
 
     [Fact]
     public void Confirmation_B_cancels_and_stays_on_the_page()
     {
-        var m = Open(Entry("shutdown", kind: CommandKind.Shutdown, confirm: "Shut down the PC?"));
+        var m = Open(Entry("shutdown", kind: CommandKind.Power, confirm: "Shut down the PC?"));
         m.Accept();
 
         Assert.True(m.Back());

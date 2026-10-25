@@ -345,6 +345,8 @@ internal static unsafe partial class Win32
     [LibraryImport("user32.dll")] public static partial uint MsgWaitForMultipleObjectsEx(uint count, nint* handles, uint ms, uint wakeMask, uint flags);
     [LibraryImport("user32.dll")] public static partial uint SendInput(uint count, INPUT* inputs, int size);
     [LibraryImport("user32.dll")] public static partial int GetCursorPos(POINT* pt);
+    public const uint SDC_TOPOLOGY_INTERNAL = 0x1, SDC_TOPOLOGY_CLONE = 0x2, SDC_TOPOLOGY_EXTEND = 0x4, SDC_TOPOLOGY_EXTERNAL = 0x8, SDC_APPLY = 0x80;
+    [LibraryImport("user32.dll")] public static partial int SetDisplayConfig(uint paths, nint pathArray, uint modes, nint modeArray, uint flags);
     [LibraryImport("user32.dll")] public static partial nint MonitorFromPoint(POINT pt, uint flags);
     [LibraryImport("user32.dll")] public static partial int GetMonitorInfoW(nint monitor, MONITORINFO* info);
     [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")] public static partial int GetMonitorInfoExW(nint monitor, MONITORINFOEXW* info);

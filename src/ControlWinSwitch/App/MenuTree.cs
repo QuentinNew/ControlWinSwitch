@@ -1,4 +1,5 @@
 using System.Globalization;
+using ControlWinSwitch.Actions;
 using ControlWinSwitch.Config;
 
 namespace ControlWinSwitch.App;
@@ -26,9 +27,8 @@ internal static class NodeKinds
         new(MenuNodeTypes.Screenshot, "Screenshot", MenuPages.Camera, CommandKind.Screenshot),
         new(MenuNodeTypes.Volume, "Volume", MenuPages.Volume, CommandKind.Volume),
         new(MenuNodeTypes.Brightness, "Brightness", MenuPages.Brightness, CommandKind.Brightness),
-        new(MenuNodeTypes.Sleep, "Sleep", MenuPages.Sleep, CommandKind.Sleep, "Put the PC to sleep?"),
-        new(MenuNodeTypes.Restart, "Restart", MenuPages.Restart, CommandKind.Restart, "Restart the PC?"),
-        new(MenuNodeTypes.Shutdown, "Shut down", MenuPages.Power, CommandKind.Shutdown, "Shut down the PC?"),
+        new(MenuNodeTypes.ChangeScreen, "Change screen", MenuPages.ChangeScreen, CommandKind.ChangeScreen),
+        new(MenuNodeTypes.Power, "Power", MenuPages.Power, CommandKind.Power),
         new(MenuNodeTypes.Quit, "Quit ControlWinSwitch", MenuPages.Quit, CommandKind.Quit, "Quit ControlWinSwitch?"),
         new(MenuNodeTypes.Close, "Close menu", MenuPages.Close, CommandKind.CloseMenu),
     ];
@@ -66,8 +66,8 @@ internal static class MenuTree
         if (kind is null) return null;
 
         bool isShortcut = node.Type == MenuNodeTypes.Shortcut;
-        string label = node.Name ?? (isShortcut ? node.Target ?? "Shortcut" : kind.Label);
-        char glyph = GlyphOf(node.Icon) ?? kind.Glyph;
+        string label = node.Name ?? (isShortcut ? node.Target ?? "Shortcut" : DefaultLabel(node));
+        char glyph = GlyphOf(node.Icon) ?? DefaultGlyph(node);
         uint? color = MenuRepair.ParseColor(node.Color);
         // App shortcuts show the program's own icon unless told otherwise.
         var icon = node.Icon ?? (isShortcut ? new MenuIconConfig { Kind = "auto" } : null);
@@ -88,7 +88,8 @@ internal static class MenuTree
         return new MenuEntry
         {
             Label = label, Glyph = glyph, Slot = slot, Color = color, Icon = icon,
-            Command = new(kind.Command), ConfirmPrompt = kind.ConfirmPrompt,
+            Command = new(kind.Command),
+            ConfirmPrompt = node.Type == MenuNodeTypes.Power ? PowerActions.ConfirmPrompt(PowerActions.Parse(node.PowerMode)) : kind.ConfirmPrompt,
             Detail = detail,
             Active = activeWhen is null ? null : () => detail?.Invoke() == activeWhen,
             Launch = isShortcut
@@ -96,14 +97,28 @@ internal static class MenuTree
                 : null,
             SaveFolder = node.SaveFolder,
             CopyToClipboard = node.CopyToClipboard == true,
+            ScreenMode = ScreenModes.Parse(node.ScreenMode),
+            PowerMode = PowerActions.Parse(node.PowerMode),
         };
     }
 
-    /// <summary>The icon a node of this type has when none is configured.</summary>
-    internal static char DefaultGlyph(string type) => NodeKinds.Find(type)?.Glyph ?? MenuPages.Play;
+    /// <summary>The icon a node has when none is configured: Power nodes have one per action.</summary>
+    internal static char DefaultGlyph(MenuNodeConfig node) => node.Type == MenuNodeTypes.Power
+        ? PowerActions.Parse(node.PowerMode) switch
+        {
+            PowerAction.Restart => MenuPages.Restart,
+            PowerAction.Shutdown => MenuPages.Power,
+            _ => MenuPages.Sleep,
+        }
+        : NodeKinds.Find(node.Type)?.Glyph ?? MenuPages.Play;
 
-    /// <summary>The name a node of this type has when none is configured.</summary>
-    internal static string DefaultLabel(string type) => NodeKinds.Find(type)?.Label ?? "App shortcut";
+    /// <summary>The name a node has when none is configured: Change screen nodes are named after their mode.</summary>
+    internal static string DefaultLabel(MenuNodeConfig node) => node.Type switch
+    {
+        MenuNodeTypes.ChangeScreen => ScreenModes.Label(ScreenModes.Parse(node.ScreenMode)),
+        MenuNodeTypes.Power => PowerActions.Label(PowerActions.Parse(node.PowerMode)),
+        _ => NodeKinds.Find(node.Type)?.Label ?? "App shortcut",
+    };
 
     /// <summary>The code point of a "glyph" icon, or null (not a glyph icon, or not a valid hex code point).</summary>
     internal static char? GlyphOf(MenuIconConfig? icon)

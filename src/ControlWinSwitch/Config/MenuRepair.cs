@@ -33,11 +33,14 @@ internal static class MenuDefaults
         new() { Type = MenuNodeTypes.Shortcut, Slot = 1, Name = "Steam", Target = "steam://open/main" },
     ];
 
+    private static MenuNodeConfig Power(string mode, int slot, string color) =>
+        new() { Type = MenuNodeTypes.Power, Slot = slot, Color = color, PowerMode = mode };
+
     private static List<MenuNodeConfig> PowerNodes() =>
     [
-        Action(MenuNodeTypes.Sleep, 0, "#C7652B"),
-        Action(MenuNodeTypes.Restart, 1, "#2B9DC7"),
-        Action(MenuNodeTypes.Shutdown, 2, "#713333"),
+        Power("sleep", 0, "#C7652B"),
+        Power("restart", 1, "#2B9DC7"),
+        Power("shutdown", 2, "#713333"),
     ];
 
     private static List<MenuNodeConfig> CreateRadial() =>

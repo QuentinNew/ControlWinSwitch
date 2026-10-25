@@ -1,3 +1,4 @@
+using ControlWinSwitch.Actions;
 using ControlWinSwitch.Config;
 
 namespace ControlWinSwitch.App;
@@ -8,9 +9,7 @@ internal enum CommandKind
     MouseMode,
     ToggleVirtualPad,
     ToggleHeadset,
-    Sleep,
-    Restart,
-    Shutdown,
+    Power,
     Quit,
     OpenSettings,
     AddController,
@@ -20,6 +19,7 @@ internal enum CommandKind
     Screenshot,
     Volume,
     Brightness,
+    ChangeScreen,
 }
 
 internal readonly record struct MenuCommand(CommandKind Kind, int Arg = 0);
@@ -56,6 +56,12 @@ internal sealed class MenuEntry
     /// <summary>Screenshot entries (<see cref="CommandKind.Screenshot"/>): where to save, and whether to copy.</summary>
     public string? SaveFolder { get; init; }
     public bool CopyToClipboard { get; init; }
+
+    /// <summary>Change screen entries (<see cref="CommandKind.ChangeScreen"/>): which Win+P mode to apply.</summary>
+    public ScreenMode ScreenMode { get; init; } = ScreenMode.Extend;
+
+    /// <summary>Power entries (<see cref="CommandKind.Power"/>): what to do.</summary>
+    public PowerAction PowerMode { get; init; } = PowerAction.Sleep;
 
     /// <summary>The node's own color (COLORREF) as shown when highlighted; null = theme colors.</summary>
     public uint? Color { get; init; }
@@ -193,6 +199,7 @@ internal static class MenuPages
     internal const char Camera = '';
     internal const char Add = '';
     internal const char Folder = '', Close = '', CloseWindow = '';
+    internal const char ChangeScreen = '';
     internal const char Gear ='', Mouse = '', Play = '', Game = '', Headphone = '',
         Power = '', Sleep = '', Restart = '', Quit = '';
 }

@@ -71,6 +71,10 @@ internal sealed class CommandRunner(ICommandHost host, nint hwnd, Toast toast, P
                 TakeScreenshot(entry);
                 break;
 
+            case CommandKind.ChangeScreen:
+                ChangeScreen(entry);
+                break;
+
             case CommandKind.Volume:
             case CommandKind.Brightness:
                 host.EnterSlider(entry, volume: command.Kind == CommandKind.Volume);
@@ -84,10 +88,8 @@ internal sealed class CommandRunner(ICommandHost host, nint hwnd, Toast toast, P
                 headset.Toggle(entry.Glyph);
                 break;
 
-            case CommandKind.Sleep:
-            case CommandKind.Restart:
-            case CommandKind.Shutdown:
-                RunPower(PowerActions.FromCommand(command.Kind)!.Value, entry);
+            case CommandKind.Power:
+                RunPower(entry.PowerMode, entry);
                 break;
 
             default:
@@ -160,6 +162,19 @@ internal sealed class CommandRunner(ICommandHost host, nint hwnd, Toast toast, P
         _screenshotBusy = false;
         if (!shutDown() && _screenshotResult is { } text) toast.Show(_screenshotGlyph, text);
         _screenshotResult = null;
+    }
+
+    /// <summary>The menu is already closed: apply the node's Win+P mode and say how it went.</summary>
+    private void ChangeScreen(MenuEntry entry)
+    {
+        var error = DisplayTopology.Apply(entry.ScreenMode);
+        if (error is not null)
+        {
+            Log.Error($"Change screen ({entry.ScreenMode}): {error}");
+            toast.Show(ErrorGlyph, $"Screen change failed: {error}");
+            return;
+        }
+        toast.Show(entry.Glyph, $"Screen: {ScreenModes.Label(entry.ScreenMode)}");
     }
 
     private void Launch(ShortcutConfig shortcut)

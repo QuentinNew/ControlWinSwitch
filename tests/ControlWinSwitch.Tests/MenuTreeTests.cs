@@ -80,12 +80,12 @@ public class MenuTreeTests
     public void A_folder_inside_a_folder_is_kept()
     {
         var inner = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [Node("quit", 0)] };
-        var outer = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [inner, Node("sleep", 1)] };
+        var outer = new MenuNodeConfig { Type = "folder", Slot = 0, Children = [inner, Node("power", 1)] };
         var tree = new List<MenuNodeConfig> { outer, Node("settings", 1) };
 
         var fixedTree = MenuRepair.Run(tree, MenuLayouts.Radial, []);
 
-        Assert.Equal(["folder", "sleep"], fixedTree[0].Children!.Select(n => n.Type));
+        Assert.Equal(["folder", "power"], fixedTree[0].Children!.Select(n => n.Type));
         Assert.Equal(["quit"], fixedTree[0].Children![0].Children!.Select(n => n.Type));
     }
 
@@ -189,7 +189,7 @@ public class MenuTreeTests
     [Fact]
     public void Folder_slots_run_clockwise_right_after_the_back_node()
     {
-        var folder = new MenuNodeConfig { Type = "folder", Slot = 1, Name = "F", Children = [Node("quit", 0), Node("sleep", 2)] };
+        var folder = new MenuNodeConfig { Type = "folder", Slot = 1, Name = "F", Children = [Node("quit", 0), Node("power", 2)] };
         var root = MenuTree.ToPage("Root", [folder]);
         var m = new RadialModel();
         m.Reset(root);
@@ -268,7 +268,7 @@ public class RadialAppearanceTests
             new() { Type = "settings", Slot = 0, Icon = new() { Kind = "Image", Path = "C:\a.png" } },
             new() { Type = "quit", Slot = 1, Icon = new() { Kind = "image" } },
             new() { Type = "close", Slot = 2, Icon = new() { Kind = "sparkle" } },
-            new() { Type = "sleep", Slot = 3, Icon = new() { Kind = "glyph", Glyph = "E7E8" } },
+            new() { Type = "power", Slot = 3, Icon = new() { Kind = "glyph", Glyph = "E7E8" } },
         };
 
         var fixedTree = MenuRepair.Run(tree, MenuLayouts.Radial, []);

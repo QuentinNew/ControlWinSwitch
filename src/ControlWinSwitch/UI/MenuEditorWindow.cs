@@ -31,6 +31,8 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         "E70F", "E710", "E711", "E712", "E713", "E715", "E716", "E717", "E71B", "E72B", "E73E", "E74E", "E767", "E768", "E769",
         "E774", "E77B", "E7E8", "E7F4", "E7F6", "E7FC", "E80F", "E81D", "E8A5", "E8B7", "E8D6", "E946", "E962", "E706", "E708",
         "E72C", "E72E", "E734", "E753", "E7C3", "E7C9", "E7EF", "E8AD", "E8F1", "EA8A",
+        "E701", "E702", "E720", "E721", "E722", "E723", "E724", "E72D", "E74D", "E74F", "E765", "E772",
+        "E787", "E7BA", "E7C4", "E818", "E81C", "E890", "E895", "E896", "E898", "E8C8", "E8E1", "E91B",
     ];
 
     private enum Field { None, Name, ImagePath, Hex, Target, Args, SaveFolder }
@@ -72,6 +74,8 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     private bool _steamOpen;      // the recently played Steam games list is open
     private List<SteamGame> _steamGames = [];
+    private bool _selectOpen;     // the node's select (screen mode, power action) is open
+    private RECT _selectField;    // where the select's closed field was drawn: the popup opens under it
     private bool _pipetting;     // the eyedropper button is held
     private int _addSlot = -1;    // empty slot whose "add" list is open
     private string? _error;
@@ -102,6 +106,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
     {
         Init(layout, radialTree, listTree);
         _addSlot = -1;
+        _selectOpen = false;
         _error = null;
         _dragNode = null;
         RadialIcons.Clear();
@@ -293,6 +298,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         {
             if (_pendingCopy is not null) { _pendingCopy = null; Redraw(); }
             else if (_field != Field.None) { _field = Field.None; Redraw(); }
+            else if (_selectOpen) { _selectOpen = false; Redraw(); }
             else if (_steamOpen) { _steamOpen = false; Redraw(); }
             else if (_addSlot >= 0) { _addSlot = -1; Redraw(); }
             return;
@@ -608,6 +614,11 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             DrawSteamPopup();
             FlushTexts(dc);
         }
+        if (_selectOpen && _model.Selected is { } selectNode && SelectFor(selectNode) is { } openSelect)
+        {
+            DrawSelectPopup(openSelect);
+            FlushTexts(dc);
+        }
         if (_pendingCopy is not null)
         {
             DrawCopyPopup();
@@ -715,13 +726,13 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         }
         else
         {
-            char glyph = MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node.Type);
+            char glyph = MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node);
             Text(fonts.Glyph, RadialOverlay.GlyphColor(style.Lit, selected), glyph.ToString(),
                 x - radius, y - radius, x + radius, y + radius, DT_CENTER | oneLine);
         }
 
         string name = node.Name ?? (node.Type == MenuNodeTypes.Shortcut && !string.IsNullOrEmpty(node.Target)
-            ? node.Target! : MenuTree.DefaultLabel(node.Type));
+            ? node.Target! : MenuTree.DefaultLabel(node));
         Text(fonts.Footer, Gdi.Dim, name, x - Px(54), y + radius + Px(4), x + Px(54), y + radius + Px(24), DT_CENTER | oneLine | DT_END_ELLIPSIS);
     }
 
@@ -916,13 +927,13 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         }
         else
         {
-            char glyph = MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node.Type);
+            char glyph = MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node);
             Text(fonts.Glyph, selected ? RadialOverlay.GlyphColor(style.Lit, true) : Gdi.TextColor, glyph.ToString(),
                 iconX - iconR, iconY - iconR, iconX + iconR, iconY + iconR, DT_CENTER | oneLine);
         }
 
         string name = node.Name ?? (node.Type == MenuNodeTypes.Shortcut && !string.IsNullOrEmpty(node.Target)
-            ? node.Target! : MenuTree.DefaultLabel(node.Type));
+            ? node.Target! : MenuTree.DefaultLabel(node));
         uint textColor = selected ? RadialOverlay.GlyphColor(style.Lit, true) : Gdi.TextColor;
         int textRight = r - Px(12);
         if (node.Type == MenuNodeTypes.Folder)
@@ -1000,10 +1011,10 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         bool isFolder = node.Type == MenuNodeTypes.Folder;
 
         // ---- column A: name, icon ----
-        Text(fonts.Label, Gdi.TextColor, MenuTree.DefaultLabel(node.Type), ax, y, ax + aw, y + Px(28), DT_LEFT | oneLine);
+        Text(fonts.Label, Gdi.TextColor, MenuTree.DefaultLabel(node), ax, y, ax + aw, y + Px(28), DT_LEFT | oneLine);
         y += Px(36);
 
-        TextField(Field.Name, "Name", ax, y, ax + aw, node.Name ?? "", MenuTree.DefaultLabel(node.Type));
+        TextField(Field.Name, "Name", ax, y, ax + aw, node.Name ?? "", MenuTree.DefaultLabel(node));
         y += Px(62);
 
         Text(fonts.Footer, Gdi.Dim, "Icon", ax, y, ax + aw, y + Px(18), DT_LEFT | oneLine);
@@ -1017,7 +1028,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         }
         IconButton(0, "Default", "default", true, () => node.Icon = null);
         IconButton(1, "Glyph", "glyph", true, () =>
-            node.Icon = new MenuIconConfig { Kind = "glyph", Glyph = ((int)(MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node.Type))).ToString("X4") });
+            node.Icon = new MenuIconConfig { Kind = "glyph", Glyph = ((int)(MenuTree.GlyphOf(node.Icon) ?? MenuTree.DefaultGlyph(node))).ToString("X4") });
         IconButton(2, "Program", "auto", isShortcut, () => node.Icon = new MenuIconConfig { Kind = "auto" });
         IconButton(3, "Image", "image", true, () => node.Icon = new MenuIconConfig { Kind = "image", Path = "" });
         y += Px(42);
@@ -1114,6 +1125,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             Button(bx, by, bx + bw, by + Px(36), copy ? "Also copy to clipboard: On" : "Also copy to clipboard: Off",
                 () => node.CopyToClipboard = copy ? null : true, active: copy);
         }
+
+        if (SelectFor(node) is { } select)
+            DrawSelect(select, bx, by, bx + bw);
 
         // Delete.
         int footerTop = Px(HeightDip - FooterDip);
@@ -1290,6 +1304,79 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             {
                 _steamOpen = false;
                 ApplySteamGame(game);
+                Redraw();
+            });
+        }
+    }
+
+    /// <summary>A node setting picked from a list: its label, the choices (current one marked) and what to do when one is picked.</summary>
+    private sealed record SelectSpec(string Label, string[] Options, int Current, Action<int> Pick);
+
+    /// <summary>The select a node type has in its properties, or null when it has none.</summary>
+    private static SelectSpec? SelectFor(MenuNodeConfig node) => node.Type switch
+    {
+        MenuNodeTypes.ChangeScreen => new("Screen mode", ScreenModes.All.Select(ScreenModes.Label).ToArray(),
+            Array.IndexOf(ScreenModes.All, ScreenModes.Parse(node.ScreenMode)),
+            i => node.ScreenMode = ScreenModes.ToConfig(ScreenModes.All[i])),
+        MenuNodeTypes.Power => new("Power action", PowerActions.All.Select(PowerActions.Label).ToArray(),
+            Array.IndexOf(PowerActions.All, PowerActions.Parse(node.PowerMode)),
+            i => node.PowerMode = PowerActions.ToConfig(PowerActions.All[i])),
+        _ => null,
+    };
+
+    /// <summary>The closed select: the current choice and a chevron; a click opens <see cref="DrawSelectPopup"/>.</summary>
+    private void DrawSelect(SelectSpec select, int l, int t, int r)
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+        int top = t + Px(18), bottom = top + Px(34);
+        Text(fonts.Footer, Gdi.Dim, select.Label, l, t, r, top, DT_LEFT | oneLine);
+
+        RoundRect(l, top, r, bottom, Px(8), _selectOpen ? Gdi.Selection : Rim);
+        RoundRect(l + Px(2), top + Px(2), r - Px(2), bottom - Px(2), Px(7), FieldFill);
+        Text(fonts.Detail, Gdi.TextColor, select.Options[select.Current], l + Px(10), top, r - Px(34), bottom,
+            DT_LEFT | oneLine | DT_END_ELLIPSIS);
+        Text(fonts.Glyph, Gdi.Dim, "", r - Px(34), top, r - Px(6), bottom, DT_CENTER | oneLine);
+
+        _selectField = new RECT(l, top, r, bottom);
+        AddHit(l, top, r, bottom, (_, _) =>
+        {
+            CommitField();
+            _selectOpen = !_selectOpen;
+            Redraw();
+        });
+    }
+
+    private void DrawSelectPopup(SelectSpec select)
+    {
+        var fonts = Gdi.GetFonts(_dpi);
+        const uint oneLine = DT_SINGLELINE | DT_VCENTER;
+
+        // Everything behind the popup: a click anywhere else closes it.
+        AddHit(0, 0, _w, _h, (_, _) =>
+        {
+            _selectOpen = false;
+            Redraw();
+        }, hand: false);
+
+        int rowH = Px(34), pad = Px(8);
+        int l = _selectField.Left, width = _selectField.Right - _selectField.Left;
+        int t = _selectField.Bottom + Px(4), height = rowH * select.Options.Length + pad * 2;
+
+        RoundRect(l - Px(2), t - Px(2), l + width + Px(2), t + height + Px(2), Px(12), Rim);
+        RoundRect(l, t, l + width, t + height, Px(10), Panel);
+        AddHit(l, t, l + width, t + height, null, hand: false); // swallow clicks on the popup's own background
+
+        for (int i = 0; i < select.Options.Length; i++)
+        {
+            int index = i;
+            int rt = t + pad + i * rowH;
+            RoundRect(l + pad, rt, l + width - pad, rt + rowH - Px(4), Px(8), i == select.Current ? Gdi.Selection : PanelLight);
+            Text(fonts.Detail, Gdi.TextColor, select.Options[i], l + pad, rt, l + width - pad, rt + rowH - Px(4), DT_CENTER | oneLine);
+            AddHit(l + pad, rt, l + width - pad, rt + rowH - Px(4), (_, _) =>
+            {
+                select.Pick(index);
+                _selectOpen = false;
                 Redraw();
             });
         }
