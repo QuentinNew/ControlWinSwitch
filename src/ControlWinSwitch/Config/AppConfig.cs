@@ -340,7 +340,11 @@ internal sealed class ConfigStore
         try
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-            File.WriteAllText(Path, Serialize(Current));
+            // Write to a temp file then swap it in, so a crash mid-write never leaves a broken config.json.
+            string tmp = Path + ".tmp";
+            File.WriteAllText(tmp, Serialize(Current));
+            if (File.Exists(Path)) File.Replace(tmp, Path, Path + ".bak");
+            else File.Move(tmp, Path);
             _stamp = File.GetLastWriteTimeUtc(Path);
             return null;
         }
