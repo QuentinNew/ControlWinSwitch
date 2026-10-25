@@ -76,7 +76,9 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
     private List<SteamGame> _steamGames = [];
     private bool _selectOpen;     // the node's select (screen mode, power action) is open
     private RECT _selectField;    // where the select's closed field was drawn: the popup opens under it
-    private bool _pipetting;     // the eyedropper button is held
+    private bool _pipetting;     // the eyedropper is picking: the next click on the screen takes the color
+    private MenuNodeConfig? _pickNode;
+    private string? _colorBeforePick;
     private int _addSlot = -1;    // empty slot whose "add" list is open
     private string? _error;
     private float _hue = 210f, _sat = 0.8f, _val = 0.9f;
@@ -142,6 +144,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     public void Hide()
     {
+        CancelPick();
         ReleaseCapture();
         ShowWindow(Handle, SW_HIDE);
         if (_previousForeground != 0 && _previousForeground != Handle) SetForegroundWindow(_previousForeground);
@@ -370,6 +373,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
     private void SelectNode(MenuNodeConfig? node)
     {
+        CancelPick();
         CommitField();
         _model.Select(node);
         if (node?.Color is { } hex && MenuRepair.ParseColor(hex) is { } colorref)
@@ -1135,8 +1139,8 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
     }
 
     /// <summary>
-    /// Eyedropper: press it and drag onto any pixel of the screen (the mouse stays captured while the button is
-    /// held); the node's color follows the pixel under the cursor and is kept on release.
+    /// Eyedropper: click it, then click any pixel of the screen (<see cref="ScreenPicker"/>); the node's color follows
+    /// the pixel under the cursor meanwhile. A right click cancels.
     /// </summary>
     private void DrawPipette(MenuNodeConfig node, int l, int t, int r, int b)
     {
@@ -1151,27 +1155,48 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
         hit.Down = (_, _) =>
         {
             CommitField();
-            _pipetting = true;
-            SampleScreen(node);
-        };
-        hit.Drag = (_, _) => SampleScreen(node);
-        hit.Up = (_, _) =>
-        {
-            _pipetting = false;
+            BeginPick(node);
             Redraw();
         };
     }
 
-    private void SampleScreen(MenuNodeConfig node)
+    /// <summary>
+    /// Starts the screen eyedropper: the node's color follows the pixel under the mouse, a click anywhere keeps it and a
+    /// right click puts the old color back.
+    /// </summary>
+    private void BeginPick(MenuNodeConfig node)
     {
-        POINT pt;
-        GetCursorPos(&pt);
-        var screen = GetDC(0);
-        uint colorref = GetPixel(screen, pt.X, pt.Y);
-        ReleaseDC(0, screen);
-        if (colorref == 0xFFFFFFFF) return; // CLR_INVALID: outside every monitor
+        _pickNode = node;
+        _colorBeforePick = node.Color;
+        _pipetting = ScreenPicker.Start(
+            onMove: colorref => { SetColor(node, ScreenPicker.ToHex(colorref)); Redraw(); },
+            onPick: colorref =>
+            {
+                SetColor(node, ScreenPicker.ToHex(colorref));
+                _pipetting = false;
+                _pickNode = null;
+                Redraw();
+            },
+            onCancel: RestoreColor); // the hook removes itself once the right click is released
+    }
 
-        SetColor(node, $"#{colorref & 0xFF:X2}{(colorref >> 8) & 0xFF:X2}{(colorref >> 16) & 0xFF:X2}");
+    /// <summary>Ends the eyedropper from outside (another node, the editor closing) and puts the old color back.</summary>
+    private void CancelPick()
+    {
+        if (!_pipetting) return;
+        ScreenPicker.Stop();
+        RestoreColor();
+    }
+
+    private void RestoreColor()
+    {
+        _pipetting = false;
+        if (_pickNode is { } node)
+        {
+            if (_colorBeforePick is { } hex) SetColor(node, hex);
+            else node.Color = null;
+        }
+        _pickNode = null;
         Redraw();
     }
 
