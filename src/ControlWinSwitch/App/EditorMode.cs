@@ -1,3 +1,4 @@
+using ControlWinSwitch.Actions;
 using ControlWinSwitch.Config;
 using ControlWinSwitch.UI;
 
@@ -47,6 +48,8 @@ internal sealed class EditorMode : IMode
         else config.ListMenu = tree;
         config.Sanitize();
         _saveConfig();
+        RadialIcons.Clear(); // a loaded picture keeps its file locked
+        NodeImages.Sweep(config.RadialMenu, config.ListMenu);
         _host.ToIdle();
         _toast.Show(MenuPages.Gear, layout == MenuLayouts.Radial ? "Radial menu saved" : "List menu saved");
     }

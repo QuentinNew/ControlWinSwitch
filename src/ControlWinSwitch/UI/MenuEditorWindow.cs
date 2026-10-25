@@ -344,7 +344,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
                     node.Name = value.Length == 0 ? null : value;
                     break;
                 case Field.ImagePath:
-                    if (node.Icon is { } icon) icon.Path = value;
+                    if (node.Icon is { } icon) icon.Path = NodeImages.Cached(value);
                     break;
                 case Field.Hex:
                     if (value.Length == 0) node.Color = null;
@@ -1058,7 +1058,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
             Button(ax + aw - browseW, y + Px(18), ax + aw, y + Px(52), "Browse...", () =>
             {
                 var file = PickFile("Choose a picture", "Pictures\0*.png;*.ico;*.jpg;*.jpeg;*.bmp;*.gif\0All files\0*.*\0\0");
-                if (file is not null && node.Icon is not null) node.Icon.Path = file;
+                if (file is not null && node.Icon is not null) node.Icon.Path = NodeImages.Cached(file);
             });
         }
         else if (kind == "auto")
@@ -1264,7 +1264,7 @@ internal sealed unsafe class MenuEditorWindow : NativeWindow
 
         node.Target = game.LaunchTarget;
         node.Name = game.Name;
-        if (game.CoverPath is not null) node.Icon = new MenuIconConfig { Kind = "image", Path = game.CoverPath };
+        if (game.CoverPath is not null) node.Icon = new MenuIconConfig { Kind = "image", Path = NodeImages.Cached(game.CoverPath) };
     }
 
     private void DrawSteamPopup()
