@@ -123,6 +123,15 @@ internal static partial class SteamLibrary
         ];
         foreach (string file in candidates)
             if (File.Exists(file)) return file;
+
+        // Newer Steam clients keep the portrait (library_capsule.jpg, 300x450) in a hash-named subfolder.
+        string folder = Path.Combine(cache, appId);
+        if (!Directory.Exists(folder)) return null;
+        foreach (string sub in Directory.EnumerateDirectories(folder))
+        {
+            string capsule = Path.Combine(sub, "library_capsule.jpg");
+            if (File.Exists(capsule)) return capsule;
+        }
         return null;
     }
 

@@ -40,6 +40,10 @@ public class SteamLibraryTests
             Directory.CreateDirectory(Path.Combine(second, "steamapps"));
             Directory.CreateDirectory(Path.Combine(root, "appcache", "librarycache", "10"));
             File.WriteAllText(Path.Combine(root, "appcache", "librarycache", "10", "library_600x900.jpg"), "x");
+            Directory.CreateDirectory(Path.Combine(root, "appcache", "librarycache", "30", "2ba105370a00877459144db0dd68af5f2d338429"));
+            File.WriteAllText(Path.Combine(root, "appcache", "librarycache", "30", "2ba105370a00877459144db0dd68af5f2d338429", "library_capsule.jpg"), "x");
+            Directory.CreateDirectory(Path.Combine(root, "appcache", "librarycache", "20", "4c811a41d2b3c87481cd5a265b45c7f347b6118e"));
+            File.WriteAllText(Path.Combine(root, "appcache", "librarycache", "20", "4c811a41d2b3c87481cd5a265b45c7f347b6118e", "logo.png"), "x");
             File.WriteAllText(Path.Combine(root, "steamapps", "libraryfolders.vdf"),
                 "\"libraryfolders\"\n{\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"" + second.Replace("\\", "\\\\") + "\"\n\t}\n}\n");
             File.WriteAllText(Path.Combine(root, "steamapps", "appmanifest_10.acf"), Game("10", "Old", 100));
@@ -51,7 +55,8 @@ public class SteamLibraryTests
             Assert.Equal(["New", "Mid"], recent.Select(g => g.Name));
             var all = SteamLibrary.Recent(10, root);
             Assert.EndsWith("library_600x900.jpg", all.Single(g => g.AppId == "10").CoverPath);
-            Assert.Null(all.Single(g => g.AppId == "20").CoverPath);
+            Assert.EndsWith("library_capsule.jpg", all.Single(g => g.AppId == "30").CoverPath);
+            Assert.Null(all.Single(g => g.AppId == "20").CoverPath); // only a logo in the cache
         }
         finally
         {
