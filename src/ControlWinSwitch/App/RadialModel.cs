@@ -31,7 +31,7 @@ internal sealed class RadialRing(MenuPage page, IReadOnlyList<RadialNode> nodes,
 
 /// <summary>
 /// State of the radial menu: a stack of rings, the highlighted node and the "select twice to confirm" step.
-/// Pure (no Win32), driven by <c>AppController</c> and painted by <c>RadialOverlay</c>.
+/// Pure (no Win32), driven by <c>MenuMode</c> and painted by <c>RadialOverlay</c>.
 /// </summary>
 internal sealed class RadialModel
 {

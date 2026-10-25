@@ -425,7 +425,7 @@ internal static class SettingsPages
     /// </summary>
     public static SettingsTab ControllerPage(ISettingsHost host, int slot, out SettingItem strip)
     {
-        // Not a row of the page: the pad switches controller with ZL / ZR (see AppController), the mouse by clicking a tile.
+        // Not a row of the page: the pad switches controller with ZL / ZR (see SettingsMode), the mouse by clicking a tile.
         var tiles = SettingItem.Strip("Connected controllers", ISettingsHost.ControllerSlots, _ => { }, host.ControllerConnected, selectable: false);
         tiles.Slot = slot;
         strip = tiles;

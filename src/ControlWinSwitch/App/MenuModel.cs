@@ -75,7 +75,7 @@ internal sealed class MenuPage(string title, IReadOnlyList<MenuEntry> entries, b
 
 /// <summary>
 /// Menu state machine: a stack of pages with a selection each, plus the yes/no confirmation step.
-/// Pure (no Win32), driven by <c>AppController</c> and painted by <c>MenuOverlay</c>.
+/// Pure (no Win32), driven by <c>MenuMode</c> and painted by <c>MenuOverlay</c>.
 /// </summary>
 internal sealed class MenuModel
 {

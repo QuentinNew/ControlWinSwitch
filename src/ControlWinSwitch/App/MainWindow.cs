@@ -38,11 +38,6 @@ internal sealed unsafe class MainWindow : NativeWindow
         _tray.Add(TrayIcon.Tooltip(_set.OpenCount));
     }
 
-    /// <summary>Call after the controller (dis)connected.</summary>
-    public bool ControllerConnected(int slot) => _set.Source(slot).IsOpen;
-
-    public bool SetRumble(int slot, bool on) => _set.Source(slot).SetRumble(on);
-
     public void UpdateTray() => _tray.SetTooltip(TrayIcon.Tooltip(_set.OpenCount));
 
     private const int MenuHotkeyId = 1;
