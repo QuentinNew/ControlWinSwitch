@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Notes for coding agents working on ControlWinSwitch. User-facing docs are in [README.md](README.md), release notes in [CHANGELOG.md](CHANGELOG.md).
+Notes for coding agents (but also humans!) working on ControlWinSwitch.
 
 ## What it is
 
@@ -28,26 +28,8 @@ The log is the first place to look when the user reports a bug or a crash. Unhan
 - `src/ControlWinSwitch/Setup`: Launch on startup (scheduled task or Run key).
 - `tests/ControlWinSwitch.Tests`: xUnit tests for the pure models and parsers.
 
-## Build, run, test
-
-Git Bash (vswhere must be on PATH, or the NativeAOT link step fails):
-
-```bash
-export PATH="$PATH:/c/Program Files (x86)/Microsoft Visual Studio/Installer"
-dist/ControlWinSwitch.exe --quit                       # the running exe locks dist
-dotnet publish src/ControlWinSwitch -c Release -o dist
-schtasks //Run //TN ControlWinSwitch                   # relaunch elevated, no UAC
-grep "Started" "$APPDATA/ControlWinSwitch/log.txt" | tail -1   # expect elevated=True
-```
-
-- Rebuild `dist` and relaunch after every code change.
-- Always run from the main checkout's `dist\ControlWinSwitch.exe`: it is the only path on HidHide's allow-list. Any other path cannot read the pad (`access denied (error 5)` in the log). Don't use git worktrees.
-- Never start the exe directly from the shell: use the `ControlWinSwitch` scheduled task so it runs elevated.
-- Tests: `dotnet test ControlWinSwitch.slnx`, only before a commit or when a test was added or changed.
-
 ## Conventions
 
-- Sources use **CRLF**. Edit with an editor tool, not `sed -i` (Git Bash strips the CRs and the whole file shows as changed).
-- Work on `master`. Commit only when asked, with plain messages and no Claude / AI attribution trailers.
-- If the user edited a file, keep their changes: never re-add text they removed.
+- Sources use **CRLF**.
+- Do not edit the README.md, CHANGELOG.md, or AGENTS.md without specific instructions from the user.
 - It is a background app: keep it at a few MB of RAM and no CPU while idle.
