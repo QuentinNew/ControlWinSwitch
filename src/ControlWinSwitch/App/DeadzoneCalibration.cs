@@ -87,6 +87,6 @@ internal sealed class DeadzoneCalibration(Func<int> slot, ISettingsHost host, Fu
         AutoDeadzone.Sampling => $"Hands off the sticks... {SecondsLeft:0.0}s",
         AutoDeadzone.Done => "Deadzones found",
         AutoDeadzone.Pushed => "Release the sticks, then retry",
-        _ => "Let go of the sticks, then Auto",
+        _ => "",
     };
 }
